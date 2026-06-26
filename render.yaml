@@ -21,9 +21,9 @@ services:
     plan: free
     region: frankfurt
     branch: main
-    rootDir: bot
-    buildCommand: pip install --upgrade pip && pip install -r ../requirements.txt
-    startCommand: python main.py
+    rootDir: .
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: cd bot && python main.py
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
