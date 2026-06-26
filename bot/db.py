@@ -1078,7 +1078,294 @@ async def log_event(user_id: int | None, event_type: str, payload: dict | None =
             )
 
 
+# === Приоритизация источников ===
+# Чем выше priority, тем больше доверия к источнику.
+# При конфликте цен берётся источник с max(priority × confidence).
+SOURCE_PRIORITY = {
+    "user":      1.00,  # отчёт водителя на АЗС — самый доверенный
+    "owner":     1.00,  # владелец АЗС
+    "telegram":  0.85,  # Telegram-каналы с ценами (бензин_price и т.д.)
+    "yandex":    0.80,  # Яндекс.Заправки (официальный API)
+    "lukoil":    0.75,  # сайт сети (точные цены своей сети)
+    "gazprom":   0.75,
+    "rosneft":   0.75,
+    "tatneft":   0.75,
+    "bashneft":  0.75,
+    "2gis":      0.65,  # 2ГИС (если платный)
+    "osm":       0.30,  # OSM (нет цен, только мета)
+    "default":   0.50,
+}
+
+
+def get_source_priority(source: str) -> float:
+    return SOURCE_PRIORITY.get(source, SOURCE_PRIORITY["default"])
+
+
+# === Confidence модель ===
+# Чем больше подтверждений и свежее данные — тем выше уверенность.
+def calculate_confidence(
+    source: str,
+    age_hours: float,
+    agreement_count: int = 1,
+    base_confidence: float = 0.7,
+) -> float:
+    """Рассчитывает confidence (0..1) для отчёта.
+
+    source: источник данных
+    age_hours: сколько часов назад
+    agreement_count: сколько других источников согласны с этой ценой
+    base_confidence: базовая уверенность источника
+    """
+    # Свежесть: экспоненциальный спад
+    freshness = max(0.1, 1.0 - (age_hours / 24.0) ** 0.5)
+    # Согласие: +0.2 за каждый согласный источник
+    agreement = min(0.4, agreement_count * 0.2)
+    # Базовый confidence от источника
+    base = base_confidence * get_source_priority(source)
+    return min(1.0, base * freshness + agreement)
+
+
 async def get_station_analytics(station_id: int, days: int = 30) -> dict:
+    """Аналитика для владельца АЗС: просмотры, отчёты, подписчики, цены."""
+    result = {
+        "station_id": station_id,
+        "period_days": days,
+        "views": 0,
+        "reports_30d": 0,
+        "reports_by_fuel": {},
+        "subscribers": 0,
+        "avg_price": None,
+        "last_price": None,
+        "last_report_at": None,
+        "views_chart": [],  # [{date, count}]
+    }
+    if USE_SQLITE:
+        # Просмотры
+        async with _db.execute(
+            """SELECT DATE(created_at) as d, COUNT(*) as c FROM events
+               WHERE event_type = 'station_viewed'
+                 AND json_extract(payload, '$.station_id') = ?
+                 AND created_at > datetime('now', ?)
+               GROUP BY d ORDER BY d""",
+            (station_id, f"-{days} days"),
+        ) as cur:
+            for r in await cur.fetchall():
+                result["views_chart"].append({"date": r["d"], "count": r["c"]})
+            result["views"] = sum(v["count"] for v in result["views_chart"])
+        # Отчёты
+        async with _db.execute(
+            """SELECT fuel_type, COUNT(*) as c, AVG(price) as avg_p, MAX(price) as max_p, MIN(price) as min_p
+               FROM reports
+               WHERE station_id = ? AND created_at > datetime('now', ?)
+               GROUP BY fuel_type""",
+            (station_id, f"-{days} days"),
+        ) as cur:
+            total_avg = []
+            for r in await cur.fetchall():
+                result["reports_by_fuel"][r["fuel_type"]] = {
+                    "count": r["c"],
+                    "avg_price": float(r["avg_p"]) if r["avg_p"] else None,
+                }
+                if r["avg_p"]:
+                    total_avg.append(float(r["avg_p"]))
+            result["reports_30d"] = sum(v["count"] for v in result["reports_by_fuel"].values())
+            result["avg_price"] = sum(total_avg) / len(total_avg) if total_avg else None
+        # Подписчики
+        async with _db.execute(
+            "SELECT COUNT(*) as c FROM subscriptions WHERE station_id = ? AND is_active = 1",
+            (station_id,),
+        ) as cur:
+            r = await cur.fetchone()
+            result["subscribers"] = r["c"] if r else 0
+        # Последний отчёт
+        async with _db.execute(
+            """SELECT fuel_type, available, price, created_at FROM reports
+               WHERE station_id = ? ORDER BY created_at DESC LIMIT 1""",
+            (station_id,),
+        ) as cur:
+            last = await cur.fetchone()
+        if last:
+            result["last_report_at"] = last["created_at"]
+            result["last_price"] = float(last["price"]) if last["price"] else None
+    else:
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT DATE(created_at) as d, COUNT(*) as c FROM events
+                   WHERE event_type = 'station_viewed'
+                     AND (payload->>'station_id')::int = $1
+                     AND created_at > NOW() - ($2 || ' days')::interval
+                   GROUP BY d ORDER BY d""",
+                station_id, str(days),
+            )
+            for r in rows:
+                result["views_chart"].append({"date": r["d"].isoformat(), "count": r["c"]})
+            result["views"] = sum(v["count"] for v in result["views_chart"])
+            rows = await conn.fetch(
+                """SELECT fuel_type, COUNT(*) as c, AVG(price) as avg_p
+                   FROM reports
+                   WHERE station_id = $1 AND created_at > NOW() - ($2 || ' days')::interval
+                   GROUP BY fuel_type""",
+                station_id, str(days),
+            )
+            total_avg = []
+            for r in rows:
+                result["reports_by_fuel"][r["fuel_type"]] = {
+                    "count": r["c"],
+                    "avg_price": float(r["avg_p"]) if r["avg_p"] else None,
+                }
+                if r["avg_p"]:
+                    total_avg.append(float(r["avg_p"]))
+            result["reports_30d"] = sum(v["count"] for v in result["reports_by_fuel"].values())
+            result["avg_price"] = sum(total_avg) / len(total_avg) if total_avg else None
+            row = await conn.fetchrow(
+                "SELECT COUNT(*) as c FROM subscriptions WHERE station_id = $1 AND is_active = TRUE",
+                station_id,
+            )
+            result["subscribers"] = row["c"] if row else 0
+            row = await conn.fetchrow(
+                """SELECT fuel_type, available, price, created_at FROM reports
+                   WHERE station_id = $1 ORDER BY created_at DESC LIMIT 1""",
+                station_id,
+            )
+            if row:
+                result["last_report_at"] = row["created_at"].isoformat()
+                result["last_price"] = float(row["price"]) if row["price"] else None
+    return result
+
+
+async def get_best_price_for_station(
+    station_id: int, fuel_type: str
+) -> dict | None:
+    """Возвращает лучшую цену для (station, fuel) по приоритету × свежести.
+
+    Учитывает все источники, отдаёт отчёт с максимальным weighted_score.
+    """
+    if db.USE_SQLITE:
+        cur = await _db.execute(
+            """SELECT id, fuel_type, available, price, source, confidence, created_at
+               FROM reports
+               WHERE station_id = ? AND fuel_type = ? AND price IS NOT NULL
+                 AND created_at > datetime('now', '-7 days')
+               ORDER BY created_at DESC LIMIT 20""",
+            (station_id, fuel_type),
+        )
+        rows = await cur.fetchall()
+        rows = [dict(r) for r in rows]
+    else:
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT id, fuel_type, available, price, source, confidence, created_at
+                   FROM reports
+                   WHERE station_id = $1 AND fuel_type = $2 AND price IS NOT NULL
+                     AND created_at > NOW() - INTERVAL '7 days'
+                   ORDER BY created_at DESC LIMIT 20""",
+                station_id, fuel_type,
+            )
+            rows = [dict(r) for r in rows]
+
+    if not rows:
+        return None
+
+    # Для каждого отчёта считаем score
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    scored = []
+    for r in rows:
+        created = r["created_at"]
+        if isinstance(created, str):
+            try:
+                created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age_h = (now - created).total_seconds() / 3600.0
+        source = r.get("source") or "default"
+        # Считаем сколько других отчётов согласны (в пределах ±2₽)
+        agreement = sum(
+            1 for other in rows
+            if other["id"] != r["id"]
+            and other.get("price") is not None
+            and abs(float(other["price"]) - float(r["price"])) <= 2.0
+        )
+        score = calculate_confidence(source, age_h, agreement)
+        r["weighted_score"] = score
+        scored.append(r)
+
+    # Лучший по score
+    scored.sort(key=lambda x: x["weighted_score"], reverse=True)
+    return scored[0]
+
+
+async def get_all_prices_for_station(station_id: int) -> dict:
+    """Возвращает все цены по всем источникам для станции.
+
+    Формат: {fuel_type: [{source, price, age_hours, confidence, weighted_score, is_best}]}
+    """
+    if db.USE_SQLITE:
+        cur = await _db.execute(
+            """SELECT id, fuel_type, available, price, source, confidence, created_at
+               FROM reports
+               WHERE station_id = ? AND price IS NOT NULL
+                 AND created_at > datetime('now', '-7 days')
+               ORDER BY fuel_type, created_at DESC""",
+            (station_id,),
+        )
+        rows = await cur.fetchall()
+        rows = [dict(r) for r in rows]
+    else:
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT id, fuel_type, available, price, source, confidence, created_at
+                   FROM reports
+                   WHERE station_id = $1 AND price IS NOT NULL
+                     AND created_at > NOW() - INTERVAL '7 days'
+                   ORDER BY fuel_type, created_at DESC""",
+                station_id,
+            )
+            rows = [dict(r) for r in rows]
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    by_fuel: dict[str, list] = {}
+    for r in rows:
+        created = r["created_at"]
+        if isinstance(created, str):
+            try:
+                created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age_h = (now - created).total_seconds() / 3600.0
+        r["age_hours"] = round(age_h, 1)
+        r["price"] = float(r["price"]) if r["price"] else None
+        r["confidence"] = float(r["confidence"]) if r.get("confidence") else 0.5
+        source = r.get("source") or "default"
+        r["source_priority"] = get_source_priority(source)
+        # Считаем agreement
+        fuel = r["fuel_type"]
+        others = [x for x in rows if x["fuel_type"] == fuel and x["id"] != r["id"] and x["price"]]
+        r["agreement"] = sum(1 for x in others if abs(x["price"] - r["price"]) <= 2.0)
+        r["weighted_score"] = round(
+            calculate_confidence(source, age_h, r["agreement"]), 3
+        )
+        # Конвертируем datetime в ISO для JSON
+        r["created_at"] = created.isoformat()
+        by_fuel.setdefault(fuel, []).append(r)
+
+    # Помечаем лучший
+    for fuel, items in by_fuel.items():
+        if items:
+            items.sort(key=lambda x: x["weighted_score"], reverse=True)
+            items[0]["is_best"] = True
+            for it in items[1:]:
+                it["is_best"] = False
+
+    return by_fuel
+
+
+
     """Аналитика для владельца АЗС: просмотры, отчёты, подписчики, цены."""
     result = {
         "station_id": station_id,

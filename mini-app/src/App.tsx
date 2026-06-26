@@ -7,7 +7,9 @@ import {
   searchByCity,
   postReport,
   fetchPriceHistory,
+  fetchStationPrices,
   type PricePoint,
+  type StationPrices,
 } from "./api";
 import type { Station, FuelType } from "./types";
 import {
@@ -888,6 +890,7 @@ function StationDetail({
   const st = getMainStatus(station);
   const address = station.address || station.city || "—";
   const [history, setHistory] = useState<PricePoint[] | null>(null);
+  const [prices, setPrices] = useState<StationPrices | null>(null);
   const [reportFuel, setReportFuel] = useState<string>("95");
   const [reportPrice, setReportPrice] = useState<string>("");
   const [reportQueue, setReportQueue] = useState<string>("");
@@ -897,10 +900,19 @@ function StationDetail({
     let cancelled = false;
     (async () => {
       try {
-        const data = await fetchPriceHistory(station.id, "95", 30);
-        if (!cancelled) setHistory(data.history);
+        const [histData, pricesData] = await Promise.all([
+          fetchPriceHistory(station.id, "95", 30).catch(() => ({ history: [] })),
+          fetchStationPrices(station.id).catch(() => null),
+        ]);
+        if (!cancelled) {
+          setHistory(histData.history || []);
+          setPrices(pricesData);
+        }
       } catch {
-        if (!cancelled) setHistory([]);
+        if (!cancelled) {
+          setHistory([]);
+          setPrices(null);
+        }
       }
     })();
     return () => {
@@ -1043,7 +1055,7 @@ function StationDetail({
 
         {/* Sparkline истории цен */}
         {history && history.length >= 2 && (
-          <div className="mb-4 p-3 bg-card rounded-xl border border-white/5">
+          <div className="mt-5 p-3 bg-card rounded-xl border border-white/5">
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs uppercase tracking-wider text-white/40 font-semibold">
                 История цен · АИ-95
@@ -1079,6 +1091,53 @@ function StationDetail({
                 strokeLinejoin="round"
               />
             </svg>
+          </div>
+        )}
+
+        {/* Цены по источникам (новая фича) */}
+        {prices && prices.total_sources > 0 && (
+          <div className="mt-3 p-3 bg-card rounded-xl border border-white/5">
+            <div className="text-xs uppercase tracking-wider text-white/40 font-semibold mb-2">
+              Цены по источникам
+              <span className="ml-2 text-white/30 normal-case font-normal">
+                ({prices.total_sources} {prices.total_sources === 1 ? 'источник' : 'источников'})
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              {Object.entries(prices.fuel_prices).map(([fuel, data]) => {
+                if (!data.best) return null;
+                const best = data.best;
+                const ageStr = best.age_hours < 1
+                  ? "только что"
+                  : best.age_hours < 24
+                    ? `${Math.round(best.age_hours)} ч назад`
+                    : `${Math.round(best.age_hours / 24)} дн назад`;
+                const sourceLabel: Record<string, string> = {
+                  user: "👤 Водитель",
+                  owner: "🏪 Владелец",
+                  telegram: "✈️ Telegram",
+                  yandex: "🌐 Яндекс",
+                  lukoil: "🏢 Лукойл",
+                  gazprom: "🏢 Газпромнефть",
+                  rosneft: "🏢 Роснефть",
+                  "2gis": "🗺 2ГИС",
+                  osm: "🛣 OSM",
+                };
+                return (
+                  <div key={fuel} className="text-sm flex items-center gap-2">
+                    <span className="text-white/60 w-12">АИ-{fuel}</span>
+                    <span className="font-semibold">{best.price}₽</span>
+                    <span className="text-xs text-white/40">· {sourceLabel[best.source] || best.source}</span>
+                    <span className="text-xs text-white/30 ml-auto">{ageStr}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {Object.values(prices.fuel_prices).some(d => d.all.length > 1) && (
+              <div className="text-[10px] text-white/30 mt-2">
+                💡 {Object.values(prices.fuel_prices).reduce((sum, d) => sum + d.all.length, 0)} отчётов из {prices.total_sources} источников — данные надёжные
+              </div>
+            )}
           </div>
         )}
 

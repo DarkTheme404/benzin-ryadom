@@ -15,6 +15,7 @@ from db import (
     add_report,
     find_nearest_stations,
     find_stations_by_name,
+    get_all_prices_for_station,
     get_station_analytics,
     get_station_by_id,
     get_station_current_status,
@@ -390,6 +391,76 @@ async def handle_premium_status(request):
     })
 
 
+async def handle_station_prices(request):
+    """GET /api/stations/{id}/prices — все цены по источникам с приоритетом.
+
+    Возвращает:
+    {
+      "station_id": 1,
+      "fuel_prices": {
+        "95": {
+          "best": {"source": "user", "price": 56.40, "confidence": 0.92, "age_hours": 0.5},
+          "all": [
+            {"source": "user", "price": 56.40, "is_best": true, "confidence": 0.92, "age_hours": 0.5},
+            {"source": "2gis", "price": 56.20, "is_best": false, "confidence": 0.65, "age_hours": 24.0}
+          ]
+        }
+      },
+      "sources_summary": {
+        "user": 5,        # сколько отчётов
+        "telegram": 2,
+        "2gis": 1
+      }
+    }
+    """
+    try:
+        station_id = int(request.match_info["id"])
+    except (KeyError, ValueError, TypeError):
+        return web.json_response({"error": "invalid id"}, status=400)
+
+    all_prices = await get_all_prices_for_station(station_id)
+
+    # Форматируем для Mini App
+    fuel_prices = {}
+    sources_summary = {}
+    for fuel, items in all_prices.items():
+        if not items:
+            continue
+        # Лучший — items[0] (отсортированы по weighted_score)
+        best = items[0]
+        fuel_prices[fuel] = {
+            "best": {
+                "source": best.get("source"),
+                "price": best.get("price"),
+                "confidence": best.get("weighted_score"),
+                "age_hours": best.get("age_hours"),
+                "updated_at": best.get("created_at"),
+            },
+            "all": [
+                {
+                    "source": it.get("source"),
+                    "price": it.get("price"),
+                    "is_best": it.get("is_best", False),
+                    "confidence": it.get("weighted_score"),
+                    "age_hours": it.get("age_hours"),
+                    "updated_at": it.get("created_at"),
+                }
+                for it in items[:5]  # максимум 5 источников
+            ],
+        }
+        # Считаем по источникам
+        for it in items:
+            src = it.get("source") or "default"
+            sources_summary[src] = sources_summary.get(src, 0) + 1
+
+    return web.json_response({
+        "station_id": station_id,
+        "fuel_prices": fuel_prices,
+        "sources_summary": sources_summary,
+        "total_sources": len(sources_summary),
+    })
+
+
 async def handle_create_report(request):
     """POST /api/reports — создание отчёта из Mini App"""
     # Строже rate limit для POST
@@ -558,6 +629,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/stations/{id}", handle_station_detail)
     app.router.add_get("/api/stations/{id}/price-history", handle_price_history)
     app.router.add_get("/api/stations/{id}/analytics", handle_station_analytics)
+    app.router.add_get("/api/stations/{id}/prices", handle_station_prices)
     app.router.add_get("/api/premium-status", handle_premium_status)
     app.router.add_post("/api/reports", handle_create_report)
     app.router.add_post("/api/price-update", handle_price_update)

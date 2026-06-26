@@ -67,12 +67,35 @@ export interface PricePoint {
   at: string;
 }
 
+export interface PriceSource {
+  source: string;
+  price: number | null;
+  is_best: boolean;
+  confidence: number;
+  age_hours: number;
+  updated_at: string;
+}
+
+export interface StationPrices {
+  station_id: number;
+  fuel_prices: Record<string, {
+    best: PriceSource | null;
+    all: PriceSource[];
+  }>;
+  sources_summary: Record<string, number>;
+  total_sources: number;
+}
+
 export async function fetchPriceHistory(
   id: number,
   fuel: string,
   days = 30,
 ): Promise<{ station_id: number; fuel: string; history: PricePoint[]; count: number }> {
   return getJson(buildUrl(`/api/stations/${id}/price-history`, { fuel, days }));
+}
+
+export async function fetchStationPrices(id: number): Promise<StationPrices> {
+  return getJson(buildUrl(`/api/stations/${id}/prices`, {}));
 }
 
 
