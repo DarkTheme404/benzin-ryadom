@@ -35,6 +35,11 @@ const FUEL_FILTERS: { key: string; label: string }[] = [
   { key: "lpg", label: "Газ" },
 ];
 
+const NETWORK_FILTERS = [
+  "Лукойл", "Газпромнефть", "Роснефть", "Татнефть", "Башнефть",
+  "Shell", "Teboil", "СНГ", "Нефтьмагистраль", "Трасса",
+];
+
 const DEFAULT_CENTER: [number, number] = [55.7558, 37.6173];
 const DEFAULT_MARKER_LIMIT = 300;
 
@@ -117,6 +122,8 @@ export default function App() {
   const [dataLoading, setDataLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fuelFilter, setFuelFilter] = useState("");
+  const [networkFilter, setNetworkFilter] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
   const [selected, setSelected] = useState<Station | null>(null);
   const [showList, setShowList] = useState(true);
   const [tgUser, setTgUser] = useState<any>(null);
@@ -186,7 +193,13 @@ export default function App() {
       if (!silent) setLoading(true);
       setErrorMsg(null);
     try {
-      const data = await fetchStations(lat, lon, 100, fuel || undefined);
+      const maxPriceNum = maxPrice ? parseFloat(maxPrice) : undefined;
+      const data = await fetchStations(
+        lat, lon, 100,
+        fuel || undefined,
+        networkFilter || undefined,
+        maxPriceNum,
+      );
       setStations(data.stations);
       if (data.is_premium !== undefined) setIsPremium(data.is_premium);
       setLastUpdate(new Date());
@@ -204,7 +217,7 @@ export default function App() {
         setRefreshing(false);
       }
     },
-    [],
+    [networkFilter, maxPrice],
   );
 
   useEffect(() => {
@@ -229,7 +242,7 @@ export default function App() {
   useEffect(() => {
     loadStations(center[0], center[1], fuelFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fuelFilter]);
+  }, [fuelFilter, networkFilter, maxPrice]);
 
   // === Premium badge (тихая проверка при запуске) ===
   useEffect(() => {
@@ -411,7 +424,13 @@ export default function App() {
     setSearching(true);
     setErrorMsg(null);
     try {
-      const data = await searchByCity(searchQuery.trim());
+      const maxPriceNum = maxPrice ? parseFloat(maxPrice) : undefined;
+      const data = await searchByCity(
+        searchQuery.trim(),
+        networkFilter || undefined,
+        maxPriceNum,
+        fuelFilter || undefined,
+      );
       setStations(data.stations);
       if (data.stations.length > 0) {
         const first = data.stations[0];
@@ -516,6 +535,47 @@ export default function App() {
             </button>
           ))}
         </div>
+
+        {/* Network + max_price filters */}
+        <div className="flex gap-1.5 mt-2">
+          <select
+            value={networkFilter}
+            onChange={(e) => setNetworkFilter(e.target.value)}
+            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs"
+            style={{ color: "#fff" }}
+          >
+            <option value="">⛽ Все сети</option>
+            {NETWORK_FILTERS.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+          <select
+            value={maxPrice}
+            onChange={(e) => setMaxPrice(e.target.value)}
+            className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs"
+            style={{ color: "#fff" }}
+          >
+            <option value="">💰 Любая цена</option>
+            <option value="50">до 50₽</option>
+            <option value="60">до 60₽</option>
+            <option value="70">до 70₽</option>
+            <option value="80">до 80₽</option>
+            <option value="100">до 100₽</option>
+          </select>
+        </div>
+
+        {/* Disclaimer (компактно) */}
+        <details className="mt-2 text-[10px] text-white/40">
+          <summary className="cursor-pointer hover:text-white/60">
+            ⚠️ Дисклеймер
+          </summary>
+          <div className="mt-1 px-2 py-1.5 bg-white/5 rounded-lg leading-relaxed">
+            Цены и наличие обновляются пользователями и парсерами
+            (fuelprice.ru, 2ГИС, Telegram-каналы). Возможны задержки.
+            Перед поездкой перезвоните на АЗС.
+            Бот не несёт ответственности за достоверность данных.
+          </div>
+        </details>
 
         {/* Stats row — только когда есть данные */}
         {!dataLoading && stations.length > 0 && (

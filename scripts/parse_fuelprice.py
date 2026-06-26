@@ -139,28 +139,40 @@ def normalize_name(name: str) -> str:
     return name.strip()
 
 
+async def load_stations_cache() -> dict:
+    """Загружает ВСЕ АЗС в память для быстрого матчинга по координатам.
+
+    Возвращает: {(lat_round, lon_round): station_id}
+    """
+    try:
+        rows = await db._fetch("SELECT id, lat, lon FROM stations")
+        cache = {}
+        for r in rows:
+            key = (round(r["lat"], 3), round(r["lon"], 3))
+            cache[key] = r["id"]
+        print(f"  Загружено {len(rows)} АЗС в кеш")
+        return cache
+    except Exception as e:
+        print(f"  ⚠ Не удалось загрузить кеш: {e}")
+        return {}
+
+
 async def find_matching_station(stations_cache: dict, lat: float, lon: float, name: str) -> Optional[int]:
-    """Ищет существующую АЗС в БД по координатам (±0.005 = ±500м)."""
+    """Ищет существующую АЗС в кеше по координатам (±0.005 = ±500м)."""
+    # Прямой матч
     key = (round(lat, 3), round(lon, 3))
     if key in stations_cache:
         return stations_cache[key]
-    try:
-        row = await db._fetch(
-            "SELECT id FROM stations WHERE ABS(lat - $1) < 0.005 AND ABS(lon - $2) < 0.005 LIMIT 1",
-            lat, lon, one=True
-        )
-        if row:
-            stations_cache[key] = row["id"]
-            return row["id"]
-    except Exception:
-        pass
+    # Ищем с допуском ±0.01 (1.1 км)
+    for (cache_lat, cache_lon), sid in stations_cache.items():
+        if abs(cache_lat - round(lat, 3)) < 0.01 and abs(cache_lon - round(lon, 3)) < 0.01:
+            return sid
     return None
 
 
 async def create_station(lat: float, lon: float, name: str) -> Optional[int]:
     """Создаёт новую АЗС в БД (если совпадений не найдено)."""
     try:
-        # Пытаемся сначала найти
         existing = await db._fetch(
             "SELECT id FROM stations WHERE ABS(lat - $1) < 0.0001 AND ABS(lon - $2) < 0.0001 LIMIT 1",
             lat, lon, one=True
@@ -178,9 +190,9 @@ async def create_station(lat: float, lon: float, name: str) -> Optional[int]:
             returning=True
         )
         if result:
-            return result[0]["id"] if isinstance(result, list) else result.get("id")
+            new_id = result[0]["id"] if isinstance(result, list) else result.get("id")
+            return new_id
     except Exception as e:
-        # Если дубль — ищем заново
         try:
             existing = await db._fetch(
                 "SELECT id FROM stations WHERE ABS(lat - $1) < 0.0001 AND ABS(lon - $2) < 0.0001 LIMIT 1",
@@ -224,7 +236,12 @@ async def main():
         total_matched = 0
         total_created = 0
         total_saved = 0
-        stations_cache = {}
+
+        # Загружаем кеш АЗС один раз
+        if not args.dry_run:
+            stations_cache = await load_stations_cache()
+        else:
+            stations_cache = {}
 
         for city_slug in cities:
             print(f"\n[{city_slug}]")

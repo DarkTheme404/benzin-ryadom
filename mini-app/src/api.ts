@@ -44,16 +44,47 @@ export async function fetchStations(
   lon: number,
   radius = 30,
   fuel?: string,
+  network?: string,
+  max_price?: number,
 ): Promise<StationsResponse> {
   const data = await getJson<{ stations: Station[]; count: number }>(
-    buildUrl("/api/stations", { lat, lon, radius, fuel }),
+    buildUrl("/api/stations", { lat, lon, radius, fuel, network, max_price }),
   );
   return data;
 }
 
 
-export async function searchByCity(query: string): Promise<StationsResponse> {
-  return getJson<StationsResponse>(buildUrl("/api/search", { q: query }));
+export async function searchByCity(
+  query: string,
+  network?: string,
+  max_price?: number,
+  fuel?: string,
+): Promise<StationsResponse> {
+  // /api/stations/by-city — поиск по городу с фильтрами
+  // query может быть "Москва" или "Москва Лукойл до 70" — парсим
+  const data = await getJson<{ stations: Station[]; count: number; disclaimer?: string }>(
+    buildUrl("/api/stations/by-city", {
+      city: query,
+      network,
+      max_price,
+      fuel,
+    }),
+  );
+  return data;
+}
+
+
+export async function fetchStationsByCity(
+  city: string,
+  region?: string,
+  fuel?: string,
+  network?: string,
+  max_price?: number,
+): Promise<StationsResponse> {
+  const data = await getJson<{ stations: Station[]; count: number }>(
+    buildUrl("/api/stations/by-city", { city, region, fuel, network, max_price }),
+  );
+  return data;
 }
 
 
