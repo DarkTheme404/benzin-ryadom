@@ -175,10 +175,24 @@ async def cmd_start(message: Message):
             [InlineKeyboardButton(text="🔍 Попробовать inline-поиск", switch_inline_query="92 Иваново")],
             [InlineKeyboardButton(text="🏪 Я владелец АЗС", callback_data="go_register_owner")],
         ])
-        await message.answer(hero, reply_markup=with_home_inline(hero_kb))
+        try:
+            hero_kb_with_home = with_home_inline(hero_kb)
+        except Exception as kb_err:
+            logger.exception(f"with_home_inline failed: {kb_err}")
+            hero_kb_with_home = None
+        await message.answer(hero, reply_markup=hero_kb_with_home)
     except Exception as e:
         logger.exception(f"cmd_start: WELCOME_1 failed: {e}")
-        await message.answer(f"👋 Привет, {first_name}! /help")
+        import traceback
+        tb = traceback.format_exc()
+        # Покажем пользователю короткую ошибку + отправим админу полный traceback
+        await message.answer(f"👋 Привет, {first_name}!\n\n⚠️ Ошибка hero: {type(e).__name__}\n/help")
+        # Админу — полный traceback
+        if settings.is_admin(username=message.from_user.username if message.from_user else None):
+            try:
+                await message.answer(f"<pre>{tb[:2000]}</pre>")
+            except Exception:
+                pass
         return
 
     # === Сообщение 2: Inline-фича ===
