@@ -1330,6 +1330,7 @@ async def get_all_prices_for_station(station_id: int) -> dict:
             rows = [dict(r) for r in rows]
 
     from datetime import datetime, timezone
+    from decimal import Decimal
     now = datetime.now(timezone.utc)
     by_fuel: dict[str, list] = {}
     for r in rows:
@@ -1343,14 +1344,25 @@ async def get_all_prices_for_station(station_id: int) -> dict:
             created = created.replace(tzinfo=timezone.utc)
         age_h = (now - created).total_seconds() / 3600.0
         r["age_hours"] = round(age_h, 1)
-        r["price"] = float(r["price"]) if r["price"] else None
-        r["confidence"] = float(r["confidence"]) if r.get("confidence") else 0.5
+        # Конвертируем Decimal → float (asyncpg для NUMERIC)
+        if r.get("price") is not None:
+            r["price"] = float(r["price"]) if not isinstance(r["price"], Decimal) else float(r["price"])
+        else:
+            r["price"] = None
+        r["confidence"] = float(r["confidence"]) if r.get("confidence") and not isinstance(r["confidence"], Decimal) else (float(r["confidence"]) if isinstance(r["confidence"], Decimal) else 0.5)
         source = r.get("source") or "default"
         r["source_priority"] = get_source_priority(source)
         # Считаем agreement
         fuel = r["fuel_type"]
-        others = [x for x in rows if x["fuel_type"] == fuel and x["id"] != r["id"] and x["price"]]
-        r["agreement"] = sum(1 for x in others if abs(x["price"] - r["price"]) <= 2.0)
+        # Конвертируем ВСЕ цены других в float чтобы избежать Decimal/float mix
+        others = []
+        for x in rows:
+            if x["fuel_type"] != fuel or x["id"] == r["id"] or not x.get("price"):
+                continue
+            if isinstance(x["price"], Decimal):
+                x["price"] = float(x["price"])
+            others.append(x)
+        r["agreement"] = sum(1 for x in others if abs(x["price"] - r["price"]) <= 2.0) if r["price"] else 0
         r["weighted_score"] = round(
             calculate_confidence(source, age_h, r["agreement"]), 3
         )
