@@ -46,6 +46,11 @@ Thumbs.db
 *.db-wal
 benzin.db*
 
+# Telegram сессия (содержит auth token!)
+tg_session*
+*.session
+*.session-journal
+
 # Временные файлы
 tmp/
 temp/
