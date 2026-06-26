@@ -47,31 +47,37 @@ def _check_rate(ip: str, max_per_min: int) -> bool:
 
 def _serialize_station(s: dict) -> dict:
     """Приводит станцию к JSON-безопасному виду."""
+    from datetime import datetime, date
+    from decimal import Decimal
     out = dict(s)
     if "fuel_types" in out and isinstance(out["fuel_types"], str):
         try:
             out["fuel_types"] = json.loads(out["fuel_types"])
         except Exception:
             out["fuel_types"] = []
-    # datetime → ISO string (asyncpg возвращает datetime, json не сериализует)
-    from datetime import datetime, date
+    # datetime → ISO string, Decimal → float (asyncpg/PostgreSQL)
     for k, v in list(out.items()):
         if isinstance(v, (datetime, date)):
             out[k] = v.isoformat()
+        elif isinstance(v, Decimal):
+            out[k] = float(v)
     return out
 
 
 def _serialize_status(s: dict) -> dict:
+    from datetime import datetime, date
+    from decimal import Decimal
     out = dict(s)
     if "available" in out:
         out["available"] = bool(out["available"]) if out["available"] is not None else None
     if "has_limit" in out:
         out["has_limit"] = bool(out["has_limit"])
-    # datetime → ISO string
-    from datetime import datetime, date
+    # datetime → ISO string, Decimal → float
     for k, v in list(out.items()):
         if isinstance(v, (datetime, date)):
             out[k] = v.isoformat()
+        elif isinstance(v, Decimal):
+            out[k] = float(v)
     return out
 
 
