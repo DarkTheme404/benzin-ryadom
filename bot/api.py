@@ -14,6 +14,7 @@ from db import (
     USE_SQLITE,
     add_report,
     find_nearest_stations,
+    find_stations_by_city,
     find_stations_by_name,
     get_all_prices_for_station,
     get_station_analytics,
@@ -172,6 +173,120 @@ async def handle_stations(request):
         })
 
     return web.json_response({"stations": result, "count": len(result)})
+
+
+# === Дисклеймер ===
+DISCLAIMER = (
+    "⚠️ <b>Важно:</b>\n"
+    "• Цены и наличие обновляются пользователями и парсерами, возможны задержки.\n"
+    "• Актуальность зависит от региона: крупные города — точнее, малые — реже.\n"
+    "• Перед поездкой перезвоните на АЗС, особенно если топливо подорожало.\n"
+    "• Данные собираются из: fuelprice.ru, 2ГИС, отчётов пользователей, "
+    "Telegram-каналов и других открытых источников.\n"
+    "• Бот не несёт ответственности за достоверность данных."
+)
+
+
+async def handle_stations_by_city(request):
+    """GET /api/stations/by-city?city=...&region=...&fuel=...&network=...&max_price=...&has_stock=1
+
+    Возвращает АЗС по городу (а не геолокации), с фильтрами:
+      - city: название города (обязательно)
+      - region: регион (опционально)
+      - fuel: 92/95/98/diesel/lpg
+      - network: оператор (Лукойл, Газпром, etc)
+      - max_price: макс. цена за литр
+      - has_stock: 1 = только с подтверждённым наличием (default 1)
+      - include_nearby_regions: 1 = включать соседние регионы (default 1)
+      - limit: макс. кол-во результатов (default 50)
+      - telegram_id: для Premium detection
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
+        return web.json_response({"error": "rate limit exceeded"}, status=429)
+
+    city = (request.query.get("city") or "").strip()
+    if not city:
+        return web.json_response({"error": "city is required"}, status=400)
+
+    region = request.query.get("region") or None
+    fuel = request.query.get("fuel") or None
+    network = request.query.get("network") or None
+    has_stock = request.query.get("has_stock", "1") == "1"
+    include_nearby = request.query.get("include_nearby_regions", "1") == "1"
+
+    try:
+        max_price = float(request.query["max_price"]) if "max_price" in request.query else None
+    except (ValueError, KeyError):
+        max_price = None
+
+    try:
+        limit = int(request.query.get("limit", "50"))
+        limit = max(1, min(limit, 500))
+    except ValueError:
+        limit = 50
+
+    # === Premium detection ===
+    telegram_id_raw = request.query.get("telegram_id")
+    is_premium_user = False
+    if telegram_id_raw:
+        try:
+            tid = int(telegram_id_raw)
+            uid = await get_user_id_by_telegram_id(tid)
+            if uid:
+                is_premium_user = await is_premium(uid)
+        except (ValueError, TypeError):
+            pass
+
+    if is_premium_user:
+        limit = min(limit * 3, 500)
+
+    stations = await find_stations_by_city(
+        city=city,
+        region=region,
+        fuel_type=fuel,
+        network=network,
+        max_price=max_price,
+        has_stock=has_stock,
+        include_nearby_regions=include_nearby,
+        limit=limit,
+    )
+
+    # Получаем статусы (цены + наличие)
+    station_ids = [s["id"] for s in stations]
+    statuses_by_station = await _bulk_get_statuses(station_ids)
+
+    result = []
+    for s in stations:
+        sid = s["id"]
+        statuses = statuses_by_station.get(sid, [])
+        result.append({
+            "id": sid,
+            "name": s.get("name"),
+            "operator": s.get("operator"),
+            "city": s.get("city"),
+            "region": s.get("region"),
+            "address": s.get("address"),
+            "lat": s.get("lat"),
+            "lon": s.get("lon"),
+            "is_verified": bool(s.get("is_verified")),
+            "statuses": [_serialize_status(st) for st in statuses],
+            "has_data": len(statuses) > 0,
+        })
+
+    return web.json_response({
+        "stations": result,
+        "count": len(result),
+        "city": city,
+        "filters": {
+            "region": region,
+            "fuel": fuel,
+            "network": network,
+            "max_price": max_price,
+            "has_stock": has_stock,
+            "include_nearby_regions": include_nearby,
+        },
+        "disclaimer": DISCLAIMER.replace("<b>", "").replace("</b>", ""),
+    })
 
 
 async def handle_search(request):
@@ -641,6 +756,7 @@ def create_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     app.router.add_get("/api/health", handle_health)
     app.router.add_get("/api/stations", handle_stations)
+    app.router.add_get("/api/stations/by-city", handle_stations_by_city)
     app.router.add_get("/api/search", handle_search)
     app.router.add_get("/api/stations/{id}", handle_station_detail)
     app.router.add_get("/api/stations/{id}/price-history", handle_price_history)

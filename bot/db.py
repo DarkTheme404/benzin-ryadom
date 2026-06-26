@@ -717,6 +717,172 @@ async def find_nearest_stations(
         return [dict(r) for r in rows]
 
 
+async def find_stations_by_city(
+    city: str,
+    region: str | None = None,
+    fuel_type: str | None = None,
+    network: str | None = None,
+    max_price: float | None = None,
+    has_stock: bool = True,
+    include_nearby_regions: bool = True,
+    limit: int = 50,
+) -> list:
+    """Ищет АЗС по городу (а не геолокации).
+
+    Фильтры:
+      - city: название города (LIKE, fuzzy match)
+      - region: регион (если None и include_nearby_regions=True — ищем во всех)
+      - fuel_type: 92/95/98/diesel/lpg
+      - network: оператор (Лукойл, Газпром, etc) — LIKE
+      - max_price: максимальная цена за литр
+      - has_stock: True = только АЗС с подтверждённым наличием (отчёт за 4 часа)
+      - include_nearby_regions: True = включаем соседние регионы
+    Возвращает АЗС с:
+      - расстояние от центра города (если есть координаты)
+      - последняя цена (если есть)
+      - наличие (если есть)
+      - source, source_priority
+    """
+    if USE_SQLITE:
+        params = []
+        where = ["is_active = 1"]
+        join = ""
+
+        # === Город (fuzzy) ===
+        if city:
+            where.append("(LOWER(s.city) LIKE ? OR LOWER(s.address) LIKE ? OR LOWER(s.name) LIKE ?)")
+            c = f"%{city.lower()}%"
+            params.extend([c, c, c])
+
+        # === Регион ===
+        if region and not include_nearby_regions:
+            where.append("LOWER(s.region) LIKE ?")
+            params.append(f"%{region.lower()}%")
+
+        # === Сеть (operator/network) ===
+        if network:
+            where.append("(LOWER(s.operator) LIKE ? OR LOWER(s.network) LIKE ? OR LOWER(s.name) LIKE ?)")
+            n = f"%{network.lower()}%"
+            params.extend([n, n, n])
+
+        # === Тип топлива (в fuel_types массиве) ===
+        if fuel_type:
+            where.append("s.fuel_types LIKE ?")
+            params.append(f'%"{fuel_type}"%')
+
+        # === Подзапрос: есть отчёт с наличием за последние 4 часа ===
+        if has_stock:
+            join = """
+                JOIN (
+                    SELECT station_id,
+                           MAX(CASE WHEN available = 1 THEN 1 ELSE 0 END) as has_stock,
+                           MAX(price) FILTER (WHERE fuel_type = $f) as max_price_recent
+                    FROM reports
+                    WHERE created_at > datetime('now', '-4 hours')
+                    GROUP BY station_id
+                ) r ON r.station_id = s.id
+            """
+            where.append("r.has_stock = 1")
+
+        # === Фильтр по цене (свежие отчёты за 7 дней) ===
+        if max_price is not None and fuel_type:
+            if not has_stock:
+                join = """
+                    JOIN (
+                        SELECT station_id, MIN(price) as min_price_recent
+                        FROM reports
+                        WHERE fuel_type = $f AND created_at > datetime('now', '-7 days')
+                          AND price IS NOT NULL
+                        GROUP BY station_id
+                    ) r ON r.station_id = s.id
+                """
+            where.append("r.min_price_recent <= ?")
+            params.append(max_price)
+
+        sql = f"""
+            SELECT s.id, s.name, s.operator, s.city, s.region, s.address, s.lat, s.lon,
+                   s.fuel_types, s.is_verified,
+                   {("r.has_stock," if has_stock else "")}
+                   {("r.min_price_recent as min_price," if max_price is not None and fuel_type else "")}
+                   0 as distance_km
+            FROM stations s {join}
+            WHERE {' AND '.join(where)}
+            ORDER BY s.is_verified DESC, s.name
+            LIMIT ?
+        """
+        params.append(limit)
+        async with _db.execute(sql.replace("$f", "?"), params) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    # === PostgreSQL ===
+    params = []
+    where = ["s.is_active = TRUE"]
+    join = ""
+
+    if city:
+        where.append("(LOWER(s.city) LIKE $1 OR LOWER(s.address) LIKE $1 OR LOWER(s.name) LIKE $1)")
+        params.append(f"%{city.lower()}%")
+
+    if region and not include_nearby_regions:
+        where.append("LOWER(s.region) LIKE $" + str(len(params) + 1))
+        params.append(f"%{region.lower()}%")
+
+    if network:
+        n_idx = len(params) + 1
+        where.append(f"(LOWER(s.operator) LIKE ${n_idx} OR LOWER(s.network) LIKE ${n_idx} OR LOWER(s.name) LIKE ${n_idx})")
+        params.append(f"%{network.lower()}%")
+
+    if fuel_type:
+        f_idx = len(params) + 1
+        where.append(f"${f_idx} = ANY(s.fuel_types)")
+        params.append(fuel_type)
+
+    if has_stock:
+        join = """
+            JOIN (
+                SELECT station_id,
+                       BOOL_OR(available = TRUE) as has_stock
+                FROM reports
+                WHERE created_at > NOW() - INTERVAL '4 hours'
+                GROUP BY station_id
+            ) r ON r.station_id = s.id
+        """
+        where.append("r.has_stock = TRUE")
+
+    if max_price is not None and fuel_type:
+        if not has_stock:
+            join = """
+                JOIN (
+                    SELECT station_id, MIN(price) as min_price_recent
+                    FROM reports
+                    WHERE fuel_type = $X AND created_at > NOW() - INTERVAL '7 days'
+                      AND price IS NOT NULL
+                    GROUP BY station_id
+                ) r ON r.station_id = s.id
+            """.replace("$X", f"${len(params) + 1}")
+            params.append(fuel_type)
+        where.append("r.min_price_recent <= $" + str(len(params) + 1))
+        params.append(max_price)
+
+    sql = f"""
+        SELECT s.id, s.name, s.operator, s.city, s.region, s.address, s.lat, s.lon,
+               s.fuel_types, s.is_verified,
+               {("r.has_stock," if has_stock else "")}
+               {("r.min_price_recent as min_price," if max_price is not None and fuel_type else "")}
+               0 as distance_km
+        FROM stations s {join}
+        WHERE {' AND '.join(where)}
+        ORDER BY s.is_verified DESC, s.name
+        LIMIT ${len(params) + 1}
+    """
+    params.append(limit)
+
+    async with _db.acquire() as conn:
+        rows = await conn.fetch(sql, *params)
+    return [dict(r) for r in rows]
+
+
 async def get_station_by_id(station_id: int) -> dict | None:
     """Получает АЗС по id."""
     if USE_SQLITE:
