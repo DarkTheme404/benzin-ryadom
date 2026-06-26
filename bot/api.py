@@ -52,6 +52,11 @@ def _serialize_station(s: dict) -> dict:
             out["fuel_types"] = json.loads(out["fuel_types"])
         except Exception:
             out["fuel_types"] = []
+    # datetime → ISO string (asyncpg возвращает datetime, json не сериализует)
+    from datetime import datetime, date
+    for k, v in list(out.items()):
+        if isinstance(v, (datetime, date)):
+            out[k] = v.isoformat()
     return out
 
 
@@ -61,6 +66,11 @@ def _serialize_status(s: dict) -> dict:
         out["available"] = bool(out["available"]) if out["available"] is not None else None
     if "has_limit" in out:
         out["has_limit"] = bool(out["has_limit"])
+    # datetime → ISO string
+    from datetime import datetime, date
+    for k, v in list(out.items()):
+        if isinstance(v, (datetime, date)):
+            out[k] = v.isoformat()
     return out
 
 
