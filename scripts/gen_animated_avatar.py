@@ -109,9 +109,9 @@ def draw_frame(frame_idx: int) -> Image.Image:
     img = Image.alpha_composite(img, rounded)
     draw = ImageDraw.Draw(img, "RGBA")
 
-    # === 3. Капля (пульсирует) ===
+    # === 3. Капля (пульсирует, СДВИНУТА ВВЕРХ чтобы было место под текст) ===
     scale = 1.0 + 0.05 * math.sin(t * 2 * math.pi * 1.5)
-    droplet = make_droplet_path(scale)
+    droplet = [(x, y - 100) for x, y in make_droplet_path(scale)]  # сдвиг вверх на 100px
 
     # Сначала тень капли
     shadow = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
@@ -173,17 +173,70 @@ def draw_frame(frame_idx: int) -> Image.Image:
     letter_color_intensity = 0.7 + 0.3 * math.sin(t * 2 * math.pi * 2)
     letter_color = lerp(RED_DARK, RED_LIGHT, letter_color_intensity)
 
-    # Рисуем букву "Б" (центрируем)
+    # Рисуем букву "Б" (центрируем, со сдвигом -100 для соответствия капле)
     text = "Б"
     bbox = draw.textbbox((0, 0), text, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
     text_x = CENTER - text_width // 2 - 30
-    text_y = CENTER - text_height // 2 - 30
+    text_y = CENTER - text_height // 2 - 30 - 100  # сдвиг как у капли
     # Тень буквы
     draw.text((text_x + 4, text_y + 4), text, fill=(180, 10, 40, 180), font=font)
     # Буква
     draw.text((text_x, text_y), text, fill=letter_color + (255,), font=font)
+
+    # === 6. Заголовок «Бензин рядом» (появляется с альфой) ===
+    text_alpha_int = int(255 * min(1.0, t * 4))  # появляется за первые 25% анимации
+    try:
+        title_font = None
+        for font_path in [
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "/Library/Fonts/Arial Bold.ttf",
+        ]:
+            if os.path.exists(font_path):
+                title_font = ImageFont.truetype(font_path, 78)
+                break
+        if title_font is None:
+            title_font = font
+    except Exception:
+        title_font = font
+
+    title = "Бензин рядом"
+    bbox = draw.textbbox((0, 0), title, font=title_font)
+    title_w = bbox[2] - bbox[0]
+    title_x = CENTER - title_w // 2
+    title_y = 360
+    # Тень заголовка
+    draw.text((title_x + 2, title_y + 2), title, fill=(0, 0, 0, text_alpha_int // 2), font=title_font)
+    # Заголовок (белый с лёгким розовым)
+    draw.text((title_x, title_y), title, fill=(255, 240, 245, text_alpha_int), font=title_font)
+
+    # === 7. Tagline «АЗС · ЦЕНЫ · ЗАВОЗ» ===
+    try:
+        tag_font = None
+        for font_path in [
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/Library/Fonts/Arial.ttf",
+        ]:
+            if os.path.exists(font_path):
+                tag_font = ImageFont.truetype(font_path, 32)
+                break
+        if tag_font is None:
+            tag_font = font
+    except Exception:
+        tag_font = font
+
+    tagline = "АЗС  •  ЦЕНЫ  •  ЗАВОЗ"
+    bbox = draw.textbbox((0, 0), tagline, font=tag_font)
+    tag_w = bbox[2] - bbox[0]
+    tag_x = CENTER - tag_w // 2
+    tag_y = 450
+    # Tagline (красноватый, чуть приглушённый)
+    tag_color_intensity = 0.7 + 0.3 * math.sin(t * 2 * math.pi * 2 + 1.0)
+    tag_color = lerp((200, 16, 46), (255, 30, 60), tag_color_intensity)
+    draw.text((tag_x, tag_y), tagline, fill=tag_color + (text_alpha_int,), font=tag_font)
 
     return img
 
