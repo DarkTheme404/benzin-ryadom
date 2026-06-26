@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any
 
 from aiohttp import web
@@ -25,6 +26,7 @@ from db import (
     check_and_award_badges,
     BADGE_CATALOG,
 )
+import db  # for db._fetch, db.USE_SQLITE в get_source_stats
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,73 @@ def _parse_float(request, name: str, min_val: float, max_val: float) -> tuple[fl
 # === Handlers ===
 async def handle_health(request):
     return web.json_response({"status": "ok"})
+
+
+async def handle_admin_stats(request):
+    """GET /api/admin/stats — статистика всех парсеров (мониторинг).
+
+    Возвращает:
+    - Сколько цен за 1/6/24 часа по источникам
+    - Когда был последний отчёт
+    - Статус каждого парсера (OK / STALE / DEAD)
+    - Сколько АЗС в базе
+    - Сколько АЗС с ценами
+    """
+    # === Статистика по источникам ===
+    sources_stats = await get_source_stats()
+    total_stations = await db._fetch("SELECT COUNT(*) as c FROM stations", one=True)
+    with_prices = await db._fetch("""
+        SELECT COUNT(DISTINCT station_id) as c
+        FROM reports
+        WHERE created_at > NOW() - INTERVAL '7 days'
+    """, one=True)
+
+    return web.json_response({
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "stations": {
+            "total": total_stations["c"],
+            "with_prices_7d": with_prices["c"],
+        },
+        "sources": sources_stats,
+    })
+
+
+async def get_source_stats() -> list[dict]:
+    """Собирает статистику по каждому источнику."""
+    rows = await db._fetch("""
+        SELECT source,
+               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') as h1,
+               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '6 hours') as h6,
+               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as h24,
+               COUNT(*) as total,
+               MAX(created_at) as last_update
+        FROM reports
+        GROUP BY source
+        ORDER BY total DESC
+    """)
+    result = []
+    for r in rows:
+        # Статус: OK (1h), STALE (6h), DEAD (24h+)
+        last = r["last_update"]
+        hours_ago = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+        if hours_ago < 1:
+            status = "OK"
+        elif hours_ago < 6:
+            status = "STALE"
+        else:
+            status = "DEAD"
+        result.append({
+            "source": r["source"],
+            "h1": r["h1"],
+            "h6": r["h6"],
+            "h24": r["h24"],
+            "total": r["total"],
+            "last_update": last.isoformat(),
+            "hours_ago": round(hours_ago, 1),
+            "status": status,
+        })
+    return result
 
 
 async def handle_stations(request):
@@ -755,6 +824,7 @@ async def cors_middleware(app, handler):
 def create_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
     app.router.add_get("/api/health", handle_health)
+    app.router.add_get("/api/admin/stats", handle_admin_stats)
     app.router.add_get("/api/stations", handle_stations)
     app.router.add_get("/api/stations/by-city", handle_stations_by_city)
     app.router.add_get("/api/search", handle_search)
