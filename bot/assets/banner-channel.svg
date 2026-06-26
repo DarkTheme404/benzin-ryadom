@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 418" width="800" height="418">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="50%" stop-color="#0a0a0f"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.3" r="0.5">
+      <stop offset="0%" stop-color="#ff1e3c" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#ff1e3c" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="droplet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.85"/>
+    </linearGradient>
+    <linearGradient id="textGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="418" fill="url(#bg)"/>
+  <rect width="800" height="418" fill="url(#glow)"/>
+
+  <!-- Декоративные точки (бензин) -->
+  <g fill="#ff1e3c" opacity="0.3">
+    <circle cx="120" cy="80" r="2"/>
+    <circle cx="180" cy="350" r="1.5"/>
+    <circle cx="650" cy="120" r="2"/>
+    <circle cx="720" cy="320" r="1.5"/>
+    <circle cx="50" cy="200" r="1"/>
+    <circle cx="780" cy="60" r="1"/>
+  </g>
+
+  <!-- Логотип слева -->
+  <g transform="translate(180 209)">
+    <path
+      d="M 0 -100 C -33 -67, -62 -25, -62 17 C -62 62, -25 92, 0 92 C 25 92, 62 62, 62 17 C 62 -25, 33 -67, 0 -100 Z"
+      fill="url(#droplet)"
+    />
+    <text
+      x="0" y="33"
+      text-anchor="middle"
+      font-family="Inter, system-ui, sans-serif"
+      font-weight="900"
+      font-size="83"
+      fill="#ff1e3c"
+    >Б</text>
+  </g>
+
+  <!-- Текст справа -->
+  <g transform="translate(280 0)">
+    <text
+      x="0" y="190"
+      font-family="Inter, system-ui, sans-serif"
+      font-weight="900"
+      font-size="68"
+      fill="url(#textGrad)"
+      letter-spacing="-2"
+    >Бензин рядом</text>
+
+    <text
+      x="0" y="235"
+      font-family="Inter, system-ui, sans-serif"
+      font-weight="500"
+      font-size="20"
+      fill="#ffffff"
+      fill-opacity="0.7"
+      letter-spacing="6"
+    >АЗС · ЦЕНЫ · ЗАВОЗ</text>
+
+    <text
+      x="0" y="290"
+      font-family="Inter, system-ui, sans-serif"
+      font-weight="400"
+      font-size="18"
+      fill="#ffffff"
+      fill-opacity="0.5"
+    >Карта топлива в реальном времени</text>
+  </g>
+</svg>

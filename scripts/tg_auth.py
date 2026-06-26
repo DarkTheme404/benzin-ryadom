@@ -44,9 +44,14 @@ async def main():
     await client.connect()
     if not await client.is_user_authorized():
         phone = input("Phone (+7...): ").strip()
-        sent = await client.send_code_request(phone)
+        # Пробуем отправить через звонок, если SMS не приходит
+        force_call = input("Force call instead of SMS? (y/N): ").strip().lower() == "y"
+        sent = await client.send_code_request(phone, force_sms=not force_call)
         print()
-        print(f"📩 Код отправлен в Telegram. Проверь Saved Messages.")
+        if force_call:
+            print(f"📞 Тебе позвонят робот Telegram и продиктуют код. Ответь!")
+        else:
+            print(f"📩 Код отправлен в Telegram. Проверь Saved Messages + Push + Email.")
         code = input("Code (5 цифр): ").strip()
         try:
             await client.sign_in(phone, code, phone_code_hash=sent.phone_code_hash)

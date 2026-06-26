@@ -1,15 +1,22 @@
 {
-  "name": "Бензин рядом",
-  "short_name": "Бензин",
-  "description": "Где сейчас есть бензин в России. Карта АЗС, отчёты водителей, push-уведомления о завозе.",
+  "name": "Бензин рядом — карта АЗС",
+  "short_name": "Бензин рядом",
+  "description": "Найди бензин за 5 секунд. Цены, очереди, push о завозе. По данным 26 000+ АЗС.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0a0a0f",
   "theme_color": "#ff1e3c",
   "lang": "ru-RU",
-  "scope": "/",
+  "categories": ["navigation", "utilities", "lifestyle"],
   "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
     {
       "src": "/icon-192.svg",
       "sizes": "192x192",
@@ -23,6 +30,18 @@
       "purpose": "any maskable"
     }
   ],
-  "categories": ["navigation", "utilities"],
-  "screenshots": []
+  "shortcuts": [
+    {
+      "name": "Карта АЗС рядом",
+      "short_name": "Карта",
+      "url": "/?view=map",
+      "icons": [{ "src": "/logo.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Список АЗС",
+      "short_name": "Список",
+      "url": "/?view=list",
+      "icons": [{ "src": "/logo.svg", "sizes": "192x192" }]
+    }
+  ]
 }

@@ -157,17 +157,7 @@ async def cmd_start(message: Message):
     first_name = message.from_user.first_name or "друг"
 
     # === Сообщение 1: Hero ===
-    hero = (
-        f"👋 <b>Привет, {escape_html(first_name)}!</b>\n\n"
-        "Я — <b>Бензин рядом</b>. Помогу найти, где сейчас есть топливо — "
-        "в реальном времени, от твоих коллег-водителей.\n\n"
-        "⛽ <b>Что я умею:</b>\n"
-        "🗺 Показать АЗС рядом с наличием и ценами\n"
-        "🔔 Уведомить о завозе в твоём районе\n"
-        "📝 Дать знать другим, что есть / нет / кончается\n"
-        "🏪 Дать доступ к <b>verified</b> АЗС (владелец подтвердил)\n\n"
-        "👇 <b>Нажми кнопку — начнём</b>"
-    )
+    hero = WELCOME_1
     hero_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🗺 Открыть карту АЗС", web_app=WebAppInfo(url=MINI_APP_URL))],
         [InlineKeyboardButton(text="🔍 Попробовать inline-поиск", switch_inline_query="92 Иваново")],
@@ -176,36 +166,14 @@ async def cmd_start(message: Message):
     await message.answer(hero, reply_markup=with_home_inline(hero_kb))
 
     # === Сообщение 2: Inline-фича ===
-    inline_msg = (
-        "🔍 <b>Ищи АЗС прямо в чате — в любом!</b>\n\n"
-        "Просто набери в поле сообщения:\n"
-        "<code>@benzyn_ryadom_bot 92 Иваново</code>\n\n"
-        "Я покажу топливо в твоём городе. Можно отправить результат "
-        "другу — он сразу увидит, куда ехать.\n\n"
-        "💡 <b>Что я понимаю:</b>\n"
-        "• <code>92 Иваново</code> — АИ-92 в Иваново\n"
-        "• <code>95 СПб</code> — АИ-95 в Санкт-Петербурге\n"
-        "• <code>Лукойл Москва</code> — все Лукойлы в Москве\n"
-        "• <code>дизель Тула</code> — дизель в Туле"
-    )
+    inline_msg = WELCOME_2
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔍 Попробовать в этом чате", switch_inline_query_current_chat="95 Иваново")],
+        [InlineKeyboardButton(text="🔍 Попробовать здесь →", switch_inline_query_current_chat="95 Иваново")],
     ])
     await message.answer(inline_msg, reply_markup=with_home_inline(inline_kb))
 
     # === Сообщение 3: Crowdsource + бейджи ===
-    crowdsource = (
-        "📢 <b>Помогай другим — получай бейджи</b>\n\n"
-        "Отмечай ситуацию на АЗС: ✅ есть / ⚠️ кончается / ❌ нет. "
-        "За это получаешь репутацию и бейджи — видно всем в твоём профиле.\n\n"
-        "🏆 <b>Бейджи:</b>\n"
-        "🥉 <b>Новичок</b> — 1+ отчёт\n"
-        "🥈 <b>Активный</b> — 10+ отчётов\n"
-        "🥇 <b>Эксперт</b> — 100+ отчётов\n"
-        "👑 <b>Топ региона</b> — самый активный в своём городе\n\n"
-        "🎁 <b>А если ты владелец АЗС</b> — регистрация даст "
-        "<b>verified-бейдж</b> для твоей АЗС + аналитику просмотров."
-    )
+    crowdsource = WELCOME_3
     crowdsource_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Сообщить о наличии", web_app=WebAppInfo(url=MINI_APP_URL))],
         [InlineKeyboardButton(text="👤 Мой профиль", callback_data="cmd_profile"),
@@ -216,18 +184,7 @@ async def cmd_start(message: Message):
 
 # === /help ===
 async def cmd_help(message: Message):
-    text = (
-        "ℹ️ <b>Команды и фичи</b>\n\n"
-        "🔍 <b>Найти АЗС</b> — /find или <code>@benzyn_ryadom_bot 92 Иваново</code>\n"
-        "📝 <b>Сообщить о наличии</b> — открой АЗС в Mini App\n"
-        "🔔 <b>Подписки</b> — /subscribe → уведомлю о завозе\n"
-        "👤 <b>Профиль</b> — /profile → репутация, бейджи, статистика\n"
-        "🏪 <b>Владелец АЗС</b> — /register_owner → verified-бейдж\n"
-        "📊 <b>Статистика</b> — /stats → отчёты по регионам\n"
-        "🆔 <b>Мой ID</b> — /my_id\n"
-        "🛠 <b>Debug</b> — /find_raw 55.7558 37.6173 → ближайшие 10 АЗС\n\n"
-        "💡 <b>Совет:</b> inline-поиск работает в любом чате, даже если бот молчит."
-    )
+    text = HELP_TEXT
     await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🗺 Открыть Mini App", web_app=WebAppInfo(url=MINI_APP_URL))],
     ])))
@@ -689,43 +646,16 @@ async def cmd_premium(message: Message):
 
     if active and info:
         days_left = (datetime.fromisoformat(info["expires_at"]) - datetime.now()).days
-        await message.answer(
-            f"💎 <b>Premium активен</b>\n\n"
-            f"📅 Осталось дней: <b>{max(days_left, 0)}</b>\n"
-            f"⏰ Подписка до: {info['expires_at'][:10]}\n\n"
-            f"<b>Что у тебя работает:</b>\n"
-            f"🔔 Push о завозе — каждый час (вместо 4ч)\n"
-            f"💸 Push о падении цены >2₽ в твоём районе\n"
-            f"🗺 Карта в радиусе 100 км (вместо 30)\n"
-            f"📊 Графики цен за 30 дней\n"
-            f"💎 Premium-бейдж в профиле\n\n"
-            f"Спасибо за поддержку! 🙏",
+        text = PREMIUM_ACTIVE.format(
+            days_left=max(days_left, 0),
+            expires_at=info["expires_at"][:10],
         )
+        await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[])))
         return
 
-    text = (
-        "💎 <b>Бензин рядом · Premium</b>\n\n"
-        f"💳 <b>{settings.PREMIUM_PRICE_STARS} Stars</b> · {settings.PREMIUM_DURATION_DAYS} дней\n"
-        f"≈ 300₽/мес — дешевле чашки кофе ☕\n\n"
-        "<b>Что ты получишь вместо бесплатного:</b>\n\n"
-        "🔔 <b>Push о завозе — каждый час</b>\n"
-        "   Free: раз в 4 часа (≤6 push в день)\n"
-        "   Premium: раз в 1 час (≤24 push в день)\n\n"
-        "💸 <b>Push о падении цены &gt;2₽</b>\n"
-        "   Free: ❌\n"
-        "   Premium: ✅ — узнаешь когда АИ-95 упал с 58 до 55₽\n\n"
-        "🗺 <b>Радиус карты</b>\n"
-        "   Free: 30 км (≤100 АЗС)\n"
-        "   Premium: 100 км (≤500 АЗС) — для дальних поездок\n\n"
-        "📊 <b>Графики цен за 30 дней</b>\n"
-        "   Free: ❌\n"
-        "   Premium: ✅ — история цены + среднее за месяц\n\n"
-        "💎 <b>Premium-бейдж в профиле</b>\n"
-        "   Free: ❌\n"
-        "   Premium: ✅ — выделяет тебя в отчётах\n\n"
-        "🎁 <b>7 дней бесплатно</b>\n"
-        "   Trial без оплаты — попробуй всё и реши сам\n\n"
-        "💡 <i>Если бот помог найти АЗС хотя бы 1 раз — Premium окупится за месяц.</i>"
+    text = PREMIUM_OFFER.format(
+        price=settings.PREMIUM_PRICE_STARS,
+        days=settings.PREMIUM_DURATION_DAYS,
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(

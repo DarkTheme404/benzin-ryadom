@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff1e3c"/>
+      <stop offset="100%" stop-color="#c8102e"/>
+    </linearGradient>
+    <linearGradient id="droplet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.85"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- Фон -->
+  <rect width="512" height="512" rx="100" fill="url(#bg)"/>
+
+  <!-- Тонкое кольцо -->
+  <circle cx="256" cy="256" r="190" fill="none" stroke="#ffffff" stroke-width="3" stroke-opacity="0.15"/>
+
+  <!-- Капля топлива (иконка АЗС) -->
+  <g transform="translate(256 220)" filter="url(#shadow)">
+    <path
+      d="M 0 -120 C -40 -80, -75 -30, -75 20 C -75 75, -30 110, 0 110 C 30 110, 75 75, 75 20 C 75 -30, 40 -80, 0 -120 Z"
+      fill="url(#droplet)"
+    />
+    <!-- Буква "Б" внутри капли -->
+    <text
+      x="0" y="40"
+      text-anchor="middle"
+      font-family="Inter, system-ui, sans-serif"
+      font-weight="900"
+      font-size="100"
+      fill="#ff1e3c"
+    >Б</text>
+  </g>
+
+  <!-- Текст под логотипом -->
+  <text
+    x="256" y="430"
+    text-anchor="middle"
+    font-family="Inter, system-ui, sans-serif"
+    font-weight="800"
+    font-size="46"
+    fill="#ffffff"
+    letter-spacing="-1"
+  >Бензин рядом</text>
+
+  <!-- Tagline -->
+  <text
+    x="256" y="468"
+    text-anchor="middle"
+    font-family="Inter, system-ui, sans-serif"
+    font-weight="500"
+    font-size="18"
+    fill="#ffffff"
+    fill-opacity="0.75"
+    letter-spacing="3"
+  >АЗС · ЦЕНЫ · ЗАВОЗ</text>
+</svg>
