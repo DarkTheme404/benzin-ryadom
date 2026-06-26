@@ -690,31 +690,85 @@ async def cmd_premium(message: Message):
     if active and info:
         days_left = (datetime.fromisoformat(info["expires_at"]) - datetime.now()).days
         await message.answer(
-            f"⭐ <b>Premium активен</b>\n\n"
+            f"💎 <b>Premium активен</b>\n\n"
             f"📅 Осталось дней: <b>{max(days_left, 0)}</b>\n"
             f"⏰ Подписка до: {info['expires_at'][:10]}\n\n"
+            f"<b>Что у тебя работает:</b>\n"
+            f"🔔 Push о завозе — каждый час (вместо 4ч)\n"
+            f"💸 Push о падении цены >2₽ в твоём районе\n"
+            f"🗺 Карта в радиусе 100 км (вместо 30)\n"
+            f"📊 Графики цен за 30 дней\n"
+            f"💎 Premium-бейдж в профиле\n\n"
             f"Спасибо за поддержку! 🙏",
         )
         return
 
     text = (
-        "⭐ <b>Бензин рядом · Premium</b>\n\n"
-        f"💎 <b>{settings.PREMIUM_PRICE_STARS} Stars</b> · {settings.PREMIUM_DURATION_DAYS} дней\n\n"
-        "<b>Что даёт Premium:</b>\n"
-        "🔔 Push без cooldown — уведомления о любых изменениях\n"
-        "🎯 Фильтры по региону/городу — подписка на весь город\n"
-        "📊 Расширенная аналитика — графики цен и очередей за 30 дней\n"
-        "🚗 Premium-бейдж в профиле — выделяет тебя среди водителей\n"
-        "🗺 Больше АЗС на карте — лимит 100 → 500\n\n"
-        "💡 <i>149 Stars ≈ 300₽, дешевле чашки кофе в месяц.</i>"
+        "💎 <b>Бензин рядом · Premium</b>\n\n"
+        f"💳 <b>{settings.PREMIUM_PRICE_STARS} Stars</b> · {settings.PREMIUM_DURATION_DAYS} дней\n"
+        f"≈ 300₽/мес — дешевле чашки кофе ☕\n\n"
+        "<b>Что ты получишь вместо бесплатного:</b>\n\n"
+        "🔔 <b>Push о завозе — каждый час</b>\n"
+        "   Free: раз в 4 часа (≤6 push в день)\n"
+        "   Premium: раз в 1 час (≤24 push в день)\n\n"
+        "💸 <b>Push о падении цены &gt;2₽</b>\n"
+        "   Free: ❌\n"
+        "   Premium: ✅ — узнаешь когда АИ-95 упал с 58 до 55₽\n\n"
+        "🗺 <b>Радиус карты</b>\n"
+        "   Free: 30 км (≤100 АЗС)\n"
+        "   Premium: 100 км (≤500 АЗС) — для дальних поездок\n\n"
+        "📊 <b>Графики цен за 30 дней</b>\n"
+        "   Free: ❌\n"
+        "   Premium: ✅ — история цены + среднее за месяц\n\n"
+        "💎 <b>Premium-бейдж в профиле</b>\n"
+        "   Free: ❌\n"
+        "   Premium: ✅ — выделяет тебя в отчётах\n\n"
+        "🎁 <b>7 дней бесплатно</b>\n"
+        "   Trial без оплаты — попробуй всё и реши сам\n\n"
+        "💡 <i>Если бот помог найти АЗС хотя бы 1 раз — Premium окупится за месяц.</i>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text=f"⭐ Купить за {settings.PREMIUM_PRICE_STARS} Stars",
+            text="🎁 Попробовать 7 дней бесплатно",
+            callback_data="premium_trial",
+        )],
+        [InlineKeyboardButton(
+            text=f"💎 Купить за {settings.PREMIUM_PRICE_STARS} Stars",
             callback_data="buy_premium",
         )],
     ])
     await message.answer(text, reply_markup=with_home_inline(kb))
+
+
+async def premium_trial_callback(callback: CallbackQuery):
+    """Активирует 7-дневный trial Premium без оплаты."""
+    await callback.answer()
+    await get_or_create_user(callback.message)
+    uid = await get_user_id_by_telegram_id(_tg_id(callback.message))
+    if not uid:
+        await callback.message.answer("Ошибка: пользователь не найден.")
+        return
+    if await is_premium(uid):
+        await callback.message.answer("У тебя уже есть Premium. Используй /premium для проверки.")
+        return
+    # Trial на 7 дней
+    result = await activate_premium(
+        user_id=uid,
+        days=7,
+        charge_id="trial_7d",
+        stars=0,
+    )
+    await callback.message.answer(
+        f"🎁 <b>Trial Premium активирован!</b>\n\n"
+        f"📅 На 7 дней (до {result['expires_at'][:10]})\n\n"
+        f"<b>Что попробовать прямо сейчас:</b>\n"
+        f"1️⃣ Открой карту — увидишь 500 АЗС вместо 100\n"
+        f"2️⃣ Подпишись на АЗС — push придёт через час если будет завоз\n"
+        f"3️⃣ Открой карточку АЗС — увидишь график цены\n\n"
+        f"Если понравится — /premium для оплаты Stars.\n"
+        f"Если нет — ничего не произойдёт, вернёшься на Free.",
+    )
+    await log_event(uid, "premium_trial_activated")
 
 
 async def buy_premium_callback(callback: CallbackQuery):
@@ -1628,9 +1682,9 @@ def register_all_handlers(dp: Dispatcher):
 
     # === Premium (Telegram Stars) ===
     dp.message.register(cmd_premium, Command("premium"))
-    dp.message.register(cmd_analytics, Command("analytics"))
     dp.callback_query.register(buy_premium_callback, F.data == "buy_premium")
     dp.callback_query.register(premium_callback, F.data == "cmd_premium")
+    dp.callback_query.register(premium_trial_callback, F.data == "premium_trial")
     dp.pre_checkout_query.register(pre_checkout_handler)
     dp.message.register(successful_payment_handler, F.successful_payment)
 

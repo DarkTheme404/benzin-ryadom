@@ -162,6 +162,9 @@ export default function App() {
     } catch {}
   }, []);
 
+  // === Premium статус ===
+  const [isPremium, setIsPremium] = useState(false);
+
   // === Сортировка: verified > свежие с ценами > свежие > остальные ===
   const sortedStations = useMemo(() => {
     return [...stations].sort((a, b) => {
@@ -180,15 +183,16 @@ export default function App() {
     async (lat: number, lon: number, fuel: string, silent = false) => {
       if (!silent) setLoading(true);
       setErrorMsg(null);
-      try {
-        const data = await fetchStations(lat, lon, 30, fuel || undefined);
-        setStations(data.stations);
-        setLastUpdate(new Date());
-        if (mapInstanceRef.current) {
-          updateMarkersOnMap(mapInstanceRef.current, data.stations);
-          fitMapToStations(mapInstanceRef.current, data.stations, [lon, lat]);
-        }
-      } catch (e: any) {
+    try {
+      const data = await fetchStations(lat, lon, 100, fuel || undefined);
+      setStations(data.stations);
+      if (data.is_premium !== undefined) setIsPremium(data.is_premium);
+      setLastUpdate(new Date());
+      if (mapInstanceRef.current) {
+        updateMarkersOnMap(mapInstanceRef.current, data.stations);
+        fitMapToStations(mapInstanceRef.current, data.stations, [lon, lat]);
+      }
+    } catch (e: any) {
         console.error("Load error:", e);
         setErrorMsg("Ошибка загрузки данных");
         if (!silent) showToast("Ошибка загрузки данных", "err");
@@ -224,6 +228,16 @@ export default function App() {
     loadStations(center[0], center[1], fuelFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fuelFilter]);
+
+  // === Premium badge (тихая проверка при запуске) ===
+  useEffect(() => {
+    if (tgUser?.id) {
+      fetch(`https://benzin-ryadom.onrender.com/api/premium-status?tg=${tgUser.id}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.is_premium) setIsPremium(true); })
+        .catch(() => {});
+    }
+  }, [tgUser?.id]);
 
   function createMarkerElement(s: Station): HTMLDivElement {
     const status = getMainStatus(s);
@@ -442,6 +456,9 @@ export default function App() {
             <div>
               <div className="text-base font-bold tracking-tight leading-tight">
                 Бензин рядом
+                {isPremium && (
+                  <span className="ml-2 verified-badge" title="Premium активен">💎 Premium</span>
+                )}
               </div>
               <div className="text-[10px] text-white/40 leading-tight flex items-center gap-1">
                 <span className="live-dot" />

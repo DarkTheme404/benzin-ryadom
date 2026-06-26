@@ -151,20 +151,27 @@ async def _push_iteration(bot: Bot):
             fuel_type=fuel_type,
         )
         # Фильтр значимости: шлём только если событие важное
-        # (появилось / цена упала / первый отчёт). Иначе — кулдаун спасёт.
         available = r.get("available")
         prev_available = r.get("prev_available")
         price = r.get("price")
         prev_price = r.get("prev_price")
         became_yes = available in (True, 1) and prev_available in (False, 0, None, 2)
+        # Падение цены > 2₽ — ТОЛЬКО для Premium (реальная killer-фича)
+        price_dropped_premium = (
+            price is not None
+            and prev_price is not None
+            and float(price) < float(prev_price) - 2.0
+        )
+        # Падение цены > 1₽ — для всех
         price_dropped = (
             price is not None
             and prev_price is not None
             and float(price) < float(prev_price) - 1.0
         )
         is_first = prev_available is None
-        if not (became_yes or price_dropped or is_first):
+        if not (became_yes or price_dropped or price_dropped_premium or is_first):
             continue
+        is_premium_event = bool(price_dropped_premium)  # только premium получают этот push
 
         # Собираем задачи для параллельной отправки
         tasks = []
@@ -181,6 +188,9 @@ async def _push_iteration(bot: Bot):
                 continue
             # Premium: без cooldown
             premium = await db.is_premium(uid) if uid else False
+            # Падение цены > 2₽ — только Premium
+            if is_premium_event and not premium:
+                continue
             cooldown_hours = 0 if premium else PUSH_COOLDOWN_HOURS
             if _is_on_cooldown(sub.get("last_notified_at"), cooldown_hours):
                 continue

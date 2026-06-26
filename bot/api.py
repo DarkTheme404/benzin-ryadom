@@ -97,7 +97,7 @@ async def handle_health(request):
 
 
 async def handle_stations(request):
-    """GET /api/stations?lat=..&lon=..&radius=..&fuel=92"""
+    """GET /api/stations?lat=..&lon=..&radius=..&fuel=92&telegram_id=.."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
         return web.json_response({"error": "rate limit exceeded"}, status=429)
 
@@ -108,11 +108,30 @@ async def handle_stations(request):
     if err:
         return err
 
-    # Radius: 1-100 км (защита от DoS)
+    # === Premium detection по telegram_id ===
+    telegram_id_raw = request.query.get("telegram_id")
+    is_premium_user = False
+    if telegram_id_raw:
+        try:
+            tid = int(telegram_id_raw)
+            uid = await get_user_id_by_telegram_id(tid)
+            if uid:
+                from db import is_premium
+                is_premium_user = await is_premium(uid)
+        except (ValueError, TypeError):
+            pass
+
+    # === Premium лимиты ===
+    max_radius = 100 if is_premium_user else 30
+    max_limit = 500 if is_premium_user else 100
+    default_radius = 50 if is_premium_user else 30
+
     try:
-        radius = int(request.query.get("radius", 50))
-        if not (1 <= radius <= 100):
-            return web.json_response({"error": "radius must be in [1, 100]"}, status=400)
+        radius = int(request.query.get("radius", default_radius))
+        if not (1 <= radius <= max_radius):
+            return web.json_response(
+                {"error": f"radius must be in [1, {max_radius}]"}, status=400
+            )
     except ValueError:
         return web.json_response({"error": "radius must be int"}, status=400)
 
@@ -121,7 +140,7 @@ async def handle_stations(request):
         return web.json_response({"error": f"invalid fuel: {fuel}"}, status=400)
 
     stations = await find_nearest_stations(
-        lat=lat, lon=lon, fuel_type=fuel, limit=200, radius_km=radius,
+        lat=lat, lon=lon, fuel_type=fuel, limit=max_limit, radius_km=radius,
     )
 
     # Один запрос на статусы для всех АЗС (избегаем N+1)
@@ -181,7 +200,15 @@ async def handle_search(request):
             "has_data": len(statuses) > 0,
         })
 
-    return web.json_response({"stations": result, "count": len(result)})
+    return web.json_response({
+        "stations": result,
+        "count": len(result),
+        "is_premium": is_premium_user,
+        "limits": {
+            "max_radius": max_radius,
+            "max_stations": max_limit,
+        },
+    })
 
 
 async def _bulk_get_statuses(station_ids: list[int]) -> dict[int, list]:
@@ -326,6 +353,41 @@ async def handle_station_analytics(request):
 
     analytics = await get_station_analytics(station_id, days)
     return web.json_response(analytics)
+
+
+async def handle_premium_status(request):
+    """GET /api/premium-status?tg=<telegram_id> — статус Premium для Mini App."""
+    try:
+        tg = int(request.query.get("tg", "0"))
+    except (ValueError, TypeError):
+        return web.json_response({"is_premium": False, "error": "invalid tg"}, status=400)
+    if not tg:
+        return web.json_response({"is_premium": False})
+
+    uid = await get_user_id_by_telegram_id(tg)
+    if not uid:
+        return web.json_response({"is_premium": False})
+
+    is_prem = await is_premium(uid)
+    info = await get_premium_info(uid) if is_prem else None
+    days_left = 0
+    if info and info.get("expires_at"):
+        try:
+            from datetime import datetime
+            exp = info["expires_at"]
+            if isinstance(exp, str):
+                exp_dt = datetime.fromisoformat(exp)
+            else:
+                exp_dt = exp
+            days_left = max(0, (exp_dt - datetime.now()).days)
+        except Exception:
+            pass
+
+    return web.json_response({
+        "is_premium": is_prem,
+        "days_left": days_left,
+        "expires_at": str(info["expires_at"])[:10] if info else None,
+    })
 
 
 async def handle_create_report(request):
@@ -496,6 +558,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/stations/{id}", handle_station_detail)
     app.router.add_get("/api/stations/{id}/price-history", handle_price_history)
     app.router.add_get("/api/stations/{id}/analytics", handle_station_analytics)
+    app.router.add_get("/api/premium-status", handle_premium_status)
     app.router.add_post("/api/reports", handle_create_report)
     app.router.add_post("/api/price-update", handle_price_update)
     return app

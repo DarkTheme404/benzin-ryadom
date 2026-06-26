@@ -33,6 +33,11 @@ export interface Station {
 export interface StationsResponse {
   stations: Station[];
   count: number;
+  is_premium?: boolean;
+  limits?: {
+    max_radius: number;
+    max_stations: number;
+  };
 }
 
 export interface StationDetail {
