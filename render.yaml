@@ -58,3 +58,22 @@ services:
         value: "false"
       # === Секреты наследуются от web service автоматически ===
       # DATABASE_URL, BOT_TOKEN, CHANNEL_CHAT_ID
+
+  # === Cron Job: мониторинг свежести данных каждые 2 часа ===
+  - type: cron
+    name: benzin-monitor
+    runtime: python
+    plan: free
+    region: frankfurt
+    branch: main
+    rootDir: .
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: cd scripts && python monitor_freshness.py
+    schedule: "0 */2 * * *"  # каждые 2 часа
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: USE_SQLITE
+        value: "false"
+      # ADMIN_CHAT_ID — chat_id админа для alert'ов (задать вручную)
+      # BOT_TOKEN — от @BotFather (наследуется)
