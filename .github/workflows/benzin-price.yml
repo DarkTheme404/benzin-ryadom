@@ -1,0 +1,44 @@
+name: benzin-price.ru Parser (Playwright)
+
+# Парсит benzin-price.ru (28k АЗС) через Playwright.
+# Требует headless browser (chromium).
+# Запускается вручную или по расписанию (раз в неделю).
+
+on:
+  schedule:
+    # Каждое воскресенье в 03:00 UTC
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "ID региона (1=Москва, 2=СПб) или 'all'"
+        required: false
+        default: "1"
+      limit:
+        description: "Лимит АЗС"
+        required: false
+        default: "50"
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install deps
+        run: |
+          pip install aiohttp aiosqlite asyncpg python-dotenv certifi playwright
+      - name: Install Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+      - name: Run benzin-price parser
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          USE_SQLITE: "false"
+        run: |
+          python scripts/parse_benzin_price_headless.py --region ${{ github.event.inputs.region || '1' }} --limit ${{ github.event.inputs.limit || '50' }}

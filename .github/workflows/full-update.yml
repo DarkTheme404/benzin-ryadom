@@ -1,0 +1,42 @@
+name: Full Update (orchestrator)
+
+# Полное обновление: fuelprice.ru (60 городов) + 2ГИС + бензин-price.ru.
+# Запускается раз в день (ночью UTC) или вручную.
+# Использует secrets: DATABASE_URL, TWO_GIS_API_KEY.
+
+on:
+  schedule:
+    # Каждый день в 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+      - name: Run orchestrator (fuelprice + 2gis)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TWO_GIS_API_KEY: ${{ secrets.TWO_GIS_API_KEY }}
+          USE_SQLITE: "false"
+        run: |
+          python scripts/orchestrator.py --once
+      - name: Run 2GIS по крупным городам
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TWO_GIS_API_KEY: ${{ secrets.TWO_GIS_API_KEY }}
+          USE_SQLITE: "false"
+        run: |
+          for city in "Иваново" "Ярославль" "Кострома" "Владимир" "Тула" "Калуга"; do
+            python scripts/parse_2gis.py --city "$city" --limit 30 || true
+            sleep 5
+          done
