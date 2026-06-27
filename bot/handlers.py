@@ -1094,6 +1094,12 @@ async def handle_main_button(message: Message, state: FSMContext = None):
         await go_home_text(message, state)
         return
 
+    # ТЕСТ: сначала отвечаем что кнопка получена
+    try:
+        await message.answer(f"✅ Кнопка получена: {text!r}", reply_markup=main_menu_keyboard())
+    except Exception as e:
+        logger.exception(f"echo failed: {e}")
+
     if text == BTN_FIND or text == "🔍 Найти АЗС":
         await cmd_find(message)
     elif text == BTN_REPORT or text == "📝 Сообщить":
