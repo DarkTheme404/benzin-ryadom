@@ -347,3 +347,42 @@ def web_app_keyboard(web_app_url: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 В начало", callback_data="go_home")],
         ],
     )
+
+
+def report_city_keyboard() -> InlineKeyboardMarkup:
+    """Выбор города для отчёта о наличии."""
+    rows = []
+    for i in range(0, len(TOP_CITIES), 2):
+        row = []
+        for j in range(i, min(i + 2, len(TOP_CITIES))):
+            name, _ = TOP_CITIES[j]
+            row.append(InlineKeyboardButton(
+                text=f"📍 {name}",
+                callback_data=f"report_city:{name}",
+            ))
+        rows.append(row)
+    rows.append([InlineKeyboardButton(
+        text="✏️ Другой город (напишите в сообщении)",
+        callback_data="report_city:other",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def report_station_keyboard(stations: list[dict], city: str) -> InlineKeyboardMarkup:
+    """Список АЗС для выбора при отчёте."""
+    buttons = []
+    for s in stations[:15]:
+        name = (s.get("name") or s.get("operator") or "АЗС")[:30]
+        addr = (s.get("address") or "")[:20]
+        label = f"⛽ {name}"
+        if addr:
+            label += f" ({addr})"
+        buttons.append([InlineKeyboardButton(
+            text=label,
+            callback_data=f"report_pick:{s['id']}",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text="◀️ Назад к городу",
+        callback_data="menu:report",
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)

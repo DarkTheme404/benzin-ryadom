@@ -66,6 +66,8 @@ from keyboards import (
     idea_keyboard,
     premium_keyboard,
     web_app_keyboard,
+    report_city_keyboard,
+    report_station_keyboard,
     BTN_FIND, BTN_REPORT, BTN_SUBSCRIBE, BTN_PROFILE,
     BTN_OWNER, BTN_MY_STATIONS, BTN_HELP, BTN_PREMIUM, BTN_HOME,
     BTN_APP, BTN_BUG, BTN_IDEA,
@@ -909,9 +911,8 @@ async def handle_main_button(message: Message, state: FSMContext = None):
         await cmd_find(message)
     elif text == BTN_REPORT or text == "📝 Сообщить о наличии":
         await message.answer(
-            "📝 <b>Сообщить о наличии топлива</b>\n\n"
-            "Открой карточку АЗС через «🔍 Найти АЗС», затем нажми «📝 Сообщить».",
-            reply_markup=main_menu_keyboard(),
+            "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
+            reply_markup=report_city_keyboard(),
         )
     elif text == BTN_SUBSCRIBE or text == "🔔 Уведомления":
         await cmd_subscribe(message, state)
@@ -1014,9 +1015,8 @@ async def menu_callback(callback: CallbackQuery):
             )
         elif action == "report":
             await msg.answer(
-                "📝 <b>Сообщить о наличии топлива</b>\n\n"
-                "Открой карточку АЗС через «🔍 Найти АЗС», затем нажми «📝 Сообщить».",
-                reply_markup=main_menu_keyboard(),
+                "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
+                reply_markup=report_city_keyboard(),
             )
         elif action == "profile":
             await cmd_profile(msg)
@@ -1556,7 +1556,48 @@ async def show_station_details(callback: CallbackQuery):
     await callback.answer()
 
 
-# === Report flow ===
+# === Report flow: выбор города для отчёта ===
+async def report_city_callback(callback: CallbackQuery):
+    await callback.answer()
+    data = callback.data or ""
+    city = data.split(":", 1)[1] if ":" in data else ""
+    msg = callback.message
+
+    if city == "other":
+        await msg.answer(
+            "✏️ <b>Напиши название города</b> в сообщении:\n\n"
+            "Например: <code>Иваново</code>, <code>Москва</code>",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    # Ищем АЗС в городе
+    stations = await find_stations_by_city(city=city, has_stock=None, limit=15)
+    if not stations:
+        await msg.answer(
+            f"😔 В <b>{city}</b> АЗС не найдены.\n"
+            "Попробуй другой город или напиши адрес в сообщении.",
+            reply_markup=report_city_keyboard(),
+        )
+        return
+
+    await msg.answer(
+        f"⛽ <b>Выбери АЗС в {city}:</b>",
+        reply_markup=report_station_keyboard(stations, city),
+    )
+
+
+# === Report flow: выбор АЗС ===
+async def report_pick_callback(callback: CallbackQuery):
+    await callback.answer()
+    station_id = int(callback.data.split(":")[1])
+    await callback.message.answer(
+        "⛽ <b>Выбери тип топлива:</b>",
+        reply_markup=fuel_type_keyboard(station_id),
+    )
+
+
+# === Report flow: выбор топлива и отправка ===
 async def report_start(callback: CallbackQuery):
     station_id = int(callback.data.split(":")[1])
     await callback.message.answer(
@@ -1895,6 +1936,9 @@ def register_all_handlers(dp: Dispatcher):
 
     # Callback (кнопки)
     dp.callback_query.register(show_station_details, F.data.startswith("st:"))
+    # Report flow
+    dp.callback_query.register(report_city_callback, F.data.startswith("report_city:"))
+    dp.callback_query.register(report_pick_callback, F.data.startswith("report_pick:"))
     dp.callback_query.register(report_start, F.data.startswith("report:") & ~F.data.contains("fuel:") & ~F.data.contains("status:"))
     dp.callback_query.register(report_fuel, F.data.startswith("report_fuel:"))
     dp.callback_query.register(report_submit, F.data.startswith("report_status:"))
