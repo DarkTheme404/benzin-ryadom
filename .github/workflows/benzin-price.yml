@@ -15,14 +15,14 @@ on:
         required: false
         default: "1"
       limit:
-        description: "Лимит АЗС"
+        description: "Лимит АЗС (default 500)"
         required: false
-        default: "50"
+        default: "500"
 
 jobs:
   parse:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,4 +41,8 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           USE_SQLITE: "false"
         run: |
-          python scripts/parse_benzin_price_headless.py --region ${{ github.event.inputs.region || '1' }} --limit ${{ github.event.inputs.limit || '50' }}
+          python scripts/parse_benzin_price_headless.py --region ${{ github.event.inputs.region || '1' }} --limit ${{ github.event.inputs.limit || '500' }}
+      - name: Summary
+        if: always()
+        run: |
+          echo "✅ Workflow завершён. Проверьте /api/admin/stats"

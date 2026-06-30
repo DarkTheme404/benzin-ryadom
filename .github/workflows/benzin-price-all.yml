@@ -1,0 +1,73 @@
+name: benzin-price.ru ALL REGIONS (parallel)
+
+# Парсит ВСЕ регионы benzin-price.ru параллельно.
+# Каждый job — отдельный регион. Можно запустить все сразу.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit_per_region:
+        description: "Лимит АЗС на регион (default 500)"
+        required: false
+        default: "500"
+
+jobs:
+  moscow:
+    name: "Москва и МО (region=1)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install aiohttp aiosqlite asyncpg python-dotenv certifi playwright
+      - run: playwright install chromium && playwright install-deps chromium
+      - name: Run Moscow
+        env: { DATABASE_URL: ${{ secrets.DATABASE_URL }}, USE_SQLITE: "false" }
+        run: |
+          python scripts/parse_benzin_price_headless.py --region 1 --limit ${{ github.event.inputs.limit_per_region || '500' }}
+
+  spb:
+    name: "Санкт-Петербург (region=2)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install aiohttp aiosqlite asyncpg python-dotenv certifi playwright
+      - run: playwright install chromium && playwright install-deps chromium
+      - name: Run SPb
+        env: { DATABASE_URL: ${{ secrets.DATABASE_URL }}, USE_SQLITE: "false" }
+        run: |
+          python scripts/parse_benzin_price_headless.py --region 2 --limit ${{ github.event.inputs.limit_per_region || '500' }}
+
+  lo:
+    name: "Ленобласть (region=3)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install aiohttp aiosqlite asyncpg python-dotenv certifi playwright
+      - run: playwright install chromium && playwright install-deps chromium
+      - name: Run LO
+        env: { DATABASE_URL: ${{ secrets.DATABASE_URL }}, USE_SQLITE: "false" }
+        run: |
+          python scripts/parse_benzin_price_headless.py --region 3 --limit ${{ github.event.inputs.limit_per_region || '500' }}
+
+  krasnodar:
+    name: "Краснодарский край (region=4)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install aiohttp aiosqlite asyncpg python-dotenv certifi playwright
+      - run: playwright install chromium && playwright install-deps chromium
+      - name: Run Krasnodar
+        env: { DATABASE_URL: ${{ secrets.DATABASE_URL }}, USE_SQLITE: "false" }
+        run: |
+          python scripts/parse_benzin_price_headless.py --region 4 --limit ${{ github.event.inputs.limit_per_region || '500' }}
