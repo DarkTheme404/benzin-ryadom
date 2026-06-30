@@ -42,6 +42,13 @@ const NETWORK_FILTERS = [
   "Shell", "Teboil", "СНГ", "Нефтьмагистраль", "Трасса",
 ];
 
+// === Города для кнопок ===
+const CITY_BUTTONS = [
+  "Иваново", "Москва", "СПб", "Ярославль", "Кострома", "Владимир",
+  "Н. Новгород", "Тула", "Калуга", "Краснодар", "Ростов", "Казань",
+  "Екатеринбург", "Новосибирск", "Челябинск", "Самара",
+];
+
 const DEFAULT_CENTER: [number, number] = [55.7558, 37.6173];
 const DEFAULT_MARKER_LIMIT = 300;
 
@@ -134,6 +141,8 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [cityHint, setCityHint] = useState<string | null>(null);
+  const [showCityPicker, setShowCityPicker] = useState(false);
+  const [emergencyStations, setEmergencyStations] = useState<any[] | null>(null);
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
@@ -456,6 +465,41 @@ export default function App() {
     }
   };
 
+  // === Выбор города через кнопки ===
+  const openCityPicker = () => {
+    setShowCityPicker(!showCityPicker);
+  };
+
+  const selectCity = (city: string) => {
+    setShowCityPicker(false);
+    setCityHint(city);
+    setSearchQuery(city);
+    setTimeout(() => handleSearch(), 100);
+  };
+
+  // === Экстренный режим — ближайшая АЗС с топливом ===
+  const triggerEmergency = async () => {
+    const city = cityHint || "Иваново"; // default
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(
+        `https://benzin-ryadom.onrender.com/api/stations/emergency?city=${encodeURIComponent(city)}`,
+      );
+      const data = await res.json();
+      setEmergencyStations(data.stations || []);
+      if ((data.stations || []).length === 0) {
+        showToast(`🚨 Нет данных о наличии в ${city}. Сообщи сам!`, "info");
+      } else {
+        showToast(`🚨 Найдено ${data.count} АЗС с топливом!`, "ok");
+      }
+    } catch (e) {
+      showToast("Ошибка экстренного поиска", "err");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // === Подсчёт статистики для header ===
   const stats = useMemo(() => {
     let withFuel = 0;
@@ -574,6 +618,43 @@ export default function App() {
             <option value="100">до 100₽</option>
           </select>
         </div>
+
+        {/* Город + Экстренный */}
+        <div className="flex gap-1.5 mt-2">
+          <button
+            onClick={openCityPicker}
+            className="flex-1 bg-accent/20 border border-accent/40 rounded-lg px-3 py-2 text-xs font-semibold hover:bg-accent/30"
+          >
+            📍 {cityHint || "Выбрать город"}
+          </button>
+          <button
+            onClick={triggerEmergency}
+            className="flex-1 bg-red-500/20 border border-red-500/50 rounded-lg px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/30"
+          >
+            🚨 Экстренный
+          </button>
+        </div>
+
+        {/* City picker */}
+        {showCityPicker && (
+          <div className="mt-2 grid grid-cols-3 gap-1.5">
+            {CITY_BUTTONS.map((c) => (
+              <button
+                key={c}
+                onClick={() => selectCity(c)}
+                className="bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-[11px] hover:bg-white/10"
+              >
+                {c}
+              </button>
+            ))}
+            <button
+              onClick={() => setShowCityPicker(false)}
+              className="col-span-3 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-white/50"
+            >
+              ✕ Закрыть
+            </button>
+          </div>
+        )}
 
         {/* Disclaimer (компактно) */}
         <details className="mt-2 text-[10px] text-white/40">
