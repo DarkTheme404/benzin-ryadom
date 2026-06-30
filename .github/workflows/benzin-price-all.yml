@@ -1,73 +1,101 @@
-name: benzin-price.ru ALL REGIONS (parallel)
+name: benzin-price.ru ALL REGIONS (parallel matrix)
 
-# Парсит ВСЕ регионы benzin-price.ru параллельно.
-# Каждый job — отдельный регион. Можно запустить все сразу.
+# Парсит ВСЕ регионы benzin-price.ru параллельно через matrix.
+# Каждый регион = отдельный job, можно запустить все сразу.
+# Результат: JSON в artifacts + upload в backend.
 
 on:
   workflow_dispatch:
     inputs:
       limit_per_region:
-        description: "Лимит АЗС на регион (default 500)"
+        description: "Лимит АЗС на регион (default 100)"
         required: false
-        default: "500"
+        default: "100"
+      regions:
+        description: "Список регионов через запятую (default all)"
+        required: false
+        default: "all"
 
 jobs:
-  moscow:
-    name: "Москва и МО (region=1)"
+  parse:
+    name: "Регион ${{ matrix.region_id }}: ${{ matrix.region_name }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { region_id: "1", region_name: "Москва и МО" }
+          - { region_id: "2", region_name: "Санкт-Петербург" }
+          - { region_id: "3", region_name: "Ленинградская обл." }
+          - { region_id: "4", region_name: "Краснодарский край" }
+          - { region_id: "5", region_name: "Ростовская обл." }
+          - { region_id: "7", region_name: "Свердловская обл." }
+          - { region_id: "8", region_name: "Челябинская обл." }
+          - { region_id: "9", region_name: "Башкортостан" }
+          - { region_id: "10", region_name: "Татарстан" }
+          - { region_id: "12", region_name: "Самарская обл." }
+          - { region_id: "22", region_name: "Новосибирская обл." }
+          - { region_id: "23", region_name: "Красноярский край" }
+          - { region_id: "38", region_name: "Иркутская обл." }
+          - { region_id: "44", region_name: "Кемеровская обл." }
+          - { region_id: "50", region_name: "Хабаровский край" }
+          - { region_id: "51", region_name: "Приморский край" }
+          - { region_id: "54", region_name: "Воронежская обл." }
+          - { region_id: "55", region_name: "Тюменская обл." }
+          - { region_id: "63", region_name: "Ставропольский край" }
+          - { region_id: "76", region_name: "Тверская обл." }
+    env:
+      BACKEND_URL: ${{ secrets.BACKEND_URL }}
+      IMPORT_API_KEY: ${{ secrets.IMPORT_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
-      - run: pip install aiohttp aiosqlite asyncpg python-dotenv certifi playwright
+      - run: pip install aiohttp aiosqlite beautifulsoup4 python-dotenv certifi playwright
       - run: playwright install chromium && playwright install-deps chromium
-      - name: Run Moscow
-        env: { DATABASE_URL: ${{ secrets.DATABASE_URL }}, USE_SQLITE: "false" }
+      - name: Run parser
+        id: parse
+        env:
+          REGION_ID: ${{ matrix.region_id }}
+          REGION_NAME: ${{ matrix.region_name }}
+          LIMIT: ${{ github.event.inputs.limit_per_region || '100' }}
         run: |
-          python scripts/parse_benzin_price_headless.py --region 1 --limit ${{ github.event.inputs.limit_per_region || '500' }}
-
-  spb:
-    name: "Санкт-Петербург (region=2)"
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: pip }
-      - run: pip install aiohttp aiosqlite asyncpg python-dotenv certifi playwright
-      - run: playwright install chromium && playwright install-deps chromium
-      - name: Run SPb
-        env: { DATABASE_URL: ${{ secrets.DATABASE_URL }}, USE_SQLITE: "false" }
+          python scripts/parse_benzin_price_headless.py \
+            --region "${REGION_ID}" \
+            --limit "${LIMIT}" \
+            --output "benzin_prices_region_${REGION_ID}.json"
+      - name: Upload to backend API
+        id: upload
+        if: env.BACKEND_URL != '' && env.IMPORT_API_KEY != ''
+        env:
+          REGION_ID: ${{ matrix.region_id }}
         run: |
-          python scripts/parse_benzin_price_headless.py --region 2 --limit ${{ github.event.inputs.limit_per_region || '500' }}
-
-  lo:
-    name: "Ленобласть (region=3)"
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: pip }
-      - run: pip install aiohttp aiosqlite asyncpg python-dotenv certifi playwright
-      - run: playwright install chromium && playwright install-deps chromium
-      - name: Run LO
-        env: { DATABASE_URL: ${{ secrets.DATABASE_URL }}, USE_SQLITE: "false" }
-        run: |
-          python scripts/parse_benzin_price_headless.py --region 3 --limit ${{ github.event.inputs.limit_per_region || '500' }}
-
-  krasnodar:
-    name: "Краснодарский край (region=4)"
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: pip }
-      - run: pip install aiohttp aiosqlite asyncpg python-dotenv certifi playwright
-      - run: playwright install chromium && playwright install-deps chromium
-      - name: Run Krasnodar
-        env: { DATABASE_URL: ${{ secrets.DATABASE_URL }}, USE_SQLITE: "false" }
-        run: |
-          python scripts/parse_benzin_price_headless.py --region 4 --limit ${{ github.event.inputs.limit_per_region || '500' }}
+          FILE="benzin_prices_region_${REGION_ID}.json"
+          if [ -f "$FILE" ]; then
+            curl -fsSL -X POST "${BACKEND_URL}/api/import_prices" \
+              -H "Content-Type: application/json" \
+              -H "X-Import-Key: ${IMPORT_API_KEY}" \
+              --data-binary "@$FILE" \
+              -o upload_result.json -w "%{http_code}" > http_code.txt
+            cat http_code.txt
+            cat upload_result.json || true
+            CODE=$(cat http_code.txt)
+            if [ "$CODE" != "200" ]; then
+              echo "❌ Upload failed with HTTP $CODE"
+              exit 1
+            fi
+          else
+            echo "❌ JSON file not found"
+            exit 1
+          fi
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benzin-prices-region-${{ matrix.region_id }}
+          path: |
+            benzin_prices_region_${{ matrix.region_id }}.json
+            upload_result.json
+          retention-days: 7

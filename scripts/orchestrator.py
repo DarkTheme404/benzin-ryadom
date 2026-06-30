@@ -15,6 +15,7 @@
 
 Запуск:
   python scripts/orchestrator.py --once
+  python scripts/orchestrator.py --once --only fuelprice,enrich   # только указанные
   python scripts/orchestrator.py --schedule    # каждые 6 часов
 
 Расписание (по умолчанию):
@@ -32,8 +33,30 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bot"))
 import db  # noqa: E402
 
-# Импортируем парсеры
-from parse_fuelprice import main as parse_fuelprice
+
+def _safe_import(name: str):
+    """Импорт с обработкой отсутствующих модулей (telethon, playwright и т.п.)."""
+    try:
+        mod = __import__(name)
+        return mod
+    except ImportError as e:
+        print(f"  ⏭ {name}: модуль не установлен ({e})")
+        return None
+    except Exception as e:
+        print(f"  ⏭ {name}: ошибка импорта ({e})")
+        return None
+
+
+# === Импортируем парсеры (мягко) ===
+parse_fuelprice = _safe_import("parse_fuelprice")
+parse_vk = _safe_import("parse_vk")
+parse_tg_channels = _safe_import("parse_tg_channels")
+parse_tg_prices = _safe_import("parse_tg_prices")
+parse_2gis = _safe_import("parse_2gis")
+parse_osm = _safe_import("parse_osm")
+parse_max = _safe_import("parse_max")
+parse_yandex_maps = _safe_import("parse_yandex_maps_playwright")
+enrich_addresses = _safe_import("enrich_addresses")
 
 
 # Топ-12 городов России по населению
@@ -55,20 +78,158 @@ TOP_CITIES = [
 
 async def parse_fuelprice_all_cities():
     """Запускает fuelprice.ru по всем крупным городам."""
+    if not parse_fuelprice:
+        print("  ⏭ parse_fuelprice не импортирован")
+        return {}
     print(f"\n[fuelprice.ru] {len(TOP_CITIES)} городов")
-    total = {"matched": 0, "created": 0, "saved": 0}
     for city in TOP_CITIES:
         try:
-            # Прямой вызов с аргументами
             sys.argv = ["parse_fuelprice.py", "--city", city, "--create-new"]
-            from parse_fuelprice import main as fp_main
-            await fp_main()
+            await parse_fuelprice.main()
         except SystemExit:
             pass
         except Exception as e:
             print(f"  ⚠ {city}: {e}")
         await asyncio.sleep(2)
-    return total
+    return {}
+
+
+async def parse_vk_runner():
+    """Запускает VK-парсер (web или API в зависимости от токена)."""
+    if not parse_vk:
+        print("  ⏭ parse_vk не импортирован")
+        return {}
+    token = os.getenv("VK_SERVICE_TOKEN", "")
+    if token:
+        # Режим API
+        groups = os.getenv("VK_GROUPS", "avto_benzin,fuel_price,autotoplivo,toplivo_prices")
+        sys.argv = ["parse_vk.py", "--api", "--groups", groups, "--limit", "50"]
+    else:
+        # Режим web
+        sys.argv = ["parse_vk.py", "--query", "АИ-95 цена", "--limit", "20"]
+    try:
+        await parse_vk.main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ VK парсер: {e}")
+    return {}
+
+
+async def parse_tg_runner():
+    """Запускает Telethon-парсеры (если есть credentials)."""
+    if not parse_tg_channels and not parse_tg_prices:
+        print("  ⏭ TG: telethon не установлен (pip install telethon)")
+        return {}
+    api_id = os.getenv("TG_API_ID", "")
+    api_hash = os.getenv("TG_API_HASH", "")
+    if not api_id or not api_hash:
+        print(f"  ⏭ TG: TG_API_ID/TG_API_HASH не заданы, пропускаю")
+        return {}
+    if parse_tg_channels:
+        try:
+            sys.argv = ["parse_tg_channels.py", "--limit", "50"]
+            await parse_tg_channels.main()
+        except SystemExit:
+            pass
+        except Exception as e:
+            print(f"  ⚠ TG channels: {e}")
+    if parse_tg_prices:
+        try:
+            sys.argv = ["parse_tg_prices.py", "--all", "--limit", "30"]
+            await parse_tg_prices.main()
+        except SystemExit:
+            pass
+        except Exception as e:
+            print(f"  ⚠ TG prices: {e}")
+    return {}
+
+
+async def parse_2gis_runner():
+    """Запускает 2ГИС-парсер (если есть ключ)."""
+    if not parse_2gis:
+        print("  ⏭ parse_2gis не импортирован")
+        return {}
+    api_key = os.getenv("TWO_GIS_API_KEY", "")
+    if not api_key:
+        print(f"  ⏭ 2ГИС: TWO_GIS_API_KEY не задан, пропускаю")
+        return {}
+    try:
+        cities = ["Москва", "Санкт-Петербург", "Новосибирск", "Екатеринбург", "Казань", "Краснодар"]
+        for city in cities:
+            sys.argv = ["parse_2gis.py", "--city", city, "--limit", "100"]
+            await parse_2gis.main()
+            await asyncio.sleep(2)
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ 2ГИС: {e}")
+    return {}
+
+
+async def parse_max_runner():
+    """Запускает MAX-парсер (если есть токен и добавлены каналы)."""
+    if not parse_max:
+        print("  ⏭ parse_max не импортирован")
+        return {}
+    token = os.getenv("MAX_BOT_TOKEN", "")
+    if not token:
+        print(f"  ⏭ MAX: MAX_BOT_TOKEN не задан, пропускаю")
+        return {}
+    try:
+        sys.argv = ["parse_max.py", "--all", "--limit", "50"]
+        await parse_max.main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ MAX: {e}")
+    return {}
+
+
+async def parse_yandex_maps_runner():
+    """Запускает Яндекс.Карты парсер (POI АЗС).
+    
+    Без API ключа — Playwright, медленно, риск бана.
+    С API ключом — HTTP API, быстро, лимит 1К/день.
+    """
+    if not parse_yandex_maps:
+        print("  ⏭ parse_yandex_maps_playwright не импортирован")
+        return {}
+    api_key = os.getenv("YANDEX_MAPS_API_KEY", "")
+    cities = os.getenv("YANDEX_CITIES", "Иваново,Ярославль,Кострома").split(",")
+    print(f"\n[Яндекс.Карты] {len(cities)} городов, режим: {'HTTP API' if api_key else 'Playwright'}")
+    for city in cities:
+        city = city.strip()
+        if not city:
+            continue
+        try:
+            argv = ["parse_yandex_maps_playwright.py", "--city", city, "--limit", "30"]
+            if api_key:
+                argv.extend(["--api-key", api_key])
+            sys.argv = argv
+            await parse_yandex_maps.main()
+        except SystemExit:
+            pass
+        except Exception as e:
+            print(f"  ⚠ {city}: {e}")
+        await asyncio.sleep(3)
+    return {}
+
+
+async def enrich_runner():
+    """Обогащение адресов: 200 АЗС за раз (для schedule)."""
+    if not enrich_addresses:
+        print("  ⏭ enrich_addresses не импортирован")
+        return {}
+    print(f"\n[enrich_addresses] Photon (быстрый, без ключа)")
+    try:
+        sys.argv = ["enrich_addresses.py", "--limit", "200", "--provider", "photon"]
+        await enrich_addresses.main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ enrich_addresses: {e}")
+    return {}
 
 
 SOURCES = {
@@ -76,6 +237,42 @@ SOURCES = {
         "name": "fuelprice.ru (60+ городов, координаты + цены)",
         "function": parse_fuelprice_all_cities,
         "interval_hours": 24,
+        "enabled": True,
+    },
+    "vk": {
+        "name": "VK (паблики/поиск с ценами на бензин)",
+        "function": parse_vk_runner,
+        "interval_hours": 6,
+        "enabled": True,
+    },
+    "tg": {
+        "name": "Telegram-каналы (Telethon, нужен auth)",
+        "function": parse_tg_runner,
+        "interval_hours": 2,
+        "enabled": True,
+    },
+    "2gis": {
+        "name": "2ГИС (paid API, нужен ключ)",
+        "function": parse_2gis_runner,
+        "interval_hours": 12,
+        "enabled": True,
+    },
+    "max": {
+        "name": "MAX (мессенджер, Bot API, нужен токен)",
+        "function": parse_max_runner,
+        "interval_hours": 6,
+        "enabled": True,
+    },
+    "yandex_maps": {
+        "name": "Яндекс.Карты (POI АЗС, нужен API ключ для скорости)",
+        "function": parse_yandex_maps_runner,
+        "interval_hours": 24,
+        "enabled": True,
+    },
+    "enrich": {
+        "name": "Обогащение адресов (Photon)",
+        "function": enrich_runner,
+        "interval_hours": 6,
         "enabled": True,
     },
 }
@@ -94,8 +291,11 @@ async def run_source(name: str, source: dict) -> bool:
         return False
 
 
-async def run_once():
-    """Запускает все источники один раз."""
+async def run_once(only: list[str] | None = None) -> None:
+    """Запускает все (или указанные) источники один раз.
+
+    only: список имён источников для запуска (None = все enabled).
+    """
     print("=" * 60)
     print(f"ОРКЕСТРАТОР ПАРСЕРОВ — однократный запуск")
     print(f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -106,6 +306,8 @@ async def run_once():
     results = {}
     for name, source in SOURCES.items():
         if not source["enabled"]:
+            continue
+        if only and name not in only:
             continue
         results[name] = await run_source(name, source)
 
@@ -152,13 +354,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="Однократный запуск")
     parser.add_argument("--schedule", action="store_true", help="Запуск по расписанию")
+    parser.add_argument("--only", help="Только указанные источники (через запятую)")
     args = parser.parse_args()
 
     if args.schedule:
         asyncio.run(run_schedule())
     else:
         # По умолчанию — однократный запуск
-        asyncio.run(run_once())
+        only = [s.strip() for s in (args.only or "").split(",") if s.strip()] or None
+        asyncio.run(run_once(only=only))
 
 
 if __name__ == "__main__":

@@ -30,11 +30,10 @@ class Settings:
     NEW_USER_DAILY_REPORT_LIMIT: int = 5
     # Chat ID канала для автопубликации (опционально)
     CHANNEL_CHAT_ID: str = os.getenv("CHANNEL_CHAT_ID", "")
-    # URL Mini App (для inline-кнопок "Открыть карту")
-    MINI_APP_URL: str = os.getenv("MINI_APP_URL", "https://benzin-mini.vercel.app")
     # Premium-подписка через Telegram Stars
     PREMIUM_PRICE_STARS: int = int(os.getenv("PREMIUM_PRICE_STARS", "149"))
     PREMIUM_DURATION_DAYS: int = int(os.getenv("PREMIUM_DURATION_DAYS", "30"))
+    WEB_APP_URL: str = os.getenv("WEB_APP_URL", "")  # URL Mini App для Telegram WebApp
 
     def __post_init__(self):
         if self.ADMIN_IDS is None:

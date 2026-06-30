@@ -1,8 +1,12 @@
 """
-Хэндлеры бота «Бензин рядом».
+Хэндлеры бота «Бензин рядом» — новая архитектура.
+
+Flow: /start → выбор города → фильтры → АЗС → действия
 """
 import json
 import logging
+from datetime import datetime
+from pathlib import Path
 
 from aiogram import Dispatcher, F
 from aiogram.filters import BaseFilter, Command, CommandStart, StateFilter
@@ -21,15 +25,17 @@ from aiogram.types import (
     PreCheckoutQuery,
     ReplyKeyboardMarkup,
     WebAppData,
-
 )
 
 from db import (
+    _execute,
+    _fetch,
     add_owner_station,
     add_report,
     add_subscription,
     activate_premium,
     find_nearest_stations,
+    find_stations_by_city,
     find_stations_by_name,
     get_or_create_user,
     get_owner_stations,
@@ -37,6 +43,7 @@ from db import (
     get_premium_info,
     get_station_by_id,
     get_station_current_status,
+    get_stations_with_statuses,
     get_user_id_by_telegram_id,
     is_owner_of_station,
     is_premium,
@@ -52,10 +59,16 @@ from keyboards import (
     station_actions_keyboard,
     with_home_inline,
     city_keyboard,
+    filters_keyboard,
     price_filter_keyboard,
     network_filter_keyboard,
-    BTN_FIND, BTN_REPORT, BTN_SUBSCRIBE, BTN_MAP, BTN_PROFILE,
-    BTN_OWNER, BTN_MY_STATIONS, BTN_HELP, BTN_STATS, BTN_PREMIUM, BTN_HOME,
+    bug_report_keyboard,
+    idea_keyboard,
+    premium_keyboard,
+    web_app_keyboard,
+    BTN_FIND, BTN_REPORT, BTN_SUBSCRIBE, BTN_PROFILE,
+    BTN_OWNER, BTN_MY_STATIONS, BTN_HELP, BTN_PREMIUM, BTN_HOME,
+    BTN_APP, BTN_BUG, BTN_IDEA,
 )
 from utils import format_distance, format_fuel_status, format_station_card
 from config import settings
@@ -64,10 +77,7 @@ from messages import (
     HELP_TEXT, FIND_PROMPT, FIND_NOTHING, FIND_RESULTS_HEADER,
     MY_STATIONS_EMPTY, SUBSCRIBE_PROMPT, INLINE_NO_RESULTS,
     PREMIUM_OFFER, PREMIUM_ACTIVE,
-    # OWNER_PROMPT, PREMIUM_TRIAL — НЕТ в messages.py, использую inline
 )
-
-MINI_APP_URL = settings.MINI_APP_URL
 
 # Inline-фоллбэки для констант, которых нет в messages.py
 OWNER_PROMPT = (
@@ -90,8 +100,6 @@ logger = logging.getLogger(__name__)
 
 
 # === In-memory кеш для результатов поиска (TTL 60 сек) ===
-# Ключ: (round(lat,2), round(lon,2), radius_km)
-# Значение: (timestamp, results)
 import time as _time
 
 _cache: dict[tuple, tuple[float, list]] = {}
@@ -99,7 +107,6 @@ CACHE_TTL_SEC = 60
 
 
 def _cache_get(lat: float, lon: float, radius_km: int) -> list | None:
-    """Получить из кеша если свежий."""
     key = (round(lat, 2), round(lon, 2), radius_km)
     entry = _cache.get(key)
     if entry is None:
@@ -143,46 +150,45 @@ class SubscribeStates(StatesGroup):
     waiting_radius = State()
 
 
+# === FSM: баг-репорт ===
+class BugReportStates(StatesGroup):
+    waiting_description = State()
+
+
+# === FSM: предложение ===
+class IdeaStates(StatesGroup):
+    waiting_idea = State()
+
+
 # Простое in-memory состояние для owner-режима (non-FSM)
-# Ждём текстовый ввод названия/адреса АЗС от пользователя
 _waiting_owner_search: set[int] = set()
-# Ждём выбор роли (владелец/работник) после выбора АЗС
-_waiting_owner_role: dict[int, int] = {}  # telegram_id -> station_id
-# Ждём ИНН (опционально) перед финальной регистрацией
-_waiting_inn_nosm: set[int] = set()
-# Полное состояние owner-flow: {station_id, role, inn}
+_waiting_owner_role: dict[int, int] = {}
+_waiting_inn_nosm: set[int] = {}
 _owner_state: dict[int, dict] = {}
 
 
 def _tg_id(message) -> int:
-    """Возвращает telegram_id из сообщения."""
     return message.from_user.id
 
 
 class _OwnerWaitingInnFilter(BaseFilter):
-    """Фильтр: пользователь в процессе ввода ИНН в non-FSM owner-режиме."""
     async def __call__(self, message: Message) -> bool:
         return message.from_user is not None and message.from_user.id in _waiting_inn_nosm
 
 
 class _OwnerWaitingSearchFilter(BaseFilter):
-    """Фильтр: пользователь в процессе поиска АЗС в non-FSM owner-режиме."""
     async def __call__(self, message: Message) -> bool:
         if message.from_user is None or not message.text:
             return False
         if message.text.startswith("/"):
-            return False  # это команда
+            return False
         return message.from_user.id in _waiting_owner_search
 
 
 # === /start — Welcome-цепочка (3 сообщения) ===
 async def cmd_start(message: Message):
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"cmd_start: from user {message.from_user.id if message.from_user else '?'}")
     try:
         uid = await get_or_create_user(message)
-        logger.info(f"cmd_start: uid={uid}")
         await log_event(uid, "bot_start")
     except Exception as e:
         logger.exception(f"cmd_start: get_or_create_user failed: {e}")
@@ -191,10 +197,9 @@ async def cmd_start(message: Message):
 
     first_name = message.from_user.first_name or "друг"
 
-    # === Сообщение 1: Hero ===
+    # Сообщение 1: Hero
     try:
         hero = WELCOME_1
-        # Inline-меню со всеми действиями
         hero_kb = main_inline_keyboard()
         await message.answer(hero, reply_markup=hero_kb)
     except Exception as e:
@@ -202,7 +207,7 @@ async def cmd_start(message: Message):
         await message.answer(f"👋 Привет, {first_name}! /help", reply_markup=main_menu_keyboard())
         return
 
-    # === Сообщение 2: Inline-фича ===
+    # Сообщение 2: Inline-фича
     try:
         inline_msg = WELCOME_2
         inline_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -212,11 +217,11 @@ async def cmd_start(message: Message):
     except Exception as e:
         logger.exception(f"cmd_start: WELCOME_2 failed: {e}")
 
-    # === Сообщение 3: Crowdsource + бейджи ===
+    # Сообщение 3: Crowdsource + бейджи
     try:
         crowdsource = WELCOME_3
         crowdsource_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📝 Сообщить о наличии", url=MINI_APP_URL)],
+            [InlineKeyboardButton(text="🔍 Найти АЗС рядом", callback_data="menu:find")],
             [InlineKeyboardButton(text="👤 Мой профиль", callback_data="cmd_profile"),
              InlineKeyboardButton(text="ℹ️ Все команды", callback_data="cmd_help")],
         ])
@@ -224,7 +229,7 @@ async def cmd_start(message: Message):
     except Exception as e:
         logger.exception(f"cmd_start: WELCOME_3 failed: {e}")
 
-    # === Главное меню (reply-клавиатура внизу) ===
+    # Главное меню
     try:
         await message.answer(
             "👇 <b>Главное меню:</b> нажимай кнопки внизу — "
@@ -234,30 +239,20 @@ async def cmd_start(message: Message):
     except Exception as e:
         logger.exception(f"cmd_start: main_menu failed: {e}")
 
-    logger.info(f"cmd_start: done for uid={uid}")
-
 
 # === /help ===
 async def cmd_help(message: Message):
     text = HELP_TEXT
-    await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗺 Открыть Mini App", url=MINI_APP_URL)],
-    ])))
+    await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[])))
 
 
 # === /find ===
 async def cmd_find(message: Message):
-    kb = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True,
-    )
     await message.answer(
-        "📍 <b>Нажми кнопку ниже, чтобы отправить геолокацию.</b>\n\n"
-        "Или просто напиши город / сеть / название АЗС.",
-        reply_markup=kb,
+        "📍 <b>Выбери населённый пункт</b>\n\n"
+        "Иваново, Москва, СПб, и другие. "
+        "Или напиши свой город в сообщении — бот найдёт АЗС.",
+        reply_markup=city_keyboard(),
     )
 
 
@@ -279,9 +274,8 @@ async def cmd_subscribe(message: Message, state: FSMContext):
     )
 
 
-# === /register_owner — регистрация владельца/работника АЗС ===
+# === /register_owner ===
 async def cmd_register_owner(message: Message, state: FSMContext):
-    """Начало регистрации владельца/работника. Просит название/адрес АЗС."""
     _waiting_owner_search.add(_tg_id(message))
     await state.clear()
     await message.answer(
@@ -296,10 +290,9 @@ async def cmd_register_owner(message: Message, state: FSMContext):
 
 
 async def owner_inn_input_nosm(message: Message):
-    """Принимает ИНН от пользователя (non-FSM flow)."""
     telegram_id = _tg_id(message)
     if telegram_id not in _waiting_inn_nosm:
-        return  # не наш случай
+        return
     state = _owner_state.get(telegram_id)
     if not state or "station_id" not in state:
         _waiting_inn_nosm.discard(telegram_id)
@@ -313,7 +306,6 @@ async def owner_inn_input_nosm(message: Message):
 
 
 async def owner_inn_skip_nosm(callback: CallbackQuery):
-    """Пропуск ИНН (non-FSM flow)."""
     telegram_id = _tg_id(callback.message)
     state = _owner_state.get(telegram_id)
     _waiting_inn_nosm.discard(telegram_id)
@@ -325,7 +317,6 @@ async def owner_inn_skip_nosm(callback: CallbackQuery):
 
 
 async def owner_search_input(message: Message):
-    """Обрабатывает текстовый ввод — ищет АЗС по названию/адресу/городу."""
     telegram_id = _tg_id(message)
     if telegram_id not in _waiting_owner_search:
         return
@@ -366,11 +357,10 @@ async def owner_search_input(message: Message):
     ])
 
     _waiting_owner_search.discard(telegram_id)
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=buttons)))
 
 
 async def owner_pick_search(callback: CallbackQuery):
-    """Пользователь выбрал АЗС из результатов поиска → спрашиваем роль."""
     station_id = int(callback.data.split(":", 1)[1])
     telegram_id = _tg_id(callback.message)
 
@@ -391,17 +381,16 @@ async def owner_pick_search(callback: CallbackQuery):
     await callback.message.answer(
         f"{header}\n\n"
         f"Кто ты на этой АЗС?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👑 Я владелец", callback_data="owner_role:owner")],
             [InlineKeyboardButton(text="👨‍🔧 Я работник", callback_data="owner_role:employee")],
             [InlineKeyboardButton(text="❌ Отменить", callback_data="owner_search_cancel")],
-        ]),
+        ])),
     )
     await callback.answer()
 
 
 async def owner_search_cancel(callback: CallbackQuery):
-    """Отмена поиска/регистрации."""
     telegram_id = _tg_id(callback.message)
     _waiting_owner_search.discard(telegram_id)
     _waiting_owner_role.pop(telegram_id, None)
@@ -415,7 +404,6 @@ async def owner_search_cancel(callback: CallbackQuery):
 
 
 async def owner_role_picked(callback: CallbackQuery):
-    """Пользователь выбрал роль (владелец/работник) → спрашиваем ИНН."""
     role = callback.data.split(":", 1)[1]
     if role not in ("owner", "employee"):
         await callback.answer("Неизвестная роль", show_alert=True)
@@ -439,15 +427,14 @@ async def owner_role_picked(callback: CallbackQuery):
         f"📋 Укажи ИНН организации (10 или 12 цифр) — <i>опционально, "
         f"ускорит модерацию и получение ✓ Verified.</i>\n\n"
         f"Если не хочешь — нажми «Пропустить».",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⏭ Пропустить", callback_data="owner_inn_nosm:skip")],
-        ]),
+        ])),
     )
     await callback.answer()
 
 
 async def owner_finish_no_fsm(message, station_id: int, role: str = "owner", inn: str | None = None):
-    """Завершает регистрацию: создаёт owner_stations и users.is_owner=1."""
     telegram_id = _tg_id(message)
     _owner_state.pop(telegram_id, None)
     _waiting_owner_role.pop(telegram_id, None)
@@ -480,13 +467,13 @@ async def owner_finish_no_fsm(message, station_id: int, role: str = "owner", inn
     await message.answer(text, reply_markup=main_menu_keyboard())
 
 
-# === /my_stations — мои АЗС ===
+# === /my_stations ===
 async def cmd_my_stations(message: Message):
     await get_or_create_user(message)
     telegram_id = _tg_id(message)
     uid = await get_user_id_by_telegram_id(telegram_id)
     if not uid:
-        await message.answer("Нажми /start сначала.", reply_markup=main_menu_keyboard())
+        await message.answer("Сначала нажми /start")
         return
 
     stations = await get_owner_stations(uid)
@@ -498,7 +485,7 @@ async def cmd_my_stations(message: Message):
         )
         return
 
-    text = "📊 <b>Твои АЗС:</b>\n\n"
+    text = "🏪 <b>Твои АЗС:</b>\n\n"
     buttons = []
     for s in stations:
         name = (s.get("name") or "АЗС")[:30]
@@ -514,11 +501,10 @@ async def cmd_my_stations(message: Message):
         ])
 
     text += f"Всего: {len(stations)}. Нажми на АЗС, чтобы обновить статус."
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=buttons)))
 
 
 async def show_my_station(callback: CallbackQuery):
-    """Показывает карточку своей АЗС с кнопками обновления статуса."""
     station_id = int(callback.data.split(":")[1])
     await get_or_create_user(callback.message)
     telegram_id = _tg_id(callback.message)
@@ -537,7 +523,6 @@ async def show_my_station(callback: CallbackQuery):
     text = format_station_card(station, statuses)
     text = "👤 <b>Твоя АЗС — обновление статуса:</b>\n\n" + text
 
-    # Кнопки быстрого обновления по типу топлива
     buttons = []
     for fuel in ["92", "95", "98", "diesel"]:
         buttons.append([
@@ -562,12 +547,11 @@ async def show_my_station(callback: CallbackQuery):
         InlineKeyboardButton(text="◀️ Назад", callback_data="my_stations_back"),
     ])
 
-    await callback.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=buttons)))
     await callback.answer()
 
 
 async def owner_quick_set(callback: CallbackQuery):
-    """Быстрое обновление статуса от владельца."""
     parts = callback.data.split(":")
     station_id = int(parts[1])
     fuel = parts[2]
@@ -597,17 +581,15 @@ async def owner_quick_set(callback: CallbackQuery):
     )
 
     status_text = {"yes": "✅ есть", "queue": "🕐 очередь", "low": "⚠️ кончается", "no": "❌ нет"}[status]
-    celebration = await _check_and_celebrate_badges(uid)
-    await callback.answer(f"Записал: АИ-{fuel} — {status_text}{celebration[:200]}", show_alert=True)
+    await callback.answer(f"Записал: АИ-{fuel} — {status_text}", show_alert=True)
 
 
 async def my_stations_back(callback: CallbackQuery):
-    """Возврат к списку своих АЗС."""
     await cmd_my_stations(callback.message)
     await callback.answer()
 
 
-# === /moderate — модерация заявок (только для админов) ===
+# === /moderate ===
 async def cmd_moderate(message: Message):
     if not settings.is_admin(user_id=message.from_user.id, username=message.from_user.username):
         return
@@ -616,7 +598,7 @@ async def cmd_moderate(message: Message):
         await message.answer("Нет заявок на модерацию.")
         return
 
-    for app in apps[:5]:  # максимум 5 за раз
+    for app in apps[:5]:
         name = app.get("station_name") or "АЗС"
         city = app.get("city") or ""
         inn = app.get("inn") or "—"
@@ -632,12 +614,12 @@ async def cmd_moderate(message: Message):
         )
         await message.answer(
             text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve:{app['id']}"),
                     InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject:{app['id']}"),
                 ],
-            ]),
+            ])),
         )
 
 
@@ -651,7 +633,7 @@ async def approve_owner(callback: CallbackQuery):
     await callback.answer()
 
 
-# === /my_id — показать свой telegram_id (для настройки ADMIN_IDS) ===
+# === /my_id ===
 async def cmd_my_id(message: Message):
     user = message.from_user
     await message.answer(
@@ -662,7 +644,7 @@ async def cmd_my_id(message: Message):
     )
 
 
-# === /find_raw lat lon — поиск с произвольными координатами (для отладки) ===
+# === /find_raw ===
 async def cmd_find_raw(message: Message):
     parts = (message.text or "").split()
     if len(parts) != 3:
@@ -691,7 +673,7 @@ async def cmd_find_raw(message: Message):
     await message.answer(text)
 
 
-# === /premium — Telegram Stars ===
+# === /premium ===
 async def cmd_premium(message: Message):
     await get_or_create_user(message)
     telegram_id = _tg_id(message)
@@ -712,21 +694,11 @@ async def cmd_premium(message: Message):
         price=settings.PREMIUM_PRICE_STARS,
         days=settings.PREMIUM_DURATION_DAYS,
     )
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="🎁 Попробовать 7 дней бесплатно",
-            callback_data="premium_trial",
-        )],
-        [InlineKeyboardButton(
-            text=f"💎 Купить за {settings.PREMIUM_PRICE_STARS} Stars",
-            callback_data="buy_premium",
-        )],
-    ])
+    kb = premium_keyboard()
     await message.answer(text, reply_markup=with_home_inline(kb))
 
 
 async def premium_trial_callback(callback: CallbackQuery):
-    """Активирует 7-дневный trial Premium без оплаты."""
     await callback.answer()
     await get_or_create_user(callback.message)
     uid = await get_user_id_by_telegram_id(_tg_id(callback.message))
@@ -736,7 +708,6 @@ async def premium_trial_callback(callback: CallbackQuery):
     if await is_premium(uid):
         await callback.message.answer("У тебя уже есть Premium. Используй /premium для проверки.")
         return
-    # Trial на 7 дней
     result = await activate_premium(
         user_id=uid,
         days=7,
@@ -757,7 +728,6 @@ async def premium_trial_callback(callback: CallbackQuery):
 
 
 async def buy_premium_callback(callback: CallbackQuery):
-    """Отправляет invoice на оплату Stars."""
     await get_or_create_user(callback.message)
     prices = [LabeledPrice(label=f"Premium · {settings.PREMIUM_DURATION_DAYS} дней", amount=settings.PREMIUM_PRICE_STARS)]
     try:
@@ -765,8 +735,8 @@ async def buy_premium_callback(callback: CallbackQuery):
             title="Бензин рядом · Premium",
             description=f"Premium-подписка на {settings.PREMIUM_DURATION_DAYS} дней: push без cooldown, расширенная аналитика, premium-бейдж.",
             payload="premium_30d",
-            provider_token="",  # для Stars — пустая строка
-            currency="XTR",  # XTR = Telegram Stars
+            provider_token="",
+            currency="XTR",
             prices=prices,
         )
     except Exception as e:
@@ -777,12 +747,10 @@ async def buy_premium_callback(callback: CallbackQuery):
 
 
 async def pre_checkout_handler(pre_checkout: PreCheckoutQuery):
-    """Подтверждает pre-checkout для Stars."""
     await pre_checkout.answer(ok=True)
 
 
 async def successful_payment_handler(message: Message):
-    """Обрабатывает успешную оплату Stars."""
     sp = message.successful_payment
     if not sp or sp.currency != "XTR":
         return
@@ -809,151 +777,8 @@ async def successful_payment_handler(message: Message):
     await log_event(uid, "premium_activated", payload={"stars": sp.total_amount})
 
 
-# === /my_stations ===
-async def cmd_my_stations(message: Message):
-    await get_or_create_user(message)
-    telegram_id = _tg_id(message)
-    uid = await get_user_id_by_telegram_id(telegram_id)
-    if not uid:
-        await message.answer("Сначала нажми /start")
-        return
-    stations = await get_owner_stations(uid)
-    if not stations:
-        await message.answer(
-            "У тебя пока нет зарегистрированных АЗС.\n"
-            "Нажми /register_owner, чтобы добавить.",
-            reply_markup=main_menu_keyboard(),
-        )
-        return
-
-    text = "🏪 <b>Твои АЗС:</b>\n\n"
-    kb_rows = []
-    for s in stations:
-        verified = "✅" if s.get("is_verified") else "⏳"
-        name = s.get("name", "АЗС")
-        address = s.get("address") or s.get("city") or "—"
-        text += f"{verified} <b>{name}</b>\n   📍 {address}\n\n"
-        kb_rows.append([
-            InlineKeyboardButton(
-                text=f"{verified} {name[:20]}",
-                callback_data=f"mystation:{s.get('id', s.get('station_id'))}",
-            )
-        ])
-    kb_rows.append([InlineKeyboardButton(text="🏪 Зарегистрировать ещё", callback_data="go_register_owner")])
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
-
-
-# === /analytics — аналитика АЗС (только для владельца) ===
-async def cmd_analytics(message: Message):
-    await get_or_create_user(message)
-    telegram_id = _tg_id(message)
-    uid = await get_user_id_by_telegram_id(telegram_id)
-    if not uid:
-        await message.answer("Сначала нажми /start")
-        return
-    stations = await get_owner_stations(uid)
-    if not stations:
-        await message.answer(
-            "У тебя нет зарегистрированных АЗС.\n"
-            "Нажми /register_owner, чтобы добавить и увидеть аналитику.",
-        )
-        return
-
-    # Собираем аналитику по всем АЗС
-    from db import get_station_analytics
-    total_views = 0
-    total_reports = 0
-    total_subs = 0
-    for s in stations:
-        sid = s.get("id") or s.get("station_id")
-        a = await get_station_analytics(sid, days=30)
-        total_views += a.get("views", 0)
-        total_reports += a.get("reports_30d", 0)
-        total_subs += a.get("subscribers", 0)
-
-    text = (
-        f"📊 <b>Аналитика за 30 дней:</b>\n\n"
-        f"👁 Просмотры: <b>{total_views}</b>\n"
-        f"📝 Отчёты (все): <b>{total_reports}</b>\n"
-        f"🔔 Подписчики: <b>{total_subs}</b>\n\n"
-    )
-    if total_views == 0 and total_reports == 0:
-        text += "💡 <i>Данные появятся когда водители начнут открывать карточки и оставлять отчёты.</i>\n\n"
-
-    text += "<b>По АЗС:</b>\n"
-    for s in stations[:10]:
-        sid = s.get("id") or s.get("station_id")
-        a = await get_station_analytics(sid, days=30)
-        text += (
-            f"\n{ '✅' if s.get('is_verified') else '⏳' } <b>{s.get('name', 'АЗС')[:30]}</b>\n"
-            f"   👁 {a.get('views', 0)} · 📝 {a.get('reports_30d', 0)} · 🔔 {a.get('subscribers', 0)}"
-        )
-        if a.get("avg_price"):
-            text += f" · 💰 {a.get('avg_price'):.2f}₽"
-
-    kb_rows = []
-    for s in stations[:5]:
-        sid = s.get("id") or s.get("station_id")
-        kb_rows.append([InlineKeyboardButton(
-            text=f"📊 {s.get('name', 'АЗС')[:25]}", callback_data=f"analy:{sid}",
-        )])
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
-
-
-async def station_analytics_callback(callback: CallbackQuery):
-    """Показывает детальную аналитику одной АЗС."""
-    await callback.answer()
-    try:
-        station_id = int(callback.data.split(":")[1])
-    except (ValueError, IndexError):
-        return
-    from db import get_station_analytics
-    a = await get_station_analytics(station_id, days=30)
-    text = (
-        f"📊 <b>Аналитика АЗС #{station_id} · 30 дней:</b>\n\n"
-        f"👁 Просмотры: <b>{a.get('views', 0)}</b>\n"
-        f"📝 Отчёты: <b>{a.get('reports_30d', 0)}</b>\n"
-        f"🔔 Подписчики: <b>{a.get('subscribers', 0)}</b>\n"
-    )
-    if a.get("avg_price"):
-        text += f"💰 Средняя цена: <b>{a.get('avg_price'):.2f}₽</b>\n"
-    if a.get("last_report_at"):
-        text += f"⏰ Последний отчёт: {str(a.get('last_report_at'))[:16]}\n"
-
-    fuels = a.get("reports_by_fuel", {})
-    if fuels:
-        text += "\n<b>По топливу:</b>\n"
-        for fuel, data in fuels.items():
-            line = f"  ⛽ АИ-{fuel}: {data['count']} отчётов"
-            if data.get("avg_price"):
-                line += f", ~{data['avg_price']:.2f}₽"
-            text += line + "\n"
-
-    # Мини-график просмотров (последние 7 дней)
-    chart = a.get("views_chart", [])[-7:]
-    if chart:
-        max_v = max((c["count"] for c in chart), default=1) or 1
-        text += "\n<b>Просмотры по дням:</b>\n"
-        for c in chart:
-            bar = "█" * int(c["count"] / max_v * 10) if max_v > 0 else ""
-            text += f"  {c['date']}: {bar} {c['count']}\n"
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗺 Открыть на карте", url=f"{MINI_APP_URL}?station={station_id}")],
-    ])
-    await callback.message.answer(text, reply_markup=with_home_inline(kb))
-
-
-# === Inline mode: @benzyn_ryadom_bot 92 Иваново ===
+# === Inline mode ===
 async def inline_search(inline_query: InlineQuery):
-    """Поиск АЗС прямо в любом чате через @bot.
-
-    Формат запроса:
-    - @bot 92 Иваново         → 92-й в Иваново
-    - @bot Иваново            → все АЗС в Иваново
-    - @bot Лукойл              → все Лукойлы
-    - @bot 95                   → все 95-е
-    """
     query = (inline_query.query or "").strip()
     if len(query) < 2:
         await inline_query.answer(
@@ -964,7 +789,6 @@ async def inline_search(inline_query: InlineQuery):
         )
         return
 
-    # Парсим: выделяем числа (92/95/98/diesel) и остальное
     fuel_keywords = {"92", "95", "98", "100", "дизель", "diesel", "газ", "lpg"}
     tokens = query.lower().split()
     fuel = None
@@ -976,11 +800,9 @@ async def inline_search(inline_query: InlineQuery):
             city_tokens.append(t)
     city_query = " ".join(city_tokens).strip()
 
-    # Ищем по city/operator
     if city_query:
         stations = await find_stations_by_name(city_query, limit=20)
     else:
-        # Только fuel без города — выдаём пустой результат с подсказкой
         await inline_query.answer(
             [],
             switch_pm_text="Укажите город или сеть, например: 92 Иваново",
@@ -989,12 +811,10 @@ async def inline_search(inline_query: InlineQuery):
         )
         return
 
-    # Bulk-получение статусов
     if stations:
         from db import get_stations_with_statuses
         stations = await get_stations_with_statuses(stations)
 
-    # Фильтруем по fuel если указан
     if fuel:
         if fuel == "дизель":
             fuel = "diesel"
@@ -1019,7 +839,6 @@ async def inline_search(inline_query: InlineQuery):
         )
         return
 
-    # Inline results
     results = []
     for i, s in enumerate(stations[:10]):
         statuses = s.get("statuses", [])
@@ -1048,25 +867,15 @@ async def inline_search(inline_query: InlineQuery):
         if status_icons:
             text += f"\n{status_icons}"
 
-        # Inline-кнопки под результатом
         station_id = s["id"]
         yandex_url = f"https://yandex.ru/maps/?rtext=~{lat},{lon}&rtt=auto"
         buttons = [
             [
-                InlineKeyboardButton(
-                    text="🗺 Маршрут",
-                    url=yandex_url,
-                ),
-                InlineKeyboardButton(
-                    text="🔔 Подписаться",
-                    callback_data=f"sub_station:{station_id}",
-                ),
+                InlineKeyboardButton(text="🗺 Маршрут", url=yandex_url),
+                InlineKeyboardButton(text="🔔 Подписаться", callback_data=f"sub_station:{station_id}"),
             ],
             [
-                InlineKeyboardButton(
-                    text="📊 Подробнее",
-                    callback_data=f"st:{station_id}",
-                ),
+                InlineKeyboardButton(text="📊 Подробнее", callback_data=f"st:{station_id}"),
             ],
         ]
 
@@ -1088,62 +897,42 @@ async def inline_search(inline_query: InlineQuery):
 
 # === handle_main_button — текстовые кнопки (reply keyboard) ===
 async def handle_main_button(message: Message, state: FSMContext = None):
-    """Обрабатывает нажатия на кнопки reply-клавиатуры (внизу чата)."""
-    import logging
-    logger = logging.getLogger(__name__)
     text = (message.text or "").strip()
     logger.info(f"handle_main_button: text={text!r}")
 
-    # Сначала — глобальный «В начало»
+    # Глобальный «В начало»
     if text == "🏠 В начало" or text == BTN_HOME:
         await go_home_text(message, state)
         return
 
-    # ТЕСТ: сначала отвечаем что кнопка получена
-    try:
-        await message.answer(f"✅ Кнопка получена: {text!r}", reply_markup=main_menu_keyboard())
-    except Exception as e:
-        logger.exception(f"echo failed: {e}")
-
     if text == BTN_FIND or text == "🔍 Найти АЗС":
         await cmd_find(message)
-    elif text == BTN_REPORT or text == "📝 Сообщить":
+    elif text == BTN_REPORT or text == "📝 Сообщить о наличии":
         await message.answer(
             "📝 <b>Сообщить о наличии топлива</b>\n\n"
             "Открой карточку АЗС через «🔍 Найти АЗС», затем нажми «📝 Сообщить».",
             reply_markup=main_menu_keyboard(),
         )
-    elif text == BTN_SUBSCRIBE or text == "🔔 Подписки":
+    elif text == BTN_SUBSCRIBE or text == "🔔 Уведомления":
         await cmd_subscribe(message, state)
-    elif text == BTN_MAP or text == "🗺 Карта" or text == "🗺 Открыть карту":
-        await open_map(message)
     elif text == BTN_PROFILE or text == "👤 Профиль":
         await cmd_profile(message)
-    elif text == BTN_OWNER or text in ("👤 Я владелец", "Я владелец",
-                                      "👤 Владелец/Работник АЗС", "Владелец/Работник АЗС"):
+    elif text == BTN_OWNER or text == "👤 Я владелец АЗС":
         await cmd_register_owner(message, state)
-    elif text == BTN_MY_STATIONS or text in ("📊 Мои АЗС", "Мои АЗС"):
+    elif text == BTN_MY_STATIONS or text == "🏪 Мои АЗС":
         await cmd_my_stations(message)
-    elif text == BTN_STATS or text == "📊 Статистика":
-        await cmd_stats(message)
+    elif text == BTN_HELP or text == "❓ Помощь" or text == "/help":
+        await cmd_help(message)
     elif text == BTN_PREMIUM or text == "💎 Premium":
         await cmd_premium(message)
-    elif text == BTN_HELP or text == "ℹ️ Помощь" or text == "/help":
-        await cmd_help(message)
+    elif text == BTN_APP or text == "📱 Приложение":
+        await cmd_open_app(message)
+    elif text == BTN_BUG or text == "🐛 Ошибка":
+        await cmd_bug_report(message, state)
+    elif text == BTN_IDEA or text == "💡 Предложение":
+        await cmd_idea(message, state)
     else:
         await handle_text_search(message)
-
-
-async def open_map(message: Message):
-    """Открывает Mini App с картой."""
-    await message.answer(
-        f"🗺 <b>Открой карту в Mini App:</b>\n\n"
-        f"Все {26515:,} АЗС с фильтрами по сети, цене и наличию.\n"
-        f"💎 Premium: радиус до 100 км, push без задержек.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🗺 Открыть карту", url=MINI_APP_URL)],
-        ]),
-    )
 
 
 # === /profile ===
@@ -1172,7 +961,6 @@ async def cmd_profile(message: Message):
         loc = ", ".join(filter(None, [stats.get("city"), stats.get("region")]))
         text += f"📍 Регион: {loc}\n"
 
-    # Premium badge
     if await is_premium(uid):
         text += "\n⭐ <b>Premium</b> — push без cooldown, расширенная аналитика\n"
 
@@ -1185,7 +973,6 @@ async def cmd_profile(message: Message):
         text += "\n🎯 Сделай первый отчёт, чтобы получить бейдж 🥉 «Новичок»!"
 
     kb_rows = [
-        [InlineKeyboardButton(text="🗺 Открыть карту", url=MINI_APP_URL)],
         [InlineKeyboardButton(text="🏪 Зарегистрировать АЗС", callback_data="go_register_owner")],
     ]
     if not await is_premium(uid):
@@ -1194,28 +981,22 @@ async def cmd_profile(message: Message):
     await message.answer(text, reply_markup=with_home_inline(kb))
 
 
-# === /profile callback (из /start) ===
 async def profile_callback(callback: CallbackQuery):
     await callback.answer()
     await cmd_profile(callback.message)
 
 
-# === help callback (из /start) ===
 async def help_callback(callback: CallbackQuery):
     await callback.answer()
     await cmd_help(callback.message)
 
 
-# === menu:* — inline-меню (callback handlers) ===
+# === menu:* — inline-меню ===
 async def menu_callback(callback: CallbackQuery):
-    """Обрабатывает нажатия на кнопки главного inline-меню."""
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"menu_callback: data={callback.data}")
     try:
         await callback.answer()
-    except Exception as e:
-        logger.exception(f"menu_callback: answer failed: {e}")
+    except Exception:
+        pass
 
     data = callback.data or ""
     action = data.split(":", 1)[1] if ":" in data else ""
@@ -1231,10 +1012,6 @@ async def menu_callback(callback: CallbackQuery):
                 "Или напиши свой город в сообщении — бот найдёт АЗС.",
                 reply_markup=city_keyboard(),
             )
-        elif action == "emergency":
-            await emergency_handler(msg)
-        elif action == "map":
-            await open_map(msg)
         elif action == "report":
             await msg.answer(
                 "📝 <b>Сообщить о наличии топлива</b>\n\n"
@@ -1251,13 +1028,16 @@ async def menu_callback(callback: CallbackQuery):
             await cmd_register_owner(msg, None)
         elif action == "my_stations":
             await cmd_my_stations(msg)
-        elif action == "stats":
-            await cmd_stats(msg)
         elif action == "help":
             await cmd_help(msg)
+        elif action == "app":
+            await cmd_open_app(msg)
+        elif action == "bug":
+            await cmd_bug_report(msg, None)
+        elif action == "idea":
+            await cmd_idea(msg, None)
         else:
             await msg.answer(f"❓ Неизвестное действие: {action}", reply_markup=main_menu_keyboard())
-        logger.info(f"menu_callback: action={action} done")
     except Exception as e:
         logger.exception(f"menu_callback: action={action} failed: {e}")
         try:
@@ -1266,9 +1046,8 @@ async def menu_callback(callback: CallbackQuery):
             pass
 
 
-# === city:* — выбор города (callback handlers) ===
+# === city:* — выбор города ===
 async def city_callback(callback: CallbackQuery):
-    """Обрабатывает выбор города."""
     await callback.answer()
     data = callback.data or ""
     city_name = data.split(":", 1)[1] if ":" in data else ""
@@ -1282,84 +1061,121 @@ async def city_callback(callback: CallbackQuery):
         )
         return
 
-    # Сохраняем выбор в state (если нужно) — пока просто показываем результат
-    await show_city_results(msg, city_name)
+    await show_city_filters(msg, city_name)
+
+
+async def show_city_filters(msg, city: str):
+    """Показать фильтры после выбора города."""
+    await msg.answer(
+        f"📍 <b>{city}</b>\n\n"
+        f"Выбери тип топлива или фильтры:",
+        reply_markup=with_home_inline(filters_keyboard(city)),
+    )
 
 
 # === show_city_results — поиск АЗС по городу с фильтрами ===
-async def show_city_results(msg, city: str, fuel: str = "92", max_price: float = None, network: str = None):
+async def show_city_results(msg, city: str, fuel: str = None, max_price: float = None, network: str = None):
     """Показывает АЗС в городе с фильтрами."""
-    # Сначала фильтр по цене
-    if max_price is None and network is None:
-        # Показываем inline-клавиатуру с фильтрами
-        kb_rows = [
-            [InlineKeyboardButton(text="⛽ АИ-92", callback_data=f"fuel:{city}:92"),
-             InlineKeyboardButton(text="⛽ АИ-95", callback_data=f"fuel:{city}:95")],
-            [InlineKeyboardButton(text="⛽ АИ-98", callback_data=f"fuel:{city}:98"),
-             InlineKeyboardButton(text="🛢 Дизель", callback_data=f"fuel:{city}:diesel")],
-            [InlineKeyboardButton(text="💰 Фильтр по цене", callback_data=f"price_menu:{city}")],
-            [InlineKeyboardButton(text="⛽ Фильтр по сети", callback_data=f"net_menu:{city}")],
-            [InlineKeyboardButton(text="🚨 Экстренный (любая цена/сеть)", callback_data=f"emergency:{city}")],
-        ]
-        await msg.answer(
-            f"📍 <b>{city}</b>\n\n"
-            f"Выбери тип топлива или фильтры:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+    try:
+        stations = await find_stations_by_city(
+            city=city, fuel_type=fuel, network=network,
+            max_price=max_price, has_stock=False, limit=20,
         )
-    else:
-        # Показываем АЗС с фильтрами
-        try:
-            stations = await db.find_stations_by_city(
-                city=city, fuel_type=fuel, network=network,
-                max_price=max_price, has_stock=False, limit=20,
-            )
-            if not stations:
-                await msg.answer(
-                    f"🔍 <b>АЗС не найдены</b> в {city}\n"
-                    f"Фильтры: топливо={fuel}, цена до {max_price}, сеть={network or 'любая'}",
-                    reply_markup=main_menu_keyboard(),
-                )
-                return
-
-            # Сортируем по наличию данных
-            lines = [f"⛽ <b>{city}</b> — найдено {len(stations)} АЗС\n"]
-            for i, s in enumerate(stations[:10], 1):
-                name = s.get("name", "АЗС")[:30]
-                operator = s.get("operator") or ""
-                lines.append(f"{i}. <b>{name}</b>" + (f" ({operator})" if operator and operator != name else ""))
-
-            kb = [[InlineKeyboardButton(text="🗺 Открыть в Mini App", url=f"{MINI_APP_URL}?city={city}&fuel={fuel}")]]
-            if max_price:
-                kb[0].append(InlineKeyboardButton(text="🚨 Без фильтра цены", callback_data=f"emergency:{city}"))
-
+        if not stations:
+            filter_desc = []
+            if fuel: filter_desc.append(f"топливо АИ-{fuel}")
+            if max_price: filter_desc.append(f"до {max_price}₽")
+            if network: filter_desc.append(f"сеть: {network}")
             await msg.answer(
-                "\n".join(lines) + "\n\n💡 Подробности в Mini App (с ценами и наличием).",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+                f"🔍 <b>В городе {city} ничего не найдено</b>\n"
+                f"Фильтры: {', '.join(filter_desc) or 'нет'}\n\n"
+                f"Попробуй сбросить фильтры или выбрать другой город.",
+                reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Сбросить фильтры", callback_data=f"city:{city}")],
+                    [InlineKeyboardButton(text="🔍 Другой город", callback_data="menu:find")],
+                ])),
             )
-        except Exception as e:
-            await msg.answer(f"⚠️ Ошибка: {e}", reply_markup=main_menu_keyboard())
+            return
+
+        stations_with_status = await get_stations_with_statuses(stations)
+
+        def _sort_key(s):
+            return (
+                0 if s.get("is_verified") else 1,
+                0 if s.get("has_data") else 1,
+                (s.get("name") or "").lower(),
+            )
+        stations_with_status.sort(key=_sort_key)
+
+        filter_desc = []
+        if fuel: filter_desc.append(f"топливо АИ-{fuel}")
+        if max_price: filter_desc.append(f"до {max_price}₽")
+        if network: filter_desc.append(f"сеть: {network}")
+        title = f"⛽ <b>{city}</b> — найдено {len(stations_with_status)} АЗС"
+        if filter_desc:
+            title += f"\n<i>Фильтры: {', '.join(filter_desc)}</i>"
+        title += "\n"
+
+        buttons = []
+        for s in stations_with_status[:10]:
+            statuses = s.get("statuses", [])
+            name = (s.get("name") or "АЗС")[:22]
+            operator = (s.get("operator") or "")[:14]
+            if operator and operator != name:
+                short = f"{name} · {operator}"
+            else:
+                short = name
+            best_price = None
+            best_fuel = None
+            for st in statuses:
+                if st.get("available") is True and st.get("price") is not None:
+                    if best_price is None or st["price"] < best_price:
+                        best_price = st["price"]
+                        best_fuel = st.get("fuel_type")
+            if best_price is not None and best_fuel:
+                short += f" · АИ-{best_fuel} {best_price:.2f}₽"
+            elif s.get("has_data"):
+                short += " · ✅ есть"
+            else:
+                short += " · ❓ нет данных"
+            buttons.append([InlineKeyboardButton(text=short[:64], callback_data=f"st:{s['id']}")])
+
+        nav_buttons = []
+        if fuel or max_price or network:
+            nav_buttons.append([
+                InlineKeyboardButton(text="🔄 Сбросить фильтры", callback_data=f"city:{city}"),
+            ])
+        nav_buttons.append([
+            InlineKeyboardButton(text="🚨 Экстренный (любая цена/сеть)", callback_data=f"emergency:{city}"),
+            InlineKeyboardButton(text="💰 Фильтр по цене", callback_data=f"price_menu:{city}"),
+        ])
+
+        await msg.answer(
+            title,
+            reply_markup=with_home_inline(InlineKeyboardMarkup(
+                inline_keyboard=buttons + nav_buttons
+            )),
+        )
+    except Exception as e:
+        logger.exception(f"show_city_results: {e}")
+        await msg.answer(f"⚠️ Ошибка: {e}", reply_markup=main_menu_keyboard())
 
 
-# === emergency_handler — ближайшая АЗС с ТОПЛИВОМ (без фильтров) ===
+# === emergency_handler ===
 async def emergency_handler(msg, city: str = None):
-    """Экстренный режим — ближайшая АЗС с подтверждённым наличием топлива.
-
-    Игнорирует цену, сеть, очередь. Только наличие.
-    """
-    # Если город не указан — спрашиваем
+    """Экстренный режим — АЗС с подтверждённым наличием топлива."""
     if not city:
         await msg.answer(
             "🚨 <b>Экстренный режим</b>\n\n"
-            "Найдём ближайшую АЗС с подтверждённым наличием бензина.\n"
+            "Найдём АЗС с подтверждённым наличием бензина.\n"
             "Без фильтров по цене, сети, очереди.\n\n"
             "📍 Выбери город:",
-            reply_markup=city_keyboard(),
+            reply_markup=with_home_inline(city_keyboard()),
         )
         return
 
-    # Ищем АЗС в городе с подтверждённым наличием
     try:
-        stations = await db.find_stations_by_city(
+        stations = await find_stations_by_city(
             city=city, fuel_type=None, network=None,
             max_price=None, has_stock=True, limit=20,
         )
@@ -1372,31 +1188,75 @@ async def emergency_handler(msg, city: str = None):
             )
             return
 
-        lines = [f"🚨 <b>Экстренный: {city}</b> — {len(stations)} АЗС с топливом\n"]
-        for i, s in enumerate(stations[:5], 1):
-            name = s.get("name", "АЗС")[:30]
-            operator = s.get("operator") or ""
-            address = s.get("address", "")[:50]
-            line = f"{i}. <b>{name}</b>"
+        stations_with_status = await get_stations_with_statuses(stations)
+
+        def _sort_key(s):
+            statuses = s.get("statuses", [])
+            has_price = any(st.get("price") is not None for st in statuses)
+            return (
+                0 if s.get("is_verified") else 1,
+                0 if has_price else 1,
+                0 if s.get("has_data") else 1,
+                (s.get("name") or "").lower(),
+            )
+        stations_with_status.sort(key=_sort_key)
+
+        lines = [f"🚨 <b>{city}</b> — {len(stations_with_status)} АЗС с топливом\n"]
+        buttons = []
+        for s in stations_with_status[:10]:
+            statuses = s.get("statuses", [])
+            name = (s.get("name") or "АЗС")[:22]
+            operator = (s.get("operator") or "")[:14]
+
+            best = None
+            for st in statuses:
+                if st.get("available") is True:
+                    if not best or (st.get("price") is not None and (best.get("price") is None or st["price"] < best["price"])):
+                        best = st
+            if not best and statuses:
+                best = statuses[0]
+
             if operator and operator != name:
-                line += f" ({operator})"
-            lines.append(line)
+                short = f"{name} · {operator}"
+            else:
+                short = name
+            if best and best.get("price") is not None:
+                short += f" · АИ-{best.get('fuel_type', '?')} {best['price']:.2f}₽"
+            elif best:
+                short += f" · АИ-{best.get('fuel_type', '?')} ✅"
+            buttons.append([InlineKeyboardButton(text=short[:64], callback_data=f"st:{s['id']}")])
+
+        for s in stations_with_status[:3]:
+            statuses = s.get("statuses", [])
+            name = s.get("name") or "АЗС"
+            address = s.get("address") or ""
+            lines.append(f"  • <b>{name}</b>")
             if address:
-                lines.append(f"   📍 {address}")
+                lines.append(f"    📍 {address[:60]}")
+            for st in statuses[:3]:
+                ft = st.get("fuel_type", "?")
+                price = st.get("price")
+                avail = st.get("available")
+                icon = "✅" if avail is True else ("⚠️" if avail is None else "❌")
+                line = f"    {icon} АИ-{ft}"
+                if price is not None:
+                    line += f" — <b>{price:.2f}₽</b>"
+                if st.get("queue_size"):
+                    line += f" · 🕐 ~{st['queue_size']}"
+                lines.append(line)
+            lines.append("")
 
         await msg.answer(
-            "\n".join(lines) + "\n\n💡 Без фильтров — здесь точно есть топливо (по последним отчётам).",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🗺 Открыть в Mini App", url=f"{MINI_APP_URL}?city={city}&emergency=1")],
-            ]),
+            "\n".join(lines) + "💡 Без фильтров — здесь точно есть топливо (по последним отчётам).",
+            reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=buttons)),
         )
     except Exception as e:
+        logger.exception(f"emergency_handler: {e}")
         await msg.answer(f"⚠️ Ошибка экстренного поиска: {e}", reply_markup=main_menu_keyboard())
 
 
-# === fuel:* — выбор топлива после выбора города ===
+# === fuel:* — выбор топлива ===
 async def fuel_callback(callback: CallbackQuery):
-    """Обрабатывает выбор топлива."""
     await callback.answer()
     data = callback.data or ""
     parts = data.split(":")
@@ -1406,62 +1266,94 @@ async def fuel_callback(callback: CallbackQuery):
     await show_city_results(callback.message, city, fuel=fuel)
 
 
-# === price_menu:* — показать меню выбора цены ===
+# === price_menu:* ===
 async def price_menu_callback(callback: CallbackQuery):
     await callback.answer()
     data = callback.data or ""
-    city = data.split(":", 1)[1] if ":" in data else ""
+    parts = data.split(":", 2)
+    city = parts[1] if len(parts) > 1 else ""
+    fuel = parts[2] if len(parts) > 2 else None
+    suffix = f" (АИ-{fuel})" if fuel else ""
     await callback.message.answer(
-        f"💰 <b>Фильтр по цене для {city}:</b>",
-        reply_markup=price_filter_keyboard(),
+        f"💰 <b>Фильтр по цене для {city}{suffix}:</b>",
+        reply_markup=with_home_inline(price_filter_keyboard(city, fuel)),
     )
 
 
-# === net_menu:* — показать меню выбора сети ===
+# === net_menu:* ===
 async def net_menu_callback(callback: CallbackQuery):
     await callback.answer()
     data = callback.data or ""
-    city = data.split(":", 1)[1] if ":" in data else ""
+    parts = data.split(":", 2)
+    city = parts[1] if len(parts) > 1 else ""
+    fuel = parts[2] if len(parts) > 2 else None
+    suffix = f" (АИ-{fuel})" if fuel else ""
     await callback.message.answer(
-        f"⛽ <b>Фильтр по сети для {city}:</b>",
-        reply_markup=network_filter_keyboard(),
+        f"⛽ <b>Фильтр по сети для {city}{suffix}:</b>",
+        reply_markup=with_home_inline(network_filter_keyboard(city, fuel)),
     )
 
 
-# === price:* — фильтр по цене ===
+# === price:* ===
 async def price_callback(callback: CallbackQuery):
     await callback.answer()
     data = callback.data or ""
     parts = data.split(":")
-    if len(parts) < 2:
+    if len(parts) < 3:
         return
-    price_str = parts[1]
+    city = parts[1]
+
+    fuel: str | None = None
+    price_str: str
+    if len(parts) >= 4 and parts[3] in ("any",) or (len(parts) >= 4 and parts[3].replace(".", "").isdigit()):
+        fuel = parts[2]
+        price_str = parts[3]
+    else:
+        price_str = parts[2]
+
     if price_str == "any":
-        await callback.message.answer("💰 Фильтр по цене сброшен.", reply_markup=main_menu_keyboard())
+        await callback.message.answer(
+            "💰 Фильтр по цене сброшен.",
+            reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"📍 {city}: выбрать фильтры заново", callback_data=f"city:{city}")],
+            ])),
+        )
         return
     try:
         max_price = float(price_str)
-        # Показываем АЗС до этой цены (по всем городам)
-        await show_city_results(callback.message, city="", max_price=max_price)
-    except ValueError:
+        await show_city_results(callback.message, city=city, fuel=fuel, max_price=max_price)
+    except (ValueError, IndexError):
         pass
 
 
-# === net:* — фильтр по сети ===
+# === net:* ===
 async def net_callback(callback: CallbackQuery):
     await callback.answer()
     data = callback.data or ""
     parts = data.split(":")
-    if len(parts) < 2:
+    if len(parts) < 3:
         return
-    network = parts[1]
+    city = parts[1]
+
+    if len(parts) >= 4 and parts[2] in ("92", "95", "98", "diesel", "100", "lpg"):
+        fuel = parts[2]
+        network = parts[3]
+    else:
+        fuel = None
+        network = parts[2]
+
     if network == "any":
-        await callback.message.answer("⛽ Фильтр по сети сброшен.", reply_markup=main_menu_keyboard())
+        await callback.message.answer(
+            "⛽ Фильтр по сети сброшен.",
+            reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"📍 {city}: выбрать фильтры заново", callback_data=f"city:{city}")],
+            ])),
+        )
         return
-    await show_city_results(callback.message, city="", network=network)
+    await show_city_results(callback.message, city=city, fuel=fuel, network=network)
 
 
-# === emergency:* — экстренный для конкретного города ===
+# === emergency:* ===
 async def emergency_city_callback(callback: CallbackQuery):
     await callback.answer()
     data = callback.data or ""
@@ -1472,13 +1364,13 @@ async def emergency_city_callback(callback: CallbackQuery):
     await emergency_handler(callback.message, city=city)
 
 
-# === premium callback (из /profile) ===
+# === premium callback ===
 async def premium_callback(callback: CallbackQuery):
     await callback.answer()
     await cmd_premium(callback.message)
 
 
-# === go_register_owner callback (из /start) ===
+# === go_register_owner callback ===
 async def go_register_owner_callback(callback: CallbackQuery):
     await callback.answer()
     await cmd_register_owner(callback.message, None)
@@ -1496,27 +1388,15 @@ async def cmd_stats(message: Message):
         f"🏙 Городов: <b>{stats.get('cities_count', 0)}</b>\n"
     )
 
-    # === Источники (мониторинг) ===
     try:
-        sources = await db._fetch("""
-            SELECT source,
-                   COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') as h1,
-                   COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as h24,
-                   COUNT(*) as total,
-                   MAX(created_at) as last_update
-            FROM reports
-            GROUP BY source
-            ORDER BY total DESC
-        """)
+        from api import get_source_stats
+        sources = await get_source_stats()
         if sources:
             text += "\n<b>📡 Источники:</b>\n"
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
             for s in sources:
-                hours = (now - s["last_update"]).total_seconds() / 3600
-                status = "✅" if hours < 1 else ("🟡" if hours < 6 else "🔴")
+                status_icon = {"OK": "✅", "STALE": "🟡", "DEAD": "🔴"}.get(s["status"], "❓")
                 text += (
-                    f"  {status} <code>{s['source']}</code>: "
+                    f"  {status_icon} <code>{s['source']}</code>: "
                     f"{s['h24']}/24h, {s['total']} всего\n"
                 )
     except Exception as e:
@@ -1528,13 +1408,13 @@ async def cmd_stats(message: Message):
         "  /api/admin/stats — статистика\n"
         "  /api/stations/by-city — поиск по городу"
     )
-    await message.answer(text)
+    await message.answer(text, reply_markup=main_menu_keyboard())
 
 
 # === Геолокация ===
 async def handle_location(message: Message, state: FSMContext):
     telegram_id = _tg_id(message)
-    uid = await get_or_create_user(message)  # internal id
+    uid = await get_or_create_user(message)
     await log_event(uid, "location_shared")
 
     location = message.location
@@ -1543,35 +1423,30 @@ async def handle_location(message: Message, state: FSMContext):
 
     current_state = await state.get_state()
 
-    # Если ждём гео для подписки
     if current_state == SubscribeStates.waiting_geo.state:
         await state.update_data(lat=lat, lon=lon)
         await state.set_state(SubscribeStates.waiting_radius)
         await message.answer(
             "📍 Геолокацию получил.\n\n"
             "Выбери радиус уведомлений:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(text="3 км", callback_data="sub_radius:3"),
                     InlineKeyboardButton(text="5 км", callback_data="sub_radius:5"),
                     InlineKeyboardButton(text="10 км", callback_data="sub_radius:10"),
                 ],
-            ]),
+            ])),
         )
         return
 
-    # Обычный случай — поиск АЗС рядом
     await _do_find(message, lat, lon)
 
 
 async def _do_find(message: Message, lat: float, lon: float):
-    # Проверяем кеш
     cached = _cache_get(lat, lon, 30)
     if cached is not None:
         stations = cached
     else:
-        # Radius 30 км — оптимально для города и пригородов.
-        # 50 км захватывает соседние города (Кострома, Ярославль для Иванова).
         stations = await find_nearest_stations(lat=lat, lon=lon, limit=10, radius_km=30)
         _cache_set(lat, lon, 30, stations)
 
@@ -1583,7 +1458,6 @@ async def _do_find(message: Message, lat: float, lon: float):
         )
         return
 
-    # Bulk-запрос: 1 запрос вместо 10 (вместо N+1)
     from db import get_stations_with_statuses
     stations = await get_stations_with_statuses(stations)
 
@@ -1601,13 +1475,7 @@ async def _do_find(message: Message, lat: float, lon: float):
         buttons.append([
             InlineKeyboardButton(text=btn_text, callback_data=f"st:{s['id']}")
         ])
-    buttons.append([
-        InlineKeyboardButton(
-            text="🗺 Открыть на карте",
-            url="https://benzin-mini.vercel.app",
-        )
-    ])
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=buttons)))
 
 
 def _get_main_status_icon(statuses: list) -> str:
@@ -1621,7 +1489,7 @@ def _get_main_status_icon(statuses: list) -> str:
                     return "✅"
                 if available is False or available == 0:
                     return "❌"
-                return "⚠️"  # None или неизвестно — "кончается"
+                return "⚠️"
     st = statuses[0]
     available = st.get("available")
     if available is True or available == 1:
@@ -1631,7 +1499,7 @@ def _get_main_status_icon(statuses: list) -> str:
     return "⚠️"
 
 
-# === Поиск по тексту (город / сеть / название) ===
+# === Поиск по тексту ===
 async def handle_text_search(message: Message):
     if not message.text:
         return
@@ -1651,7 +1519,6 @@ async def handle_text_search(message: Message):
         )
         return
 
-    # Bulk-запрос: 1 запрос вместо 8
     from db import get_stations_with_statuses
     stations = await get_stations_with_statuses(stations)
 
@@ -1668,13 +1535,7 @@ async def handle_text_search(message: Message):
         buttons.append([
             InlineKeyboardButton(text=btn_text, callback_data=f"st:{s['id']}")
         ])
-    buttons.append([
-        InlineKeyboardButton(
-            text="🗺 Открыть на карте",
-            url="https://benzin-mini.vercel.app",
-        )
-    ])
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=buttons)))
 
 
 # === Карточка АЗС ===
@@ -1705,6 +1566,58 @@ async def report_start(callback: CallbackQuery):
     await callback.answer()
 
 
+# === Парсинг сообщений от ботов-конкурентов ===
+async def handle_bot_message(message: Message):
+    if not message.text or len(message.text) < 10:
+        return
+    if message.from_user.is_bot is False:
+        return
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+    try:
+        from price_parser import parse_prices, detect_network, detect_city, detect_availability
+        prices = parse_prices(message.text)
+        if not prices:
+            return
+        network = detect_network(message.text)
+        city = detect_city(message.text)
+        available = detect_availability(message.text)
+        bot_username = message.from_user.username or "unknown"
+        logger.info(f"bot_competitor: {bot_username} → {len(prices)} цен (network={network}, city={city})")
+        await get_or_create_user(message)
+        uid = await get_user_id_by_telegram_id(_tg_id(message))
+        station_name = f"Bot: @{bot_username} ({network or '?'}/{city or '?'})"
+        stations_cache: dict = {}
+        rows = await _fetch("SELECT id, name FROM stations")
+        for r in rows:
+            stations_cache[r["name"].lower()] = r["id"]
+        if station_name.lower() in stations_cache:
+            station_id = stations_cache[station_name.lower()]
+        else:
+            new_id = await _execute(
+                """INSERT INTO stations (name, lat, lon, city, region, operator, is_active, created_at)
+                   VALUES (?, 0, 0, ?, '', ?, TRUE, datetime('now'))""",
+                station_name, city or "", network or "",
+                returning=True,
+            )
+            if new_id:
+                station_id = new_id
+            else:
+                return
+        for fuel, price in prices.items():
+            await add_report(
+                station_id=station_id,
+                user_id=uid,
+                fuel_type=fuel,
+                available=available,
+                price=price,
+                source="bot_competitor",
+                comment=f"@{bot_username}: {message.text[:100]}",
+            )
+    except Exception as e:
+        logger.warning(f"handle_bot_message: {e}")
+
+
 async def report_fuel(callback: CallbackQuery):
     parts = callback.data.split(":")
     station_id = int(parts[1])
@@ -1720,7 +1633,7 @@ async def report_submit(callback: CallbackQuery):
     parts = callback.data.split(":")
     station_id = int(parts[1])
     fuel = parts[2]
-    status = parts[3]  # yes / no / low / queue
+    status = parts[3]
 
     available_map = {"yes": True, "queue": True, "low": None, "no": False}
     queue_map = {"yes": None, "queue": 5, "low": None, "no": None}
@@ -1761,7 +1674,7 @@ async def report_submit(callback: CallbackQuery):
     await callback.answer()
 
 
-# === Подписки: callback'и ===
+# === Подписки ===
 async def subscribe_radius(callback: CallbackQuery, state: FSMContext):
     radius = int(callback.data.split(":")[1])
     data = await state.get_data()
@@ -1796,9 +1709,8 @@ async def subscribe_radius(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# === Mini App data: приём отчётов с карты ===
+# === Mini App data ===
 async def handle_web_app_data(message: Message):
-    """Получает данные из Mini App (report и т.п.)."""
     raw = message.web_app_data.data if isinstance(message.web_app_data, WebAppData) else ""
     if not raw:
         return
@@ -1814,7 +1726,7 @@ async def handle_web_app_data(message: Message):
         fuel_type = str(data.get("fuel_type", ""))
         available_raw = data.get("available")
         if available_raw is None:
-            available = None  # "кончается"
+            available = None
         elif isinstance(available_raw, bool):
             available = available_raw
         else:
@@ -1856,9 +1768,8 @@ async def handle_back_to_list(callback: CallbackQuery):
     await callback.answer()
 
 
-# === 🏠 "В начало" — глобальный сброс в любой точке ===
+# === 🏠 "В начало" ===
 async def go_home_callback(callback: CallbackQuery, state: FSMContext = None):
-    """Сбрасывает ВСЕ состояния (FSM + in-memory) и возвращает в главное меню."""
     telegram_id = _tg_id(callback.message)
     _waiting_owner_search.discard(telegram_id)
     _waiting_owner_role.pop(telegram_id, None)
@@ -1879,7 +1790,6 @@ async def go_home_callback(callback: CallbackQuery, state: FSMContext = None):
 
 
 async def go_home_text(message: Message, state: FSMContext = None):
-    """Тот же сброс, но по тексту '🏠 В начало'."""
     telegram_id = _tg_id(message)
     _waiting_owner_search.discard(telegram_id)
     _waiting_owner_role.pop(telegram_id, None)
@@ -1908,9 +1818,45 @@ async def subscribe_station(callback: CallbackQuery):
     await callback.answer("🔔 Подписался. Сообщу, как только появятся отчёты.", show_alert=True)
 
 
+# === Открыть приложение ===
+async def cmd_open_app(message: Message):
+    """Показывает кнопку для открытия Telegram Web App."""
+    web_app_url = settings.WEB_APP_URL if hasattr(settings, 'WEB_APP_URL') else "https://example.com/miniapp"
+    await message.answer(
+        "📱 <b>Приложение «Бензин рядом»</b>\n\n"
+        "Открой приложение для удобного поиска АЗС с картой и фильтрами.",
+        reply_markup=web_app_keyboard(web_app_url),
+    )
+
+
+# === Баг-репорт ===
+async def cmd_bug_report(message: Message, state: FSMContext):
+    """Отправка баг-репорта."""
+    if state:
+        await state.set_state(BugReportStates.waiting_description)
+    await message.answer(
+        "🐛 <b>Сообщи о ошибке</b>\n\n"
+        "Опиши что пошло не так. Чем подробнее — тем быстрее исправим.\n\n"
+        "📸 Можно прикрепить скриншот.",
+        reply_markup=bug_report_keyboard(),
+    )
+
+
+# === Предложение ===
+async def cmd_idea(message: Message, state: FSMContext):
+    """Отправка предложения по доработке."""
+    if state:
+        await state.set_state(IdeaStates.waiting_idea)
+    await message.answer(
+        "💡 <b>Предложение по доработке</b>\n\n"
+        "Напиши что бы ты хотел видеть в боте. Мы всё читаем!",
+        reply_markup=idea_keyboard(),
+    )
+
+
 # === Регистрация ===
 def register_all_handlers(dp: Dispatcher):
-    # Команды
+    # Команды (как fallback)
     dp.message.register(cmd_start, CommandStart())
     dp.message.register(cmd_help, Command("help"))
     dp.message.register(cmd_find, Command("find"))
@@ -1927,7 +1873,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(handle_location, F.location, StateFilter(SubscribeStates.waiting_geo))
     dp.callback_query.register(subscribe_radius, F.data.startswith("sub_radius:"), StateFilter(SubscribeStates.waiting_radius))
 
-    # Non-FSM owner flow (текстовый поиск → выбор АЗС → роль → ИНН → готово)
+    # Non-FSM owner flow
     dp.message.register(owner_inn_input_nosm, _OwnerWaitingInnFilter())
     dp.message.register(owner_search_input, _OwnerWaitingSearchFilter())
     dp.callback_query.register(owner_pick_search, F.data.startswith("owner_pick_search:"))
@@ -1935,10 +1881,13 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(owner_inn_skip_nosm, F.data == "owner_inn_nosm:skip")
     dp.callback_query.register(owner_search_cancel, F.data == "owner_search_cancel")
 
-    # Геолокация (общий случай — поиск АЗС)
+    # Геолокация
     dp.message.register(handle_location, F.location)
 
-    # Mini App data (отчёты с карты)
+    # Парсинг сообщений от ботов-конкурентов
+    dp.message.register(handle_bot_message, F.from_user.is_bot)
+
+    # Mini App data
     dp.message.register(handle_web_app_data, F.web_app_data)
 
     # Текстовые кнопки главного меню
@@ -1953,7 +1902,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(handle_cancel, F.data == "cancel")
     dp.callback_query.register(handle_back_to_list, F.data == "back_to_list")
 
-    # Owner-режим: быстрое обновление статуса
+    # Owner-режим
     dp.callback_query.register(owner_quick_set, F.data.startswith("oset:"))
     dp.callback_query.register(show_my_station, F.data.startswith("mystation:"))
     dp.callback_query.register(my_stations_back, F.data == "my_stations_back")
@@ -1964,14 +1913,13 @@ def register_all_handlers(dp: Dispatcher):
     # Глобальная кнопка «В начало»
     dp.callback_query.register(go_home_callback, F.data == "go_home")
 
-    # === Фаза 2 callbacks ===
-    # Из welcome-цепочки
+    # Фаза 2 callbacks
     dp.callback_query.register(go_register_owner_callback, F.data == "go_register_owner")
     dp.callback_query.register(profile_callback, F.data == "cmd_profile")
     dp.callback_query.register(help_callback, F.data == "cmd_help")
     dp.callback_query.register(menu_callback, F.data.startswith("menu:"))
 
-    # === Premium (Telegram Stars) ===
+    # Premium
     dp.message.register(cmd_premium, Command("premium"))
     dp.callback_query.register(buy_premium_callback, F.data == "buy_premium")
     dp.callback_query.register(premium_callback, F.data == "cmd_premium")
@@ -1985,3 +1933,122 @@ def register_all_handlers(dp: Dispatcher):
     # Аналитика владельца
     dp.callback_query.register(station_analytics_callback, F.data.startswith("analy:"))
 
+    # Фильтры по городу
+    dp.callback_query.register(city_callback, F.data.startswith("city:"))
+    dp.callback_query.register(fuel_callback, F.data.startswith("fuel:"))
+    dp.callback_query.register(price_menu_callback, F.data.startswith("price_menu:"))
+    dp.callback_query.register(price_callback, F.data.startswith("price:"))
+    dp.callback_query.register(net_menu_callback, F.data.startswith("net_menu:"))
+    dp.callback_query.register(net_callback, F.data.startswith("net:"))
+    dp.callback_query.register(emergency_city_callback, F.data.startswith("emergency:"))
+
+
+# === Аналитика владельца ===
+async def cmd_analytics(message: Message):
+    await get_or_create_user(message)
+    telegram_id = _tg_id(message)
+    uid = await get_user_id_by_telegram_id(telegram_id)
+    if not uid:
+        await message.answer("Сначала нажми /start")
+        return
+    stations = await get_owner_stations(uid)
+    if not stations:
+        await message.answer(
+            "У тебя нет зарегистрированных АЗС.\n"
+            "Нажми /register_owner, чтобы добавить и увидеть аналитику.",
+        )
+        return
+
+    from db import get_station_analytics
+    total_views = 0
+    total_reports = 0
+    total_subs = 0
+    for s in stations:
+        sid = s.get("id") or s.get("station_id")
+        a = await get_station_analytics(sid, days=30)
+        total_views += a.get("views", 0)
+        total_reports += a.get("reports_30d", 0)
+        total_subs += a.get("subscribers", 0)
+
+    text = (
+        f"📊 <b>Аналитика за 30 дней:</b>\n\n"
+        f"👁 Просмотры: <b>{total_views}</b>\n"
+        f"📝 Отчёты (все): <b>{total_reports}</b>\n"
+        f"🔔 Подписчики: <b>{total_subs}</b>\n\n"
+    )
+    if total_views == 0 and total_reports == 0:
+        text += "💡 <i>Данные появятся когда водители начнут открывать карточки и оставлять отчёты.</i>\n\n"
+
+    text += "<b>По АЗС:</b>\n"
+    for s in stations[:10]:
+        sid = s.get("id") or s.get("station_id")
+        a = await get_station_analytics(sid, days=30)
+        text += (
+            f"\n{ '✅' if s.get('is_verified') else '⏳' } <b>{s.get('name', 'АЗС')[:30]}</b>\n"
+            f"   👁 {a.get('views', 0)} · 📝 {a.get('reports_30d', 0)} · 🔔 {a.get('subscribers', 0)}"
+        )
+        if a.get("avg_price"):
+            text += f" · 💰 {a.get('avg_price'):.2f}₽"
+
+    kb_rows = []
+    for s in stations[:5]:
+        sid = s.get("id") or s.get("station_id")
+        kb_rows.append([InlineKeyboardButton(
+            text=f"📊 {s.get('name', 'АЗС')[:25]}", callback_data=f"analy:{sid}",
+        )])
+    await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=kb_rows)))
+
+
+async def station_analytics_callback(callback: CallbackQuery):
+    await callback.answer()
+    try:
+        station_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        return
+    from db import get_station_analytics
+    a = await get_station_analytics(station_id, days=30)
+    text = (
+        f"📊 <b>Аналитика АЗС #{station_id} · 30 дней:</b>\n\n"
+        f"👁 Просмотры: <b>{a.get('views', 0)}</b>\n"
+        f"📝 Отчёты: <b>{a.get('reports_30d', 0)}</b>\n"
+        f"🔔 Подписчики: <b>{a.get('subscribers', 0)}</b>\n"
+    )
+    if a.get("avg_price"):
+        text += f"💰 Средняя цена: <b>{a.get('avg_price'):.2f}₽</b>\n"
+    if a.get("last_report_at"):
+        text += f"⏰ Последний отчёт: {str(a.get('last_report_at'))[:16]}\n"
+
+    fuels = a.get("reports_by_fuel", {})
+    if fuels:
+        text += "\n<b>По топливу:</b>\n"
+        for fuel, data in fuels.items():
+            line = f"  ⛽ АИ-{fuel}: {data['count']} отчётов"
+            if data.get("avg_price"):
+                line += f", ~{data['avg_price']:.2f}₽"
+            text += line + "\n"
+
+    chart = a.get("views_chart", [])[-7:]
+    if chart:
+        max_v = max((c["count"] for c in chart), default=1) or 1
+        text += "\n<b>Просмотры по дням:</b>\n"
+        for c in chart:
+            bar = "█" * int(c["count"] / max_v * 10) if max_v > 0 else ""
+            text += f"  {c['date']}: {bar} {c['count']}\n"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    await callback.message.answer(text, reply_markup=with_home_inline(kb))
+
+
+async def _check_and_celebrate_badges(uid):
+    """Проверяет и поздравляет с новыми бейджами."""
+    try:
+        from db import check_and_award_badges
+        new_badges = await check_and_award_badges(uid)
+        if new_badges:
+            text = "\n\n🏆 <b>Новые бейджи!</b>\n"
+            for b in new_badges:
+                text += f"  {b['emoji']} <b>{b['name']}</b>\n"
+            return text
+    except Exception:
+        pass
+    return ""

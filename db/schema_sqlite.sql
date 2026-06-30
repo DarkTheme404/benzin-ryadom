@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS reports (
     disputes INTEGER DEFAULT 0,
     source TEXT DEFAULT 'user',
     expires_at TEXT,
+    next_delivery_at TEXT,                       -- прогноз следующего завоза (если известен)
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 

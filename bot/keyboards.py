@@ -1,25 +1,26 @@
 """
 Клавиатуры — основная и inline.
+Новая архитектура: город → фильтры → АЗС
 """
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
-    WebAppInfo,
 )
 
 # === Текстовые кнопки (reply keyboard внизу экрана) ===
 BTN_FIND = "🔍 Найти АЗС"
 BTN_REPORT = "📝 Сообщить о наличии"
-BTN_SUBSCRIBE = "🔔 Подписки"
-BTN_MAP = "🗺 Открыть карту"
+BTN_SUBSCRIBE = "🔔 Уведомления"
+BTN_OWNER = "👤 Я владелец АЗС"
+BTN_APP = "📱 Приложение"
 BTN_PROFILE = "👤 Профиль"
-BTN_OWNER = "🏪 Владелец АЗС"
-BTN_MY_STATIONS = "📊 Мои АЗС"
-BTN_HELP = "ℹ️ Помощь"
-BTN_STATS = "📊 Статистика"
+BTN_MY_STATIONS = "🏪 Мои АЗС"
+BTN_HELP = "❓ Помощь"
 BTN_PREMIUM = "💎 Premium"
+BTN_BUG = "🐛 Ошибка"
+BTN_IDEA = "💡 Предложение"
 BTN_HOME = "🏠 В начало"
 
 
@@ -27,12 +28,12 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     """Главное меню (кнопки внизу экрана)."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_MAP)],
-            [KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_PROFILE)],
-            [KeyboardButton(text=BTN_SUBSCRIBE), KeyboardButton(text=BTN_PREMIUM)],
-            [KeyboardButton(text=BTN_OWNER), KeyboardButton(text=BTN_MY_STATIONS)],
-            [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_HELP)],
-            [KeyboardButton(text=BTN_HOME)],
+            [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_REPORT)],
+            [KeyboardButton(text=BTN_SUBSCRIBE), KeyboardButton(text=BTN_OWNER)],
+            [KeyboardButton(text=BTN_APP), KeyboardButton(text=BTN_PROFILE)],
+            [KeyboardButton(text=BTN_MY_STATIONS), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_PREMIUM), KeyboardButton(text=BTN_BUG)],
+            [KeyboardButton(text=BTN_IDEA)],
         ],
         resize_keyboard=True,
     )
@@ -44,27 +45,22 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="🔍 Найти АЗС", callback_data="menu:find"),
-                InlineKeyboardButton(text="🌍 Выбрать город", callback_data="menu:city"),
-            ],
-            [
-                InlineKeyboardButton(text="🚨 Экстренный", callback_data="menu:emergency"),
-                InlineKeyboardButton(text="🗺 Карта", callback_data="menu:map"),
-            ],
-            [
                 InlineKeyboardButton(text="📝 Сообщить", callback_data="menu:report"),
+            ],
+            [
+                InlineKeyboardButton(text="🔔 Уведомления", callback_data="menu:subscribe"),
+                InlineKeyboardButton(text="👤 Я владелец", callback_data="menu:owner"),
+            ],
+            [
+                InlineKeyboardButton(text="📱 Приложение", callback_data="menu:app"),
                 InlineKeyboardButton(text="👤 Профиль", callback_data="menu:profile"),
             ],
             [
-                InlineKeyboardButton(text="🔔 Подписки", callback_data="menu:subscribe"),
+                InlineKeyboardButton(text="🏪 Мои АЗС", callback_data="menu:my_stations"),
+                InlineKeyboardButton(text="❓ Помощь", callback_data="menu:help"),
+            ],
+            [
                 InlineKeyboardButton(text="💎 Premium", callback_data="menu:premium"),
-            ],
-            [
-                InlineKeyboardButton(text="🏪 Владелец", callback_data="menu:owner"),
-                InlineKeyboardButton(text="📊 Мои АЗС", callback_data="menu:my_stations"),
-            ],
-            [
-                InlineKeyboardButton(text="📊 Статистика", callback_data="menu:stats"),
-                InlineKeyboardButton(text="ℹ️ Помощь", callback_data="menu:help"),
             ],
         ],
     )
@@ -73,8 +69,12 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
 # === Топ городов для быстрого выбора (Иваново + соседи + крупные) ===
 TOP_CITIES = [
     ("Иваново", "Иваново"),
+    ("Кинешма", "Кинешма"),
+    ("Шуя", "Шуя"),
+    ("Кохма", "Кохма"),
+    ("Вичуга", "Вичуга"),
+    ("Фурманов", "Фурманов"),
     ("Москва", "Москва"),
-    ("Санкт-Петербург", "Санкт-Петербург"),
     ("Ярославль", "Ярославль"),
     ("Кострома", "Кострома"),
     ("Владимир", "Владимир"),
@@ -94,7 +94,6 @@ TOP_CITIES = [
 def city_keyboard() -> InlineKeyboardMarkup:
     """Кнопки для выбора города (inline)."""
     rows = []
-    # По 2 кнопки в ряд
     for i in range(0, len(TOP_CITIES), 2):
         row = []
         for j in range(i, min(i + 2, len(TOP_CITIES))):
@@ -104,7 +103,6 @@ def city_keyboard() -> InlineKeyboardMarkup:
                 callback_data=f"city:{name}",
             ))
         rows.append(row)
-    # Кнопка "другой город" — ввод текстом
     rows.append([InlineKeyboardButton(
         text="✏️ Другой город (напишите в сообщении)",
         callback_data="city:other",
@@ -112,51 +110,83 @@ def city_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def price_filter_keyboard() -> InlineKeyboardMarkup:
-    """Фильтр по цене (любая / до 50/60/70/80/100)."""
+def filters_keyboard(city: str) -> InlineKeyboardMarkup:
+    """Меню фильтров после выбора города."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="💰 Любая", callback_data="price:any"),
-                InlineKeyboardButton(text="до 50₽", callback_data="price:50"),
-                InlineKeyboardButton(text="до 60₽", callback_data="price:60"),
+                InlineKeyboardButton(text="⛽ АИ-92", callback_data=f"fuel:{city}:92"),
+                InlineKeyboardButton(text="⛽ АИ-95", callback_data=f"fuel:{city}:95"),
             ],
             [
-                InlineKeyboardButton(text="до 70₽", callback_data="price:70"),
-                InlineKeyboardButton(text="до 80₽", callback_data="price:80"),
-                InlineKeyboardButton(text="до 100₽", callback_data="price:100"),
+                InlineKeyboardButton(text="⛽ АИ-98", callback_data=f"fuel:{city}:98"),
+                InlineKeyboardButton(text="🛢 Дизель", callback_data=f"fuel:{city}:diesel"),
+            ],
+            [
+                InlineKeyboardButton(text="💰 Фильтр по цене", callback_data=f"price_menu:{city}"),
+                InlineKeyboardButton(text="⛽ Фильтр по сети", callback_data=f"net_menu:{city}"),
+            ],
+            [
+                InlineKeyboardButton(text="🚨 Экстренный (любая цена/сеть)", callback_data=f"emergency:{city}"),
             ],
         ],
     )
 
 
-def network_filter_keyboard() -> InlineKeyboardMarkup:
-    """Фильтр по сети АЗС."""
+def price_filter_keyboard(city: str, fuel: str | None = None) -> InlineKeyboardMarkup:
+    """Фильтр по цене."""
+    if fuel:
+        def _cb(price: str) -> str:
+            return f"price:{city}:{fuel}:{price}"
+    else:
+        def _cb(price: str) -> str:
+            return f"price:{city}:{price}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="⛽ Любая сеть", callback_data="net:any"),
-                InlineKeyboardButton(text="Лукойл", callback_data="net:Лукойл"),
-                InlineKeyboardButton(text="Газпром", callback_data="net:Газпромнефть"),
+                InlineKeyboardButton(text="💰 Любая", callback_data=_cb("any")),
+                InlineKeyboardButton(text="до 50₽", callback_data=_cb("50")),
+                InlineKeyboardButton(text="до 60₽", callback_data=_cb("60")),
             ],
             [
-                InlineKeyboardButton(text="Роснефть", callback_data="net:Роснефть"),
-                InlineKeyboardButton(text="Татнефть", callback_data="net:Татнефть"),
-                InlineKeyboardButton(text="Shell", callback_data="net:Shell"),
+                InlineKeyboardButton(text="до 70₽", callback_data=_cb("70")),
+                InlineKeyboardButton(text="до 80₽", callback_data=_cb("80")),
+                InlineKeyboardButton(text="до 100₽", callback_data=_cb("100")),
+            ],
+        ],
+    )
+
+
+def network_filter_keyboard(city: str, fuel: str | None = None) -> InlineKeyboardMarkup:
+    """Фильтр по сети АЗС."""
+    if fuel:
+        def _cb(net: str) -> str:
+            return f"net:{city}:{fuel}:{net}"
+    else:
+        def _cb(net: str) -> str:
+            return f"net:{city}:{net}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⛽ Любая сеть", callback_data=_cb("any")),
+                InlineKeyboardButton(text="Лукойл", callback_data=_cb("Лукойл")),
+                InlineKeyboardButton(text="Газпром", callback_data=_cb("Газпромнефть")),
             ],
             [
-                InlineKeyboardButton(text="Teboil", callback_data="net:Teboil"),
-                InlineKeyboardButton(text="Башнефть", callback_data="net:Башнефть"),
+                InlineKeyboardButton(text="Роснефть", callback_data=_cb("Роснефть")),
+                InlineKeyboardButton(text="Татнефть", callback_data=_cb("Татнефть")),
+                InlineKeyboardButton(text="Газоил", callback_data=_cb("Газоил")),
+            ],
+            [
+                InlineKeyboardButton(text="Опти", callback_data=_cb("Опти")),
+                InlineKeyboardButton(text="Shell", callback_data=_cb("Shell")),
             ],
         ],
     )
 
 
 def flow_keyboard(extra_buttons: list[KeyboardButton] | None = None) -> ReplyKeyboardMarkup:
-    """Клавиатура для flow — с кнопкой «В начало» (для отмены и возврата).
-
-    extra_buttons: опциональный ряд кнопок над «В начало» (например, "📍 Отправить геолокацию").
-    """
+    """Клавиатура для flow — с кнопкой «В начало»."""
     keyboard = []
     if extra_buttons:
         keyboard.append(extra_buttons)
@@ -177,7 +207,7 @@ def with_home_inline(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
 
 
 def station_actions_keyboard(station_id: int, has_statuses: bool = True) -> InlineKeyboardMarkup:
-    """Действия с конкретной АЗС — только кнопки."""
+    """Действия с конкретной АЗС."""
     return with_home_inline(InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -190,14 +220,6 @@ def station_actions_keyboard(station_id: int, has_statuses: bool = True) -> Inli
                 InlineKeyboardButton(
                     text="🔔 Подписаться на эту АЗС",
                     callback_data=f"sub_station:{station_id}",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🗺 На карте",
-                    web_app=WebAppInfo(
-                        url=f"https://benzin-mini.vercel.app/?station={station_id}"
-                    ),
                 ),
             ],
             [
@@ -280,3 +302,48 @@ def report_status_keyboard(station_id: int, fuel: str) -> InlineKeyboardMarkup:
             ],
         ],
     ))
+
+
+def bug_report_keyboard() -> InlineKeyboardMarkup:
+    """Кнопки для отправки баг-репорта."""
+    return with_home_inline(InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📸 Скриншот (опционально)", callback_data="bug_screenshot")],
+            [InlineKeyboardButton(text="✅ Отправить", callback_data="bug_submit")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
+        ],
+    ))
+
+
+def idea_keyboard() -> InlineKeyboardMarkup:
+    """Кнопки для отправки предложения."""
+    return with_home_inline(InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Отправить", callback_data="idea_submit")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
+        ],
+    ))
+
+
+def premium_keyboard() -> InlineKeyboardMarkup:
+    """Кнопки Premium."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎁 Попробовать 7 дней бесплатно", callback_data="premium_trial")],
+            [InlineKeyboardButton(text="💎 Купить Premium", callback_data="buy_premium")],
+            [InlineKeyboardButton(text="🏠 В начало", callback_data="go_home")],
+        ],
+    )
+
+
+def web_app_keyboard(web_app_url: str) -> InlineKeyboardMarkup:
+    """Кнопка для открытия Telegram Web App."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📱 Открыть приложение",
+                web_app={"url": web_app_url},
+            )],
+            [InlineKeyboardButton(text="🏠 В начало", callback_data="go_home")],
+        ],
+    )

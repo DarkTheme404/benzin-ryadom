@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS reports (
     disputes INTEGER DEFAULT 0,                 -- сколько опровергли
     source TEXT DEFAULT 'user',                -- 'user', 'owner', 'telegram', 'osm'
     expires_at TIMESTAMPTZ,                    -- когда отчёт считать устаревшим
+    next_delivery_at TIMESTAMPTZ,              -- прогноз следующего завоза (если известен)
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

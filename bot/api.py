@@ -4,9 +4,10 @@ API-сервер для Mini App.
 """
 import json
 import logging
+import os
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from db import (
     get_station_by_id,
     get_station_current_status,
     get_user_id_by_telegram_id,
+    upsert_station_for_import,
     upsert_user,
     check_and_award_badges,
     BADGE_CATALOG,
@@ -207,11 +209,18 @@ async def handle_admin_stats(request):
     # === Статистика по источникам ===
     sources_stats = await get_source_stats()
     total_stations = await db._fetch("SELECT COUNT(*) as c FROM stations", one=True)
-    with_prices = await db._fetch("""
-        SELECT COUNT(DISTINCT station_id) as c
-        FROM reports
-        WHERE created_at > NOW() - INTERVAL '7 days'
-    """, one=True)
+    if db.USE_SQLITE:
+        with_prices = await db._fetch("""
+            SELECT COUNT(DISTINCT station_id) as c
+            FROM reports
+            WHERE created_at > datetime('now', '-7 days')
+        """, one=True)
+    else:
+        with_prices = await db._fetch("""
+            SELECT COUNT(DISTINCT station_id) as c
+            FROM reports
+            WHERE created_at > NOW() - INTERVAL '7 days'
+        """, one=True)
 
     return web.json_response({
         "status": "ok",
@@ -226,22 +235,45 @@ async def handle_admin_stats(request):
 
 async def get_source_stats() -> list[dict]:
     """Собирает статистику по каждому источнику."""
-    rows = await db._fetch("""
-        SELECT source,
-               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') as h1,
-               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '6 hours') as h6,
-               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as h24,
-               COUNT(*) as total,
-               MAX(created_at) as last_update
-        FROM reports
-        GROUP BY source
-        ORDER BY total DESC
-    """)
+    if db.USE_SQLITE:
+        rows = await db._fetch("""
+            SELECT source,
+                   SUM(CASE WHEN created_at > datetime('now', '-1 hour') THEN 1 ELSE 0 END) as h1,
+                   SUM(CASE WHEN created_at > datetime('now', '-6 hours') THEN 1 ELSE 0 END) as h6,
+                   SUM(CASE WHEN created_at > datetime('now', '-24 hours') THEN 1 ELSE 0 END) as h24,
+                   COUNT(*) as total,
+                   MAX(created_at) as last_update
+            FROM reports
+            GROUP BY source
+            ORDER BY total DESC
+        """)
+    else:
+        rows = await db._fetch("""
+            SELECT source,
+                   COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') as h1,
+                   COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '6 hours') as h6,
+                   COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as h24,
+                   COUNT(*) as total,
+                   MAX(created_at) as last_update
+            FROM reports
+            GROUP BY source
+            ORDER BY total DESC
+        """)
     result = []
     for r in rows:
         # Статус: OK (1h), STALE (6h), DEAD (24h+)
         last = r["last_update"]
-        hours_ago = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+        # SQLite возвращает строку, конвертируем в datetime
+        if isinstance(last, str):
+            try:
+                last_dt = datetime.fromisoformat(last.replace(" ", "T"))
+            except ValueError:
+                last_dt = datetime.now(timezone.utc) - timedelta(days=365)
+        else:
+            last_dt = last
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+        hours_ago = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
         if hours_ago < 1:
             status = "OK"
         elif hours_ago < 6:
@@ -250,11 +282,11 @@ async def get_source_stats() -> list[dict]:
             status = "DEAD"
         result.append({
             "source": r["source"],
-            "h1": r["h1"],
-            "h6": r["h6"],
-            "h24": r["h24"],
-            "total": r["total"],
-            "last_update": last.isoformat(),
+            "h1": int(r["h1"]) if r["h1"] is not None else 0,
+            "h6": int(r["h6"]) if r["h6"] is not None else 0,
+            "h24": int(r["h24"]) if r["h24"] is not None else 0,
+            "total": int(r["total"]) if r["total"] is not None else 0,
+            "last_update": last_dt.isoformat(),
             "hours_ago": round(hours_ago, 1),
             "status": status,
         })
@@ -536,6 +568,20 @@ async def handle_search(request):
             {"error": "q parameter required (min 2 chars)"},
             status=400,
         )
+
+    # === Premium detection (как в handle_stations) ===
+    telegram_id_raw = request.query.get("telegram_id")
+    is_premium_user = False
+    if telegram_id_raw:
+        try:
+            tid = int(telegram_id_raw)
+            uid = await get_user_id_by_telegram_id(tid)
+            if uid:
+                is_premium_user = await is_premium(uid)
+        except (ValueError, TypeError):
+            pass
+    max_radius = 100 if is_premium_user else 30
+    max_limit = 500 if is_premium_user else 100
 
     stations = await find_stations_by_name(query, limit=30)
 
@@ -968,6 +1014,165 @@ async def handle_price_update(request):
     )
 
 
+# === Импорт от внешних парсеров (GitHub Actions) ===
+# Используется скриптом scripts/parse_benzin_price_headless.py в GitHub Actions.
+# Авторизация — через X-Import-Key header, совпадает с IMPORT_API_KEY в .env.
+VALID_FUEL_TYPES = {"92", "95", "98", "100", "diesel", "lpg", "cng"}
+
+
+async def handle_import_prices(request):
+    """POST /api/import_prices — приём цен от внешних парсеров.
+    
+    Авторизация: header X-Import-Key: <IMPORT_API_KEY>
+    Тело: {
+        source: "benzin_price_ru" | ...,
+        scraped_at: ISO datetime,
+        results: [
+            {
+                external_id: int,    # ID во внешнем источнике (для логов)
+                name: str,           # название АЗС
+                region_id: str,      # ID региона во внешнем источнике (для логов)
+                region_name: str,    # название региона ("Москва и МО")
+                city: str,           # опционально
+                operator: str,       # опционально
+                lat: float,          # опционально
+                lon: float,          # опционально
+                prices: {"92": 58.40, "95": 63.20, ...}
+            },
+            ...
+        ]
+    }
+    
+    Для каждой записи:
+    1. upsert_station_for_import(name, region_name, city, operator, lat, lon) → station_id
+    2. Для каждого fuel в prices: add_report(station_id, fuel, True, price, source, comment)
+    """
+    # Авторизация
+    import_key = os.environ.get("IMPORT_API_KEY", "")
+    provided_key = request.headers.get("X-Import-Key", "")
+    if not import_key:
+        logger.error("IMPORT_API_KEY is not set in env")
+        return web.json_response({"error": "server misconfigured"}, status=500)
+    if not provided_key or provided_key != import_key:
+        return web.json_response({"error": "unauthorized"}, status=401)
+    
+    # Rate limit: GitHub Actions дёргает раз в день, но подстрахуемся
+    if not _check_rate(request.remote or "?", 10):
+        return web.json_response({"error": "rate limit exceeded"}, status=429)
+    
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+    
+    if not isinstance(data, dict):
+        return web.json_response({"error": "expected json object"}, status=400)
+    
+    source = str(data.get("source", "unknown"))[:64]
+    results = data.get("results", [])
+    if not isinstance(results, list):
+        return web.json_response({"error": "results must be a list"}, status=400)
+    if len(results) > 5000:
+        return web.json_response({"error": "too many results, max 5000 per request"}, status=400)
+    
+    saved = 0
+    errors = 0
+    new_stations = 0
+    existing_stations = 0
+    seen_stations: dict[int, int] = {}  # station_id → отчётов добавлено
+    
+    for r in results:
+        if not isinstance(r, dict):
+            errors += 1
+            continue
+        name = str(r.get("name", "")).strip()[:200]
+        region_name = str(r.get("region_name", "")).strip()[:200]
+        city = str(r.get("city", "")).strip()[:100]
+        operator = str(r.get("operator", "")).strip()[:100]
+        prices = r.get("prices", {})
+        lat = r.get("lat")
+        lon = r.get("lon")
+        
+        if not name or not region_name or not isinstance(prices, dict) or not prices:
+            errors += 1
+            continue
+        
+        try:
+            station_id = await upsert_station_for_import(
+                name=name,
+                region=region_name,
+                city=city,
+                operator=operator,
+                lat=lat if isinstance(lat, (int, float)) else None,
+                lon=lon if isinstance(lon, (int, float)) else None,
+            )
+            if station_id <= 0:
+                errors += 1
+                continue
+            
+            if station_id not in seen_stations:
+                # Новая или уже существующая — отслеживаем только для статистики
+                seen_stations[station_id] = 0
+                # Первое появление — проверим created_at позже
+            
+            for fuel, price in prices.items():
+                if fuel not in VALID_FUEL_TYPES:
+                    continue
+                if not isinstance(price, (int, float)) or price <= 0 or price > 500:
+                    continue
+                try:
+                    await add_report(
+                        station_id=station_id,
+                        fuel_type=fuel,
+                        available=True,
+                        price=float(price),
+                        source=source,
+                        comment=f"{source}: {name}",
+                    )
+                    saved += 1
+                    seen_stations[station_id] = seen_stations.get(station_id, 0) + 1
+                except Exception as e:
+                    logger.warning(f"import_prices: add_report failed for station {station_id} fuel {fuel}: {e}")
+                    errors += 1
+        except Exception as e:
+            logger.warning(f"import_prices: station {name!r} failed: {e}")
+            errors += 1
+    
+    # Статистика по новым/существующим АЗС
+    if seen_stations:
+        ids = list(seen_stations.keys())
+        if USE_SQLITE:
+            placeholders = ",".join("?" * len(ids))
+            row = await (
+                await _db.execute(
+                    f"SELECT id FROM stations WHERE id IN ({placeholders})",
+                    ids,
+                )
+            ).fetchall()
+            existing_ids = {r[0] for r in row}
+            new_stations = len(ids) - len(existing_ids)
+            existing_stations = len(existing_ids)
+        else:
+            async with _db.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id FROM stations WHERE id = ANY($1::bigint[])", ids,
+                )
+                existing_ids = {r["id"] for r in rows}
+                new_stations = len(ids) - len(existing_ids)
+                existing_stations = len(existing_ids)
+    
+    return web.json_response({
+        "ok": True,
+        "source": source,
+        "received": len(results),
+        "saved": saved,
+        "errors": errors,
+        "stations_total": len(seen_stations),
+        "stations_new": new_stations,
+        "stations_existing": existing_stations,
+    })
+
+
 # === CORS ===
 # ВНИМАНИЕ: в проде ограничить через ALLOWED_ORIGINS env var.
 ALLOWED_ORIGINS = "*"  # default для dev; в проде задать через env
@@ -988,8 +1193,22 @@ async def cors_middleware(app, handler):
     return middleware
 
 
+async def _on_startup(app: web.Application) -> None:
+    """Инициализация БД при старте API."""
+    await db.init_db()
+    logger.info("API started, DB initialized")
+
+
+async def _on_cleanup(app: web.Application) -> None:
+    """Закрытие БД при остановке API."""
+    await db.close_db()
+
+
 def create_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware])
+    app.on_startup.append(_on_startup)
+    app.on_cleanup.append(_on_cleanup)
+    # API routes
     app.router.add_get("/api/health", handle_health)
     app.router.add_get("/api/logs", handle_logs)
     app.router.add_get("/api/admin/stats", handle_admin_stats)
@@ -1005,4 +1224,15 @@ def create_app() -> web.Application:
     app.router.add_get("/api/premium-status", handle_premium_status)
     app.router.add_post("/api/reports", handle_create_report)
     app.router.add_post("/api/price-update", handle_price_update)
+    app.router.add_post("/api/import_prices", handle_import_prices)
+    # Mini App static files
+    miniapp_dir = Path(__file__).parent.parent / "miniapp"
+    if miniapp_dir.exists():
+        async def serve_index(request):
+            return web.FileResponse(miniapp_dir / "index.html")
+        # Serve static files under /app/ prefix (avoids conflicts with /miniapp/ route)
+        app.router.add_static("/app/", miniapp_dir)
+        # /miniapp/ → index.html (the Telegram WebApp URL)
+        app.router.add_get("/miniapp", serve_index)
+        app.router.add_get("/miniapp/", serve_index)
     return app

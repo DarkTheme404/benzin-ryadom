@@ -27,6 +27,17 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 _db: Any = None
 
 
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Расстояние между двумя точками в км (формула Гаверсинуса)."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dlon / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 # === Инициализация ===
 async def init_db():
     """Инициализирует БД."""
@@ -41,6 +52,9 @@ async def init_db():
         await _db.execute("PRAGMA cache_size=-20000")  # 20MB кеш
         await _db.execute("PRAGMA temp_store=MEMORY")  # temp таблицы в RAM
         await _db.execute("PRAGMA synchronous=NORMAL")  # чуть быстрее WAL
+        # Регистрируем Python-функцию lower() — корректно работает с кириллицей
+        # (встроенный SQLite LOWER() её не понимает).
+        await _db.create_function("py_lower", 1, _ru_lower)
         await _create_schema_sqlite(_db)
         await _db.commit()
     else:
@@ -94,6 +108,12 @@ async def _migrate_sqlite(db):
         await db.execute("ALTER TABLE subscriptions ADD COLUMN center_lat REAL")
     if "center_lon" not in cols:
         await db.execute("ALTER TABLE subscriptions ADD COLUMN center_lon REAL")
+
+    # Миграция: reports.next_delivery_at
+    async with db.execute("PRAGMA table_info(reports)") as cur:
+        cols = {row[1] for row in await cur.fetchall()}
+    if "next_delivery_at" not in cols:
+        await db.execute("ALTER TABLE reports ADD COLUMN next_delivery_at TEXT")
 
     # Создаём owner_stations если её нет
     await db.execute(
@@ -238,9 +258,17 @@ async def get_connection():
 
 
 # === Универсальные хелперы ===
+def _sqlite_sql(sql: str) -> str:
+    """Конвертирует PG-style $1, $2, ... → SQLite-style ? для совместимости."""
+    import re
+    return re.sub(r"\$\d+", "?", sql)
+
+
 async def _fetch(sql: str, *args, one: bool = False):
     """Универсальный fetch. Возвращает dict (SQLite) или list[dict] (PostgreSQL)."""
     if USE_SQLITE:
+        # SQLite использует ? вместо $1, $2, ...; автоматически конвертируем
+        sql = _sqlite_sql(sql)
         async with _db.execute(sql, args) as cur:
             if one:
                 row = await cur.fetchone()
@@ -504,6 +532,8 @@ async def _execute(sql: str, *args, returning: bool = False):
     При returning=True: для SQLite возвращает cursor.lastrowid, для PG — результат RETURNING.
     """
     if USE_SQLITE:
+        # SQLite использует ? вместо $1, $2, ...; автоматически конвертируем
+        sql = _sqlite_sql(sql)
         async with _db.execute(sql, args) as cur:
             await _db.commit()
             if returning:
@@ -598,16 +628,9 @@ async def get_or_create_user(message) -> int:
 
 
 # === АЗС и поиск ===
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Расстояние между точками в км."""
-    R = 6371
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = (math.sin(dlat / 2) ** 2 +
-         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
-         math.sin(dlon / 2) ** 2)
-    c = 2 * math.asin(math.sqrt(a))
-    return R * c
+def _ru_lower(s: str | None) -> str | None:
+    """Python-lower, корректно работает с кириллицей (в отличие от SQLite LOWER())."""
+    return s.lower() if s else s
 
 
 async def find_nearest_stations(
@@ -744,31 +767,14 @@ async def find_stations_by_city(
       - source, source_priority
     """
     if USE_SQLITE:
+        # === Сбор параметров строго в порядке появления `?` в SQL ===
+        # SQL: ... FROM stations s {join} WHERE ... LIMIT ?
+        # join идёт ПЕРЕД where, поэтому JOIN-параметры добавляем первыми.
         params = []
+        join_params: list = []  # параметры для JOIN (идут первыми в SQL)
+        where_params: list = []  # параметры для WHERE
         where = ["is_active = 1"]
         join = ""
-
-        # === Город (fuzzy) ===
-        if city:
-            where.append("(LOWER(s.city) LIKE ? OR LOWER(s.address) LIKE ? OR LOWER(s.name) LIKE ?)")
-            c = f"%{city.lower()}%"
-            params.extend([c, c, c])
-
-        # === Регион ===
-        if region and not include_nearby_regions:
-            where.append("LOWER(s.region) LIKE ?")
-            params.append(f"%{region.lower()}%")
-
-        # === Сеть (operator/network) ===
-        if network:
-            where.append("(LOWER(s.operator) LIKE ? OR LOWER(s.network) LIKE ? OR LOWER(s.name) LIKE ?)")
-            n = f"%{network.lower()}%"
-            params.extend([n, n, n])
-
-        # === Тип топлива (в fuel_types массиве) ===
-        if fuel_type:
-            where.append("s.fuel_types LIKE ?")
-            params.append(f'%"{fuel_type}"%')
 
         # === Подзапрос: есть отчёт с наличием за последние 4 часа ===
         if has_stock:
@@ -776,28 +782,61 @@ async def find_stations_by_city(
                 JOIN (
                     SELECT station_id,
                            MAX(CASE WHEN available = 1 THEN 1 ELSE 0 END) as has_stock,
-                           MAX(price) FILTER (WHERE fuel_type = $f) as max_price_recent
+                           MAX(price) FILTER (WHERE fuel_type = ?) as max_price_recent,
+                           MIN(price) FILTER (WHERE fuel_type = ? AND price IS NOT NULL) as min_price_recent
                     FROM reports
                     WHERE created_at > datetime('now', '-4 hours')
                     GROUP BY station_id
                 ) r ON r.station_id = s.id
             """
+            # fuel_type повторяется 2 раза: в max_price_recent и в min_price_recent
+            if fuel_type:
+                join_params.extend([fuel_type, fuel_type])
+            else:
+                join_params.extend([None, None])
             where.append("r.has_stock = 1")
 
         # === Фильтр по цене (свежие отчёты за 7 дней) ===
         if max_price is not None and fuel_type:
-            if not has_stock:
+            if has_stock:
+                # min_price_recent уже доступен через join выше
+                where.append("r.min_price_recent <= ?")
+                where_params.append(max_price)
+            else:
                 join = """
                     JOIN (
                         SELECT station_id, MIN(price) as min_price_recent
                         FROM reports
-                        WHERE fuel_type = $f AND created_at > datetime('now', '-7 days')
+                        WHERE fuel_type = ? AND created_at > datetime('now', '-7 days')
                           AND price IS NOT NULL
                         GROUP BY station_id
                     ) r ON r.station_id = s.id
                 """
-            where.append("r.min_price_recent <= ?")
-            params.append(max_price)
+                join_params.append(fuel_type)
+                where.append("r.min_price_recent <= ?")
+                where_params.append(max_price)
+
+        # === Город (fuzzy) — py_lower() корректно работает с кириллицей ===
+        if city:
+            where.append("(py_lower(s.city) LIKE ? OR py_lower(s.address) LIKE ? OR py_lower(s.name) LIKE ?)")
+            c = f"%{city.lower()}%"
+            where_params.extend([c, c, c])
+
+        # === Регион ===
+        if region and not include_nearby_regions:
+            where.append("py_lower(s.region) LIKE ?")
+            where_params.append(f"%{region.lower()}%")
+
+        # === Сеть (operator/network) ===
+        if network:
+            where.append("(py_lower(s.operator) LIKE ? OR py_lower(s.network) LIKE ? OR py_lower(s.name) LIKE ?)")
+            n = f"%{network.lower()}%"
+            where_params.extend([n, n, n])
+
+        # === Тип топлива (в fuel_types массиве) ===
+        if fuel_type:
+            where.append("s.fuel_types LIKE ?")
+            where_params.append(f'%"{fuel_type}"%')
 
         sql = f"""
             SELECT s.id, s.name, s.operator, s.city, s.region, s.address, s.lat, s.lon,
@@ -810,8 +849,9 @@ async def find_stations_by_city(
             ORDER BY s.is_verified DESC, s.name
             LIMIT ?
         """
-        params.append(limit)
-        async with _db.execute(sql.replace("$f", "?"), params) as cur:
+        # Собираем финальный список: join_params + where_params + limit
+        params = join_params + where_params + [limit]
+        async with _db.execute(sql, params) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
@@ -895,6 +935,98 @@ async def get_station_by_id(station_id: int) -> dict | None:
         async with _db.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM stations WHERE id = $1", station_id)
         return dict(row) if row else None
+
+
+async def upsert_station_for_import(
+    name: str,
+    region: str,
+    city: str = "",
+    operator: str = "",
+    lat: float | None = None,
+    lon: float | None = None,
+) -> int:
+    """Находит существующую АЗС по (name+region+city) или создаёт новую.
+    
+    Используется при импорте от внешних парсеров (benzin-price.ru и т.д.),
+    когда у нас нет надёжного external_id, но есть name и регион.
+    Возвращает station_id.
+    """
+    name_norm = (name or "").strip()
+    region_norm = (region or "").strip()
+    city_norm = (city or "").strip()
+    operator_norm = (operator or "").strip()
+    if not name_norm or not region_norm:
+        return 0
+    if lat is None or lon is None:
+        # Без координат АЗС не имеет смысла — ставим дефолт (Москва)
+        lat = 55.7558
+        lon = 37.6173
+    
+    if USE_SQLITE:
+        # 1) Ищем точное совпадение по name+region
+        row = await (
+            await _db.execute(
+                """SELECT id FROM stations 
+                   WHERE py_lower(name) = py_lower(?)
+                     AND py_lower(COALESCE(region, '')) = py_lower(?)
+                     AND is_active = 1
+                   LIMIT 1""",
+                (name_norm, region_norm),
+            )
+        ).fetchone()
+        if row:
+            return row[0]
+        # 2) Мягкий поиск — по name + region (содержит)
+        row = await (
+            await _db.execute(
+                """SELECT id FROM stations 
+                   WHERE py_lower(name) = py_lower(?)
+                     AND py_lower(COALESCE(region, '')) LIKE ?
+                     AND is_active = 1
+                   LIMIT 1""",
+                (name_norm, f"%{region_norm.lower()}%"),
+            )
+        ).fetchone()
+        if row:
+            return row[0]
+        # 3) Создаём новую запись
+        async with _db.execute(
+            """INSERT INTO stations (name, operator, region, city, lat, lon, fuel_types, is_verified, is_active)
+               VALUES (?, ?, ?, ?, ?, ?, '[]', 0, 1)""",
+            (name_norm, operator_norm or None, region_norm, city_norm or None, lat, lon),
+        ) as cur:
+            new_id = cur.lastrowid
+        await _db.commit()
+        return new_id
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT id FROM stations 
+                   WHERE LOWER(name) = LOWER($1)
+                     AND LOWER(COALESCE(region, '')) = LOWER($2)
+                     AND is_active = TRUE
+                   LIMIT 1""",
+                name_norm, region_norm,
+            )
+            if row:
+                return row["id"]
+            row = await conn.fetchrow(
+                """SELECT id FROM stations 
+                   WHERE LOWER(name) = LOWER($1)
+                     AND LOWER(COALESCE(region, '')) LIKE LOWER($2)
+                     AND is_active = TRUE
+                   LIMIT 1""",
+                name_norm, f"%{region_norm}%",
+            )
+            if row:
+                return row["id"]
+            new_id = await conn.fetchval(
+                """INSERT INTO stations (name, operator, region, city, lat, lon, fuel_types, is_verified, is_active)
+                   VALUES ($1, $2, $3, $4, $5, $6, '{}', FALSE, TRUE)
+                   RETURNING id""",
+                name_norm, operator_norm or None, region_norm, city_norm or None, lat, lon,
+            )
+            return new_id
 
 
 async def update_station_address(station_id: int, address: str, city: str, region: str) -> None:
@@ -983,18 +1115,22 @@ async def add_report(
     limit_liters: int | None = None,
     comment: str | None = None,
     source: str = "user",
+    next_delivery_at: datetime | None = None,
 ) -> int:
     """Добавляет отчёт о наличии топлива.
 
     available: True / False / None (None = "кончается").
+    next_delivery_at: прогноз следующего завоза (если известен, None если нет).
     В SQLite available NOT NULL, поэтому None хранится как 2.
     Также инкрементит users.total_reports и last_active_at.
     """
     expires_at_dt = datetime.now() + timedelta(hours=2)
     if USE_SQLITE:
         expires_at = expires_at_dt.isoformat()
+        next_delivery_iso = next_delivery_at.isoformat() if next_delivery_at else None
     else:
         expires_at = expires_at_dt  # asyncpg требует datetime, не строку
+        next_delivery_iso = next_delivery_at  # asyncpg принимает datetime
 
     if USE_SQLITE:
         # SQLite: True=1, False=0, None=2 ("кончается")
@@ -1009,10 +1145,10 @@ async def add_report(
         async with _db.execute(
             """INSERT INTO reports (
                 station_id, user_id, fuel_type, available, price,
-                queue_size, has_limit, limit_liters, comment, source, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (station_id, user_id, fuel_type, avail_int, price,
-             queue_size, has_limit_int, limit_liters, comment, source, expires_at),
+             queue_size, has_limit_int, limit_liters, comment, source, expires_at, next_delivery_iso),
         ) as cur:
             report_id = cur.lastrowid
         if user_id:
@@ -1028,12 +1164,12 @@ async def add_report(
                 """
                 INSERT INTO reports (
                     station_id, user_id, fuel_type, available, price,
-                    queue_size, has_limit, limit_liters, comment, source, expires_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 RETURNING id
                 """,
                 station_id, user_id, fuel_type, available, price,
-                queue_size, has_limit, limit_liters, comment, source, expires_at,
+                queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_iso,
             )
             if user_id:
                 await conn.execute(
@@ -1078,18 +1214,19 @@ async def add_subscription(
 async def find_stations_by_name(query: str, limit: int = 5) -> list:
     """Ищет АЗС по имени (для /find без геолокации)."""
     if USE_SQLITE:
+        # py_lower() корректно работает с кириллицей (в отличие от LOWER()).
         sql = """
             SELECT id, name, operator, city, address, lat, lon, is_verified
             FROM stations
             WHERE is_active = 1
-              AND (name LIKE ? OR operator LIKE ? OR city LIKE ?)
+              AND (py_lower(name) LIKE ? OR py_lower(operator) LIKE ? OR py_lower(city) LIKE ?)
             ORDER BY
-                CASE WHEN name LIKE ? THEN 0 ELSE 1 END,
+                CASE WHEN py_lower(name) LIKE ? THEN 0 ELSE 1 END,
                 operator,
                 name
             LIMIT ?
         """
-        like = f"%{query}%"
+        like = f"%{query.lower()}%"
         async with _db.execute(sql, (like, like, like, like, limit)) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
@@ -1116,10 +1253,11 @@ async def get_station_current_status(station_id: int) -> list:
     """Возвращает текущий статус АЗС по всем видам топлива (свежие < 24ч).
 
     available: True / False / None ("кончается")
+    next_delivery_at: datetime или None — прогноз следующего завоза.
     """
     if USE_SQLITE:
         async with _db.execute(
-            """SELECT fuel_type, available, price, queue_size, has_limit, limit_liters, confidence, created_at
+            """SELECT fuel_type, available, price, queue_size, has_limit, limit_liters, confidence, created_at, next_delivery_at, source
                FROM reports
                WHERE station_id = ? AND created_at > datetime('now', '-1 day')
                ORDER BY fuel_type, confidence DESC, created_at DESC""",
@@ -1141,6 +1279,13 @@ async def get_station_current_status(station_id: int) -> list:
                 r["available"] = False
             elif r.get("available") == 2:
                 r["available"] = None
+            # next_delivery_at: SQLite хранит как строку, конвертируем
+            nd = r.get("next_delivery_at")
+            if nd and isinstance(nd, str):
+                try:
+                    r["next_delivery_at"] = datetime.fromisoformat(nd)
+                except ValueError:
+                    r["next_delivery_at"] = None
             result.append(r)
         return result
     else:
@@ -1149,7 +1294,8 @@ async def get_station_current_status(station_id: int) -> list:
                 """
                 SELECT DISTINCT ON (fuel_type)
                     fuel_type, available, price, queue_size, has_limit,
-                    limit_liters, confidence, created_at AS last_report_at
+                    limit_liters, confidence, created_at AS last_report_at,
+                    next_delivery_at, source
                 FROM reports
                 WHERE station_id = $1
                   AND created_at > NOW() - INTERVAL '24 hours'
@@ -1176,10 +1322,10 @@ async def get_stations_with_statuses(stations: list) -> list:
         # Один запрос с window function — для каждой АЗС и fuel_type берём последний
         async with _db.execute(
             f"""SELECT station_id, fuel_type, available, price, queue_size,
-                       has_limit, limit_liters, confidence, created_at
+                       has_limit, limit_liters, confidence, created_at, next_delivery_at, source
                 FROM (
                     SELECT station_id, fuel_type, available, price, queue_size,
-                           has_limit, limit_liters, confidence, created_at,
+                           has_limit, limit_liters, confidence, created_at, next_delivery_at, source,
                            ROW_NUMBER() OVER (
                                PARTITION BY station_id, fuel_type
                                ORDER BY confidence DESC, created_at DESC
@@ -1198,7 +1344,7 @@ async def get_stations_with_statuses(stations: list) -> list:
                 f"""SELECT DISTINCT ON (station_id, fuel_type)
                         station_id, fuel_type, available, price, queue_size,
                         has_limit, limit_liters, confidence,
-                        created_at AS last_report_at
+                        created_at AS last_report_at, next_delivery_at, source
                     FROM reports
                     WHERE station_id = ANY($1)
                       AND created_at > NOW() - INTERVAL '24 hours'
@@ -1218,6 +1364,13 @@ async def get_stations_with_statuses(stations: list) -> list:
                 d["available"] = False
             elif d.get("available") == 2:
                 d["available"] = None
+            # next_delivery_at: SQLite хранит как строку
+            nd = d.get("next_delivery_at")
+            if nd and isinstance(nd, str):
+                try:
+                    d["next_delivery_at"] = datetime.fromisoformat(nd)
+                except ValueError:
+                    d["next_delivery_at"] = None
         sid = d["station_id"]
         by_station.setdefault(sid, []).append(d)
 

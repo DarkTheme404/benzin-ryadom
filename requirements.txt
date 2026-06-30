@@ -10,4 +10,4 @@ pytz==2023.3
 certifi>=2023.7.22
 
 # === Optional: для парсера TG-каналов ===
-# telethon==1.36.0  # раскомментируй если используешь parse_tg_channels.py
+telethon>=1.36.0  # parse_tg_channels.py (Telethon)
