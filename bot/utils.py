@@ -170,6 +170,8 @@ def format_station_card(station: dict, statuses: list | None = None) -> str:
     - Детали по каждому виду топлива
     - Пометку [ДЕМО] если все данные из seed
     """
+    if statuses is None:
+        statuses = station.get("statuses", [])
     import json
     name = station.get("name", "АЗС")
     operator = station.get("operator")
@@ -226,10 +228,27 @@ def format_station_card(station: dict, statuses: list | None = None) -> str:
         lines.append(f"ℹ️ {'  •  '.join(extras)}")
 
     if statuses:
-        # Сводка по наличию
-        available_count = sum(1 for s in statuses if s.get("available") is True)
-        ending_count = sum(1 for s in statuses if s.get("available") is None)
-        missing_count = sum(1 for s in statuses if s.get("available") is False)
+        # Группируем по fuel_type: {fuel_type: [status1, status2, ...]}
+        from collections import defaultdict
+        by_fuel: dict[str, list] = defaultdict(list)
+        for s in statuses:
+            ft = s.get("fuel_type", "unknown")
+            by_fuel[ft].append(s)
+
+        # Сводка по наличию (лучший статус по каждому топливу)
+        fuel_availability = {}
+        for ft, fuel_statuses in by_fuel.items():
+            avail_values = [s.get("available") for s in fuel_statuses]
+            if any(v is True for v in avail_values):
+                fuel_availability[ft] = True
+            elif any(v is None for v in avail_values):
+                fuel_availability[ft] = None
+            else:
+                fuel_availability[ft] = False
+
+        available_count = sum(1 for v in fuel_availability.values() if v is True)
+        ending_count = sum(1 for v in fuel_availability.values() if v is None)
+        missing_count = sum(1 for v in fuel_availability.values() if v is False)
         summary_parts = []
         if available_count:
             summary_parts.append(f"✅ {available_count}")
@@ -260,8 +279,82 @@ def format_station_card(station: dict, statuses: list | None = None) -> str:
 
         lines.append("")
         lines.append("<b>По видам топлива:</b>")
-        for s in statuses:
-            lines.append(format_fuel_status(s))
+        for ft in sorted(by_fuel.keys()):
+            fuel_statuses = by_fuel[ft]
+            # Лучший статус для этого топлива
+            best = None
+            for s in fuel_statuses:
+                if s.get("available") is True:
+                    best = s
+                    break
+                if s.get("available") is None and best is None:
+                    best = s
+                if best is None:
+                    best = s
+
+            # Иконка availability
+            avail = fuel_availability.get(ft)
+            if avail is True:
+                icon = "✅"
+                avail_text = "есть"
+            elif avail is None:
+                icon = "⚠️"
+                avail_text = "кончается"
+            else:
+                icon = "❌"
+                avail_text = "нет"
+
+            # Лучшая цена из всех источников
+            prices_with_source = []
+            for s in fuel_statuses:
+                p = s.get("price")
+                src = s.get("source", "")
+                if p is not None:
+                    prices_with_source.append((p, src))
+
+            price_str = ""
+            if prices_with_source:
+                prices_with_source.sort(key=lambda x: x[0])
+                best_price, best_src = prices_with_source[0]
+                src_label = {
+                    "fuelprice_ru": "⛽", "gdebenz": "🌐", "tg": "📡",
+                    "vk": "📡", "owner": "👨‍💼", "user": "👤",
+                    "seed_demo": "🧪", "seed": "🧪",
+                }.get(best_src, "")
+                price_str = f"  <b>{best_price:.2f}₽</b>{src_label}"
+                # Если есть разные цены — показать все
+                unique_prices = sorted(set(p for p, _ in prices_with_source))
+                if len(unique_prices) > 1:
+                    other_prices = " / ".join(f"{p:.2f}" for p in unique_prices[1:])
+                    price_str += f"  <i>({other_prices})</i>"
+
+            fuel_label = ft if ft in ("all", "cng", "lpg") else f"АИ-{ft}"
+            line = f"  • {icon} <b>{fuel_label}</b>: {avail_text}{price_str}"
+
+            # Очередь / лимит (из лучшего отчёта)
+            if best:
+                queue = best.get("queue_size")
+                has_limit = best.get("has_limit")
+                limit_liters = best.get("limit_liters")
+                if has_limit and limit_liters:
+                    line += f"  •  лимит {limit_liters}л"
+                if queue is not None and queue > 0:
+                    line += f"  •  очередь ~{queue}"
+
+            # Время следующего завоза
+            for s in fuel_statuses:
+                nd = s.get("next_delivery_at")
+                if nd:
+                    if isinstance(nd, str):
+                        try:
+                            nd = datetime.fromisoformat(nd.replace(" ", "T"))
+                        except ValueError:
+                            continue
+                    delivery_str = format_delivery_time(nd)
+                    line += f"  •  🚚 {delivery_str}"
+                    break
+
+            lines.append(line)
     else:
         lines.append("")
         lines.append("<i>Нет свежих отчётов. Нажми «📝 Сообщить» чтобы добавить.</i>")

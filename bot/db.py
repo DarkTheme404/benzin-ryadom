@@ -1519,7 +1519,8 @@ async def get_stations_with_statuses(stations: list) -> list:
     """Bulk-получение статусов для списка АЗС одним запросом (избегаем N+1).
 
     Возвращает тот же список stations, но с добавленным полем 'statuses' и 'has_data'.
-    Использует ROW_NUMBER() window function в SQLite и DISTINCT ON в PG.
+    Возвращает ВСЕ отчёты за 24 часа по каждой АЗС (не только последний),
+    чтобы показывать данные из разных источников (fuelprice ✅ + gdebenz ❌).
     """
     if not stations:
         return stations
@@ -1528,30 +1529,20 @@ async def get_stations_with_statuses(stations: list) -> list:
     placeholders = ",".join("?" for _ in station_ids)
 
     if USE_SQLITE:
-        # Один запрос с window function — для каждой АЗС и fuel_type берём последний
         async with _db.execute(
             f"""SELECT station_id, fuel_type, available, price, queue_size,
                        has_limit, limit_liters, confidence, created_at, next_delivery_at, source
-                FROM (
-                    SELECT station_id, fuel_type, available, price, queue_size,
-                           has_limit, limit_liters, confidence, created_at, next_delivery_at, source,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY station_id, fuel_type
-                               ORDER BY confidence DESC, created_at DESC
-                           ) AS rn
-                    FROM reports
-                    WHERE station_id IN ({placeholders})
-                      AND created_at > datetime('now', '-1 day')
-                )
-                WHERE rn = 1""",
+                FROM reports
+                WHERE station_id IN ({placeholders})
+                  AND created_at > datetime('now', '-1 day')
+                ORDER BY station_id, fuel_type, confidence DESC, created_at DESC""",
             station_ids,
         ) as cur:
             rows = await cur.fetchall()
     else:
         async with _db.acquire() as conn:
             rows = await conn.fetch(
-                f"""SELECT DISTINCT ON (station_id, fuel_type)
-                        station_id, fuel_type, available, price, queue_size,
+                f"""SELECT station_id, fuel_type, available, price, queue_size,
                         has_limit, limit_liters, confidence,
                         created_at AS last_report_at, next_delivery_at, source
                     FROM reports
@@ -1561,19 +1552,16 @@ async def get_stations_with_statuses(stations: list) -> list:
                 station_ids,
             )
 
-    # Группируем по station_id
     by_station: dict[int, list] = {}
     for r in rows:
         d = dict(r) if not isinstance(r, dict) else r
         if USE_SQLITE:
-            # Конвертируем int → bool/None для SQLite
             if d.get("available") == 1:
                 d["available"] = True
             elif d.get("available") == 0:
                 d["available"] = False
             elif d.get("available") == 2:
                 d["available"] = None
-            # next_delivery_at: SQLite хранит как строку
             nd = d.get("next_delivery_at")
             if nd and isinstance(nd, str):
                 try:
@@ -1583,7 +1571,6 @@ async def get_stations_with_statuses(stations: list) -> list:
         sid = d["station_id"]
         by_station.setdefault(sid, []).append(d)
 
-    # Прикрепляем статусы к станциям
     for s in stations:
         sid = s["id"]
         statuses = by_station.get(sid, [])
