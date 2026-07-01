@@ -241,8 +241,38 @@ class _OwnerWaitingSearchFilter(BaseFilter):
         return message.from_user.id in _waiting_owner_search
 
 
+async def _require_subscription(message: Message) -> bool:
+    """Проверяет подписку. Если не подписан — отправляет сообщение. Возвращает True если ОК."""
+    bot = settings.bot
+    if not bot:
+        return True
+    user_id = message.from_user.id
+    is_sub = await _check_subscription(bot, user_id)
+    if not is_sub:
+        await message.answer(
+            "📢 <b>Подпишись на канал, чтобы пользоваться ботом!</b>\n\n"
+            "Бот бесплатный. Взамен — подпишись на наш канал с новостями о топливе.",
+            reply_markup=_subscribe_keyboard_tg(),
+        )
+    return is_sub
+
+
+async def _require_subscription_callback(callback: CallbackQuery) -> bool:
+    """Проверяет подписку через callback. Если не подписан — отвечает alert. Возвращает True если ОК."""
+    bot = settings.bot
+    if not bot:
+        return True
+    user_id = callback.from_user.id
+    is_sub = await _check_subscription(bot, user_id)
+    if not is_sub:
+        await callback.answer("📢 Подпишись на канал, чтобы пользоваться ботом!", show_alert=True)
+    return is_sub
+
+
 # === /start — Welcome-цепочка (3 сообщения) ===
 async def cmd_start(message: Message):
+    if not await _require_subscription(message):
+        return
     try:
         uid = await get_or_create_user(message)
         await log_event(uid, "bot_start")
@@ -995,6 +1025,9 @@ async def handle_main_button(message: Message, state: FSMContext = None):
         await go_home_text(message, state)
         return
 
+    if not await _require_subscription(message):
+        return
+
     if text == BTN_FIND or text == "🔍 Найти АЗС":
         await cmd_find(message)
     elif text == BTN_REPORT or text == "📝 Сообщить о наличии":
@@ -1073,6 +1106,12 @@ async def cmd_profile(message: Message):
 
 
 async def profile_callback(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     await callback.answer()
     await cmd_profile(callback.message)
 
@@ -1084,6 +1123,12 @@ async def help_callback(callback: CallbackQuery):
 
 # === menu:* — inline-меню ===
 async def menu_callback(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     try:
         await callback.answer()
     except Exception:
@@ -1140,6 +1185,12 @@ async def menu_callback(callback: CallbackQuery):
 
 # === city:* — выбор города ===
 async def city_callback(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     await callback.answer()
     data = callback.data or ""
     city_name = data.split(":", 1)[1] if ":" in data else ""
@@ -1404,6 +1455,12 @@ async def emergency_handler(msg, city: str = None):
 
 # === fuel:* — выбор топлива ===
 async def fuel_callback(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     await callback.answer()
     data = callback.data or ""
     parts = data.split(":")
@@ -1502,6 +1559,12 @@ async def net_callback(callback: CallbackQuery):
 
 # === emergency:* ===
 async def emergency_city_callback(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     await callback.answer()
     data = callback.data or ""
     parts = data.split(":")
@@ -1513,6 +1576,12 @@ async def emergency_city_callback(callback: CallbackQuery):
 
 # === premium callback ===
 async def premium_callback(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     await callback.answer()
     await cmd_premium(callback.message)
 
@@ -1728,6 +1797,12 @@ async def handle_text_search(message: Message):
 
 # === Карточка АЗС ===
 async def show_station_details(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     station_id = int(callback.data.split(":")[1])
     user_id = await get_or_create_user(callback.message)
     await log_event(user_id, "station_viewed", {"station_id": station_id})
@@ -1862,6 +1937,12 @@ async def promote_callback(callback: CallbackQuery):
 
 # === Report flow: выбор города для отчёта ===
 async def report_city_callback(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     await callback.answer()
     data = callback.data or ""
     city = data.split(":", 1)[1] if ":" in data else ""
@@ -2244,40 +2325,8 @@ async def cmd_idea(message: Message, state: FSMContext | None = None):
 
 # === Регистрация ===
 def register_all_handlers(dp: Dispatcher):
-    # Callback «Я подписался» — ДО проверки подписки
+    # Callback «Я подписался»
     dp.callback_query.register(_on_check_subscribe, F.data == "check_subscribe")
-
-    # Middleware для проверки подписки — блокирует всё кроме /start и подписки
-    from aiogram import BaseMiddleware
-
-    class SubscriptionMiddleware(BaseMiddleware):
-        async def __call__(self, handler, event, data):
-            # Пропускаем /start и check_subscribe
-            if isinstance(event, Message):
-                text = event.text or ""
-                if text.startswith("/start") or text == "/help":
-                    return await handler(event, data)
-            if isinstance(event, CallbackQuery):
-                if event.data == "check_subscribe":
-                    return await handler(event, data)
-
-            bot = data.get("bot") or event.bot
-            user_id = event.from_user.id
-            is_sub = await _check_subscription(bot, user_id)
-            if not is_sub:
-                if isinstance(event, Message):
-                    await event.answer(
-                        "📢 <b>Подпишись на канал, чтобы пользоваться ботом!</b>\n\n"
-                        "Бот бесплатный. Взамен — подпишись на наш канал с новостями о топливе.",
-                        reply_markup=_subscribe_keyboard_tg(),
-                    )
-                elif isinstance(event, CallbackQuery):
-                    await event.answer("❌ Подпишись на канал, чтобы пользоваться ботом.", show_alert=True)
-                return  # блокируем выполнение
-            return await handler(event, data)
-
-    dp.message.middleware(SubscriptionMiddleware())
-    dp.callback_query.middleware(SubscriptionMiddleware())
 
     # Команды (как fallback)
     dp.message.register(cmd_start, CommandStart())
