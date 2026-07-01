@@ -247,12 +247,6 @@ async def _create_schema_pg(pool):
                 if upper.startswith("CREATE OR REPLACE VIEW") or upper.startswith("COMMENT ON"):
                     continue
                 if "CREATE INDEX" in upper:
-                    try:
-                        await asyncio.wait_for(conn.execute(stmt), timeout=30)
-                    except asyncio.TimeoutError:
-                        logger.info(f"PG index timed out (exists? skipping): {stmt[:60]}...")
-                    except Exception as e:
-                        logger.info(f"PG index: {e} (skipping): {stmt[:60]}...")
                     continue
                 try:
                     await asyncio.wait_for(conn.execute(stmt), timeout=30)
