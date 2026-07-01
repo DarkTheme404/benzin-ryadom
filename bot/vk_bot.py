@@ -1237,17 +1237,40 @@ async def run_vk_bot():
             return
         if msg.text:
             text = msg.text.strip()
-            # Handle keyboard button labels
-            btn_handler = BUTTON_MAP.get(text)
-            if btn_handler is not None:
-                await btn_handler(msg)
+            # Handle keyboard button labels (VK may add invisible chars)
+            if "Найти АЗС" in text:
+                await cmd_find(msg)
                 return
-            if text == "📝 Сообщить о наличии":
+            if "Сообщить" in text and "наличии" in text:
                 await _send(
                     msg,
                     "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
                     vk_report_city_keyboard(),
                 )
+                return
+            if "Уведомлени" in text or "🔔" in text:
+                await cmd_subscribe(msg)
+                return
+            if "владелец" in text.lower() or "Я владелец" in text:
+                await cmd_register_owner(msg)
+                return
+            if "Профиль" in text:
+                await cmd_profile(msg)
+                return
+            if "Мои АЗС" in text:
+                await cmd_my_stations(msg)
+                return
+            if "Premium" in text:
+                await cmd_premium(msg)
+                return
+            if "Поддержать" in text:
+                await cmd_donate(msg)
+                return
+            if "Помощь" in text or "/help" in text:
+                await cmd_help(msg)
+                return
+            if "В начало" in text:
+                await cmd_start(msg)
                 return
             await handle_text_input(msg)
 
