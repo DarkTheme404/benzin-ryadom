@@ -15,8 +15,6 @@ StandardError=journal
 
 # Безопасность
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=/opt/benzin-ryadom
 
 # Окружение
 EnvironmentFile=/opt/benzin-ryadom/bot/.env

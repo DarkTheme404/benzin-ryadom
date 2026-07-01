@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================
 # Бензин рядом — setup.sh
-# Первичная настройка Oracle Cloud Free Tier VM
+# Первичная настройка VPS (REG.RU Cloud / любая Ubuntu/Debian)
 # Запуск от root: sudo bash setup.sh
 # =============================================================
 set -euo pipefail
@@ -12,7 +12,7 @@ REPO="https://github.com/DarkTheme404/benzin-ryadom.git"
 PYTHON_VER="3.12"
 
 echo "========================================"
-echo " Бензин рядом — Oracle Cloud Setup"
+echo " Бензин рядом — VPS Setup"
 echo "========================================"
 
 # 1. Создаём пользователя
@@ -27,11 +27,22 @@ fi
 echo ">>> Устанавливаю пакеты..."
 apt-get update -qq
 apt-get install -y -qq git python${PYTHON_VER} python${PYTHON_VER}-venv python${PYTHON_VER}-pip \
-    build-essential libssl-dev libffi-dev curl wget unzip
+    build-essential libssl-dev libffi-dev curl wget
 
 # Симлинк на python3.12
 if ! command -v python3.12 &>/dev/null; then
     ln -sf /usr/bin/python${PYTHON_VER} /usr/local/bin/python3.12
+fi
+
+# 3. Swap (важно при 1 GB RAM)
+if [ ! -f /swapfile ]; then
+    echo ">>> Создаю swap 1GB..."
+    fallocate -l 1G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    echo "  swapon: done"
 fi
 
 # 3. Клонируем репозиторий
@@ -69,6 +80,27 @@ systemctl daemon-reload
 systemctl enable benzin-bot.service
 systemctl enable benzin-parsers.timer
 
+# 7. Лимит логов (10MB на сервис, на 10GB диск критично)
+mkdir -p /etc/systemd/system/benzin-bot.service.d
+cat > /etc/systemd/system/benzin-bot.service.d/override.conf << EOF
+[Service]
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=60
+LogRateLimitBurst=20
+EOF
+
+mkdir -p /etc/systemd/system/benzin-parsers.service.d
+cat > /etc/systemd/system/benzin-parsers.service.d/override.conf << EOF
+[Service]
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=60
+LogRateLimitBurst=20
+EOF
+
+systemctl daemon-reload
+
 echo "========================================"
 echo " Готово!"
 echo "========================================"
@@ -89,3 +121,6 @@ echo ""
 echo "5. Логи:"
 echo "   sudo journalctl -u benzin-bot -f"
 echo "   sudo journalctl -u benzin-parsers -f"
+echo ""
+echo "6. Swap:"
+echo "   free -h  # проверить swap"
