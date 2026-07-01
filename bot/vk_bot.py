@@ -91,9 +91,8 @@ async def _check_vk_subscription(user_id: int, api) -> bool:
 
 def _vk_subscribe_keyboard() -> str:
     """Клавиатура «Подпишись чтобы продолжить» для VK."""
-    group_id = settings.SUBSCRIBE_COMMUNITY_VK
     return vk_keyboard([
-        [_link_button("📢 Подписаться", f"https://vk.com/public{group_id}")],
+        [_link_button("📢 Подписаться", "https://vk.com/benzyn_ryadom")],
         [_button("✅ Я подписался", "positive")],
     ])
 
