@@ -40,7 +40,7 @@ services:
       # MINI_APP_URL=https://benzin-mini.vercel.app
       # CHANNEL_CHAT_ID=-100xxx (опционально)
 
-  # === Cron Job: обновление цен каждые 6 часов ===
+  # === Cron Job: обновление данных каждый час ===
   - type: cron
     name: benzin-parser-cron
     runtime: python
@@ -49,13 +49,15 @@ services:
     branch: main
     rootDir: .
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: cd scripts && python cron_update.py
-    schedule: "0 */6 * * *"  # каждые 6 часов
+    startCommand: cd scripts && python orchestrator.py --once
+    schedule: "0 * * * *"  # каждый час
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
       - key: USE_SQLITE
         value: "false"
+      - key: SKIP_TG
+        value: "true"
       # === Секреты наследуются от web service автоматически ===
       # DATABASE_URL, BOT_TOKEN, CHANNEL_CHAT_ID
 

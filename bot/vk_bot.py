@@ -9,7 +9,6 @@ import re
 
 from vkbottle import Bot
 from vkbottle.bot import Message
-from vkbottle_types.events.bot_events import MessageEvent
 
 from config import settings
 from db import (
@@ -47,6 +46,8 @@ from vk_keyboards import (
     vk_subscribe_radius_keyboard,
     vk_report_city_keyboard,
     vk_report_station_keyboard,
+    vk_premium_keyboard,
+    vk_donate_keyboard,
     _button,
     vk_keyboard,
 )
@@ -64,22 +65,6 @@ _owner_state_data: dict[int, dict] = {}
 
 def _uid(msg: Message) -> int:
     return msg.peer_id
-
-
-def _uid_from_event(event: MessageEvent) -> int:
-    return event.peer_id
-
-
-def _parse_payload(event: MessageEvent) -> dict:
-    raw = event.object.payload
-    if isinstance(raw, str):
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return {}
-    if isinstance(raw, dict):
-        return raw
-    return {}
 
 
 _cache: dict[tuple, tuple[float, list]] = {}
@@ -337,7 +322,7 @@ async def cmd_donate(msg: Message):
     text = (
         "❤️ <b>Поддержать «Бензин рядом»</b>\n\n"
         "Проект бесплатный и работает на энтузиазме.\n\n"
-        "💰 Нажми кнопку below:"
+        "💰 Нажми кнопку ниже:"
     )
     await _send(msg, text, vk_donate_keyboard())
 

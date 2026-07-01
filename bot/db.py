@@ -914,9 +914,11 @@ async def find_nearest_stations(
                         id, name, operator, city, address, lat, lon, fuel_types, is_verified,
                         (
                             6371 * acos(
-                                cos(radians($1)) * cos(radians(lat)) *
-                                cos(radians(lon) - radians($2)) +
-                                sin(radians($1)) * sin(radians(lat))
+                                GREATEST(-1, LEAST(1,
+                                    cos(radians($1)) * cos(radians(lat)) *
+                                    cos(radians(lon) - radians($2)) +
+                                    sin(radians($1)) * sin(radians(lat))
+                                ))
                             )
                         ) AS distance_km
                     FROM stations
@@ -938,9 +940,11 @@ async def find_nearest_stations(
                         id, name, operator, city, address, lat, lon, fuel_types, is_verified,
                         (
                             6371 * acos(
-                                cos(radians($1)) * cos(radians(lat)) *
-                                cos(radians(lon) - radians($2)) +
-                                sin(radians($1)) * sin(radians(lat))
+                                GREATEST(-1, LEAST(1,
+                                    cos(radians($1)) * cos(radians(lat)) *
+                                    cos(radians(lon) - radians($2)) +
+                                    sin(radians($1)) * sin(radians(lat))
+                                ))
                             )
                         ) AS distance_km
                     FROM stations
@@ -1118,7 +1122,8 @@ async def find_stations_by_city(
             join = f"""
                 JOIN (
                     SELECT station_id,
-                           BOOL_OR(available = TRUE) as has_stock
+                           BOOL_OR(available = TRUE) as has_stock,
+                           MIN(price) FILTER (WHERE price IS NOT NULL) as min_price_recent
                     FROM reports
                     WHERE created_at > NOW() - INTERVAL '4 hours'
                       AND fuel_type != 'all'
@@ -1509,7 +1514,7 @@ async def get_station_current_status(station_id: int) -> list:
         async with _db.execute(
             """SELECT fuel_type, available, price, queue_size, has_limit, limit_liters, confidence, created_at, next_delivery_at, source
                FROM reports
-               WHERE station_id = ? AND created_at > datetime('now', '-1 day')
+               WHERE station_id = ? AND fuel_type != 'all' AND created_at > datetime('now', '-1 day')
                ORDER BY fuel_type, confidence DESC, created_at DESC""",
             (station_id,)
         ) as cur:
@@ -1538,10 +1543,11 @@ async def get_station_current_status(station_id: int) -> list:
                 """
                 SELECT
                     fuel_type, available, price, queue_size, has_limit,
-                    limit_liters, confidence, created_at AS last_report_at,
+                    limit_liters, confidence, created_at,
                     next_delivery_at, source
                 FROM reports
                 WHERE station_id = $1
+                  AND fuel_type != 'all'
                   AND created_at > NOW() - INTERVAL '24 hours'
                 ORDER BY fuel_type, confidence DESC, created_at DESC
                 """,
@@ -1569,6 +1575,7 @@ async def get_stations_with_statuses(stations: list) -> list:
                        has_limit, limit_liters, confidence, created_at, next_delivery_at, source
                 FROM reports
                 WHERE station_id IN ({placeholders})
+                  AND fuel_type != 'all'
                   AND created_at > datetime('now', '-1 day')
                 ORDER BY station_id, fuel_type, confidence DESC, created_at DESC""",
             station_ids,
@@ -1579,9 +1586,10 @@ async def get_stations_with_statuses(stations: list) -> list:
             rows = await conn.fetch(
                 f"""SELECT station_id, fuel_type, available, price, queue_size,
                         has_limit, limit_liters, confidence,
-                        created_at AS last_report_at, next_delivery_at, source
+                        created_at, next_delivery_at, source
                     FROM reports
                     WHERE station_id = ANY($1)
+                      AND fuel_type != 'all'
                       AND created_at > NOW() - INTERVAL '24 hours'
                     ORDER BY station_id, fuel_type, confidence DESC, created_at DESC""",
                 station_ids,

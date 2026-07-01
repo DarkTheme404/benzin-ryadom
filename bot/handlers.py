@@ -165,7 +165,7 @@ class IdeaStates(StatesGroup):
 # Простое in-memory состояние для owner-режима (non-FSM)
 _waiting_owner_search: set[int] = set()
 _waiting_owner_role: dict[int, int] = {}
-_waiting_inn_nosm: set[int] = {}
+_waiting_inn_nosm: set[int] = set()
 _owner_state: dict[int, dict] = {}
 
 
@@ -259,8 +259,9 @@ async def cmd_find(message: Message):
 
 
 # === /subscribe ===
-async def cmd_subscribe(message: Message, state: FSMContext):
-    await state.set_state(SubscribeStates.waiting_geo)
+async def cmd_subscribe(message: Message, state: FSMContext | None = None):
+    if state:
+        await state.set_state(SubscribeStates.waiting_geo)
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📍 Отправить геолокацию", request_location=True)],
@@ -277,9 +278,10 @@ async def cmd_subscribe(message: Message, state: FSMContext):
 
 
 # === /register_owner ===
-async def cmd_register_owner(message: Message, state: FSMContext):
+async def cmd_register_owner(message: Message, state: FSMContext | None = None):
     _waiting_owner_search.add(_tg_id(message))
-    await state.clear()
+    if state:
+        await state.clear()
     await message.answer(
         "👤 <b>Регистрация владельца или работника АЗС.</b>\n\n"
         "<b>Можно регистрироваться и владельцу, и работнику заправки</b> — "
@@ -1140,10 +1142,23 @@ async def show_city_results(msg, city: str, fuel: str = None, max_price: float =
         promoted_ids = set(await get_promoted_station_ids(city) or [])
 
         def _sort_key(s):
+            statuses = s.get("statuses") or []
+            non_all = [st for st in statuses if st.get("fuel_type") != "all"]
+            has_available = any(st.get("available") is True for st in non_all)
+            has_low = any(st.get("available") is None for st in non_all)
+            has_unavailable = any(st.get("available") is False for st in non_all)
+            if has_available:
+                avail_rank = 0
+            elif has_low:
+                avail_rank = 1
+            elif has_unavailable:
+                avail_rank = 2
+            else:
+                avail_rank = 3
             return (
-                0 if s["id"] in promoted_ids else 1,  # promoted first
+                0 if s["id"] in promoted_ids else 1,
+                avail_rank,
                 0 if s.get("is_verified") else 1,
-                0 if s.get("has_data") else 1,
                 (s.get("name") or "").lower(),
             )
         stations_with_status.sort(key=_sort_key)
@@ -1258,11 +1273,23 @@ async def emergency_handler(msg, city: str = None):
 
         def _sort_key(s):
             statuses = s.get("statuses", [])
+            non_all = [st for st in statuses if st.get("fuel_type") != "all"]
+            has_available = any(st.get("available") is True for st in non_all)
+            has_low = any(st.get("available") is None for st in non_all)
+            has_unavailable = any(st.get("available") is False for st in non_all)
+            if has_available:
+                avail_rank = 0
+            elif has_low:
+                avail_rank = 1
+            elif has_unavailable:
+                avail_rank = 2
+            else:
+                avail_rank = 3
             has_price = any(st.get("price") is not None for st in statuses)
             return (
+                avail_rank,
                 0 if s.get("is_verified") else 1,
                 0 if has_price else 1,
-                0 if s.get("has_data") else 1,
                 (s.get("name") or "").lower(),
             )
         stations_with_status.sort(key=_sort_key)
@@ -2131,13 +2158,13 @@ async def donate_callback(callback: CallbackQuery):
         description=f"Донейт на развитие проекта — {amount} ⭐",
         payload=f"donate:{amount}",
         currency="XTR",
-        prices=[{"label": "Донейт", "amount": amount}],
+        prices=[LabeledPrice(label="Донейт", amount=amount)],
     )
     await callback.answer()
 
 
 # === Баг-репорт ===
-async def cmd_bug_report(message: Message, state: FSMContext):
+async def cmd_bug_report(message: Message, state: FSMContext | None = None):
     """Отправка баг-репорта."""
     if state:
         await state.set_state(BugReportStates.waiting_description)
@@ -2150,7 +2177,7 @@ async def cmd_bug_report(message: Message, state: FSMContext):
 
 
 # === Предложение ===
-async def cmd_idea(message: Message, state: FSMContext):
+async def cmd_idea(message: Message, state: FSMContext | None = None):
     """Отправка предложения по доработке."""
     if state:
         await state.set_state(IdeaStates.waiting_idea)
