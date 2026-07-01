@@ -180,10 +180,12 @@ async def _check_subscription(bot: Bot, user_id: int) -> bool:
         return True  # если канал не задан — пропускаем проверку
 
     try:
-        member = await bot.get_chat_member(chat_id=f"@{channel}" if not channel.startswith("-") else int(channel), user_id=user_id)
+        chat_id = f"@{channel}" if not channel.startswith("-") else int(channel)
+        member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
         is_sub = member.status in ("member", "administrator", "creator")
-    except Exception:
-        is_sub = True  # при ошибке — пропускаем (не блокируем)
+    except Exception as e:
+        logger.warning("_check_subscription failed (bot must be channel admin): %s", e)
+        is_sub = False  # блокируем пока бот не станет админом канала
 
     _SUBSCRIBE_CACHE[user_id] = (is_sub, now)
     return is_sub

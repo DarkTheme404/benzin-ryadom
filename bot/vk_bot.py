@@ -712,45 +712,72 @@ async def run_vk_bot():
         logger.exception(f"run_vk_bot() CRASH during init: {e}")
         return
 
+    async def _require_sub(msg: Message, handler) -> bool:
+        """Проверяет подписку. Если не подписан — отправляет кнопку подписки. Возвращает True если ОК."""
+        uid = _uid(msg)
+        text = (msg.text or "").strip()
+        if text in ("/start", "start"):
+            return True
+        is_sub = await _check_vk_subscription(uid, bot.api)
+        if not is_sub:
+            await _send(
+                msg,
+                "📢 <b>Подпишись на сообщество, чтобы пользоваться ботом!</b>\n\n"
+                "Бот бесплатный. Взамен — подпишись на наше сообщество с новостями о топливе.",
+                _vk_subscribe_keyboard(),
+            )
+            return False
+        return True
+
     @bot.on.message(text=["/start", "start"])
     async def on_start(msg: Message):
-        await cmd_start(msg)
+        if await _require_sub(msg, cmd_start):
+            await cmd_start(msg)
 
     @bot.on.message(text=["/help", "help"])
     async def on_help(msg: Message):
-        await cmd_help(msg)
+        if await _require_sub(msg, cmd_help):
+            await cmd_help(msg)
 
     @bot.on.message(text=["/find", "find"])
     async def on_find(msg: Message):
-        await cmd_find(msg)
+        if await _require_sub(msg, cmd_find):
+            await cmd_find(msg)
 
     @bot.on.message(text=["/subscribe", "subscribe"])
     async def on_subscribe(msg: Message):
-        await cmd_subscribe(msg)
+        if await _require_sub(msg, cmd_subscribe):
+            await cmd_subscribe(msg)
 
     @bot.on.message(text=["/register_owner", "register_owner"])
     async def on_owner(msg: Message):
-        await cmd_register_owner(msg)
+        if await _require_sub(msg, cmd_register_owner):
+            await cmd_register_owner(msg)
 
     @bot.on.message(text=["/profile", "profile"])
     async def on_profile(msg: Message):
-        await cmd_profile(msg)
+        if await _require_sub(msg, cmd_profile):
+            await cmd_profile(msg)
 
     @bot.on.message(text=["/my_stations", "my_stations"])
     async def on_my_stations(msg: Message):
-        await cmd_my_stations(msg)
+        if await _require_sub(msg, cmd_my_stations):
+            await cmd_my_stations(msg)
 
     @bot.on.message(text=["/premium", "premium"])
     async def on_premium(msg: Message):
-        await cmd_premium(msg)
+        if await _require_sub(msg, cmd_premium):
+            await cmd_premium(msg)
 
     @bot.on.message(text=["/donate", "donate"])
     async def on_donate(msg: Message):
-        await cmd_donate(msg)
+        if await _require_sub(msg, cmd_donate):
+            await cmd_donate(msg)
 
     @bot.on.message(text=["/stats", "stats"])
     async def on_stats(msg: Message):
-        await cmd_stats(msg)
+        if await _require_sub(msg, cmd_stats):
+            await cmd_stats(msg)
 
     # Catch-all: handle VK button labels + geo + text search
     @bot.on.message()

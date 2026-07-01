@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1200, initial-scale=1.0">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px;
+    height: 628px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: white;
+    display: flex;
+    overflow: hidden;
+  }
+
+  .left {
+    flex: 1;
+    padding: 60px 50px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .right {
+    width: 450px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+  }
+
+  .logo {
+    font-size: 80px;
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-size: 48px;
+    font-weight: 800;
+    margin-bottom: 16px;
+    line-height: 1.1;
+  }
+
+  h1 span {
+    color: #4ade80;
+  }
+
+  .subtitle {
+    font-size: 22px;
+    color: #94a3b8;
+    margin-bottom: 40px;
+    line-height: 1.5;
+  }
+
+  .stats {
+    display: flex;
+    gap: 40px;
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-num {
+    font-size: 42px;
+    font-weight: 800;
+    color: #4ade80;
+  }
+
+  .stat-label {
+    font-size: 14px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .phone {
+    width: 280px;
+    height: 500px;
+    background: #0f172a;
+    border-radius: 36px;
+    border: 3px solid #334155;
+    padding: 12px;
+    position: relative;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+  }
+
+  .phone-screen {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+    border-radius: 28px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .chat-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #334155;
+    margin-bottom: 16px;
+  }
+
+  .chat-avatar {
+    width: 40px;
+    height: 40px;
+    background: #4ade80;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+  }
+
+  .chat-name {
+    font-weight: 600;
+    font-size: 16px;
+  }
+
+  .chat-status {
+    font-size: 12px;
+    color: #4ade80;
+  }
+
+  .msg {
+    background: #1e3a5f;
+    border-radius: 16px;
+    border-bottom-left-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    font-size: 14px;
+    line-height: 1.5;
+    max-width: 90%;
+  }
+
+  .msg.user {
+    background: #2563eb;
+    border-bottom-left-radius: 16px;
+    border-bottom-right-radius: 4px;
+    align-self: flex-end;
+  }
+
+  .station-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 8px;
+  }
+
+  .station-name {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+
+  .station-fuel {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #94a3b8;
+  }
+
+  .fuel-available {
+    color: #4ade80;
+    font-weight: 600;
+  }
+
+  .fuel-price {
+    color: #fbbf24;
+    font-weight: 600;
+  }
+
+  .badge {
+    display: inline-block;
+    background: #4ade80;
+    color: #000;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: 8px;
+  }
+
+  .cta {
+    margin-top: auto;
+    text-align: center;
+    padding: 12px;
+    background: #4ade80;
+    color: #000;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+  <div class="left">
+    <div class="logo">⛽</div>
+    <h1>Бензин<br><span>рядом</span></h1>
+    <p class="subtitle">Найди бензин за 5 секунд.<br>27 000+ АЗС. Актуальные цены.</p>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-num">27K+</div>
+        <div class="stat-label">АЗС</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">40K+</div>
+        <div class="stat-label">Отчётов</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">🟢</div>
+        <div class="stat-label">Live</div>
+      </div>
+    </div>
+  </div>
+  <div class="right">
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="chat-header">
+          <div class="chat-avatar">⛽</div>
+          <div>
+            <div class="chat-name">Бензин рядом</div>
+            <div class="chat-status">online</div>
+          </div>
+        </div>
+        <div class="msg user">Иваново</div>
+        <div class="msg">
+          🔍 Иваново — 39 АЗС<br><br>
+          <div class="station-card">
+            <div class="station-name">ЛУКОЙЛ <span class="badge">✅</span></div>
+            <div class="station-fuel">
+              <span class="fuel-available">АИ-92 ✓</span>
+              <span class="fuel-price">52.90₽</span>
+            </div>
+          </div>
+          <div class="station-card">
+            <div class="station-name">Газпромнефть</div>
+            <div class="station-fuel">
+              <span class="fuel-available">АИ-95 ✓</span>
+              <span class="fuel-price">56.50₽</span>
+            </div>
+          </div>
+          <div class="station-card">
+            <div class="station-name">Татнефть</div>
+            <div class="station-fuel">
+              <span style="color:#f97316">АИ-92 ⚠</span>
+              <span class="fuel-price">53.20₽</span>
+            </div>
+          </div>
+        </div>
+        <div class="cta">🔍 Найти АЗС рядом</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
