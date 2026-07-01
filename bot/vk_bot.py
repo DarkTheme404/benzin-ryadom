@@ -7,7 +7,9 @@ import logging
 import time
 
 from vkbottle import Bot
-from vkbottle.bot import Message, MessageEvent
+from vkbottle.bot import Message
+from vkbottle_types.events.bot_events import MessageEvent
+from vkbottle_types.events.enums.group_events import GroupEventType
 
 from config import settings
 from db import (
@@ -1071,13 +1073,18 @@ async def run_vk_bot():
         "oset": handle_owner_quick_set,
     }
 
-    @bot.on.raw_event(MessageEvent)
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
     async def on_message_event(event: MessageEvent):
-        # CRITICAL: acknowledge callback within 5 seconds to stop VK loading spinner
+        print(f"[VK-CB] RAW EVENT RECEIVED event_id={event.event_id} peer={event.peer_id}", flush=True)
+
+        # Acknowledge callback immediately
         try:
-            await event.show_snackbar("ok")
+            from vkbottle.tools.mini_types.bot.message_event import ShowSnackbarEvent
+            await event.send_message_event_answer(ShowSnackbarEvent(text="ok"))
+            print(f"[VK-CB] ACK sent event_id={event.event_id}", flush=True)
         except Exception as e:
-            logger.warning("show_snackbar failed: %s", e)
+            print(f"[VK-CB] ACK FAILED: {e}", flush=True)
+            logger.warning("send_message_event_answer failed: %s", e)
 
         payload = _parse_payload(event)
         cmd = payload.get("cmd", "")
