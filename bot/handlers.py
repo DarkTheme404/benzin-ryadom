@@ -1194,15 +1194,27 @@ async def show_city_results(msg, city: str, fuel: str = None, max_price: float =
                 short = name
             best_price = None
             best_fuel = None
+            has_available = False
+            has_unavailable = False
             for st in statuses:
-                if st.get("available") is True and st.get("price") is not None:
-                    if best_price is None or st["price"] < best_price:
-                        best_price = st["price"]
-                        best_fuel = st.get("fuel_type")
+                if st.get("fuel_type") == "all":
+                    continue
+                if st.get("available") is True:
+                    has_available = True
+                    if st.get("price") is not None:
+                        if best_price is None or st["price"] < best_price:
+                            best_price = st["price"]
+                            best_fuel = st.get("fuel_type")
+                elif st.get("available") is False:
+                    has_unavailable = True
             if best_price is not None and best_fuel:
                 short += f" · АИ-{best_fuel} {best_price:.2f}₽"
-            elif s.get("has_data"):
+            elif has_available:
                 short += " · ✅ есть"
+            elif has_unavailable:
+                short += " · ❌ нет"
+            elif s.get("has_data"):
+                short += " · ⚠️ кончается"
             else:
                 short += " · ❓ нет данных"
             buttons.append([InlineKeyboardButton(text=short[:64], callback_data=f"st:{s['id']}")])
@@ -1593,13 +1605,17 @@ def _get_main_status_icon(statuses: list) -> str:
                 if available is False or available == 0:
                     return "❌"
                 return "⚠️"
-    st = statuses[0]
-    available = st.get("available")
-    if available is True or available == 1:
-        return "✅"
-    if available is False or available == 0:
-        return "❌"
-    return "⚠️"
+    # fallback: skip 'all' fuel type
+    for st in statuses:
+        if st.get("fuel_type") == "all":
+            continue
+        available = st.get("available")
+        if available is True or available == 1:
+            return "✅"
+        if available is False or available == 0:
+            return "❌"
+        return "⚠️"
+    return "❓"
 
 
 # === Поиск по тексту ===
