@@ -227,11 +227,21 @@ async def _create_schema_pg(pool):
         schema_path = Path(__file__).parent.parent / "db" / "schema.sql"
         if schema_path.exists():
             sql = schema_path.read_text(encoding="utf-8")
-            # Разбиваем на отдельные statements (asyncpg не умеет multi-statement)
-            for stmt in sql.split(";"):
+            # Разбиваем на statements, но не ломаем $$..$$ блоки (PL/pgSQL)
+            # Заменяем ; внутри $$ на плейсхолдер, потом обратно
+            import re as _re
+            protected = []
+            def _protect(m):
+                protected.append(m.group(0))
+                return f"__PROTECTED_{len(protected)-1}__"
+            sql_safe = _re.sub(r"\$\$.*?\$\$", _protect, sql, flags=_re.DOTALL)
+            for stmt in sql_safe.split(";"):
                 stmt = stmt.strip()
                 if not stmt or stmt.startswith("--"):
                     continue
+                # Восстанавливаем $$ блоки
+                for i, p in enumerate(protected):
+                    stmt = stmt.replace(f"__PROTECTED_{i}__", p)
                 try:
                     await conn.execute(stmt)
                 except Exception as e:
