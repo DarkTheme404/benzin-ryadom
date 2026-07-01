@@ -1256,7 +1256,7 @@ async def emergency_handler(msg, city: str = None):
     try:
         stations = await find_stations_by_city(
             city=city, fuel_type=None, network=None,
-            max_price=None, has_stock=True, limit=20,
+            max_price=None, has_stock=False, limit=50,
         )
         if not stations:
             await msg.answer(
@@ -1268,6 +1268,19 @@ async def emergency_handler(msg, city: str = None):
             return
 
         stations_with_status = await get_stations_with_statuses(stations)
+        # Фильтруем: оставляем АЗС где хотя бы одно топливо есть или кончается
+        stations_with_status = [s for s in stations_with_status if any(
+            st.get("available") is not False and st.get("fuel_type") != "all"
+            for st in (s.get("statuses") or [])
+        )]
+        if not stations_with_status:
+            await msg.answer(
+                f"🚨 <b>Экстренный: {city}</b>\n\n"
+                f"❌ Нет данных о наличии топлива.\n\n"
+                f"💡 Сообщи о наличии сам — открой АЗС через «🔍 Найти АЗС» и нажми «📝 Сообщить».",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
 
         def _sort_key(s):
             statuses = s.get("statuses", [])
