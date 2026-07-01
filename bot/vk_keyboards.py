@@ -73,7 +73,6 @@ def vk_main_menu() -> str:
         [_button(VK_BTN_FIND, "primary"), _button(VK_BTN_REPORT, "positive")],
         [_button(VK_BTN_SUBSCRIBE), _button(VK_BTN_OWNER)],
         [_button(VK_BTN_PROFILE), _button(VK_BTN_HELP)],
-        [_button(VK_BTN_PREMIUM), _button(VK_BTN_DONATE)],
     ])
 
 

@@ -333,13 +333,13 @@ async def cmd_premium(msg: Message):
             await _send(msg, text, vk_main_menu())
             return
     text = (
-        f"💎 <b>Бензин рядом · Premium</b>\n\n"
-        f"💳 <b>{settings.PREMIUM_PRICE_STARS} Stars</b> · {settings.PREMIUM_DURATION_DAYS} дней\n\n"
-        f"🔔 <b>Push о завозе — каждый час</b>\n"
-        f"💎 <b>Premium-бейдж</b>\n\n"
-        f"🎁 <b>7 дней бесплатно</b> — попробуй!"
+        f"💎 Бензин рядом · Premium\n\n"
+        f"🔔 Push о завозе — каждый час\n"
+        f"💎 Premium-бейдж\n\n"
+        f"Скоро появится оплата через VK Pay!\n"
+        f"Следи за обновлениями."
     )
-    await _send(msg, text, vk_premium_keyboard())
+    await _send(msg, text, vk_main_menu())
 
 
 async def cmd_donate(msg: Message):
@@ -981,7 +981,7 @@ async def cmd_find_stations(msg: Message, city: str, fuel: str | None = None, em
             await _send(msg, "\n".join(lines), vk_main_menu())
             return
 
-        stations = await find_stations_by_city(city=city, fuel_type=fuel, limit=20)
+        stations = await find_stations_by_city(city=city, fuel_type=fuel, has_stock=None, limit=20)
         if not stations:
             await _send(msg, f"🔍 В {city} ничего не найдено.", vk_main_menu())
             return
