@@ -36,6 +36,7 @@ from db import (
 )
 from utils import format_distance, format_station_card
 from vk_keyboards import (
+    VK_BTN_HOME,
     vk_main_menu,
     vk_city_keyboard,
     vk_filters_keyboard,
