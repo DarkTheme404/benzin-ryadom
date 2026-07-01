@@ -50,6 +50,7 @@ from vk_keyboards import (
     vk_premium_keyboard,
     vk_donate_keyboard,
     _button,
+    _link_button,
     vk_keyboard,
 )
 
