@@ -1217,12 +1217,38 @@ async def run_vk_bot():
         )
 
     # Geolocation
+    BUTTON_MAP = {
+        "🔍 Найти АЗС": cmd_find,
+        "📝 Сообщить о наличии": None,
+        "🔔 Уведомления": cmd_subscribe,
+        "👤 Я владелец АЗС": cmd_register_owner,
+        "👤 Профиль": cmd_profile,
+        "🏪 Мои АЗС": cmd_my_stations,
+        "💎 Premium": cmd_premium,
+        "❤️ Поддержать": cmd_donate,
+        "❓ Помощь": cmd_help,
+        "🏠 В начало": cmd_start,
+    }
+
     @bot.on.message()
     async def on_geo_and_text(msg: Message):
         if msg.geo:
             await handle_geo_location(msg)
             return
         if msg.text:
+            text = msg.text.strip()
+            # Handle keyboard button labels
+            btn_handler = BUTTON_MAP.get(text)
+            if btn_handler is not None:
+                await btn_handler(msg)
+                return
+            if text == "📝 Сообщить о наличии":
+                await _send(
+                    msg,
+                    "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
+                    vk_report_city_keyboard(),
+                )
+                return
             await handle_text_input(msg)
 
     # Callback events
