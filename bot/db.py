@@ -273,11 +273,21 @@ async def _create_schema_pg(pool):
 
 
 async def _import_from_sqlite_pg(conn):
-    """Импорт данных из локальной SQLite в PostgreSQL (одноразово)."""
+    """Импорт данных из локальной SQLite в PostgreSQL (одноразово).
+
+    Конвертирует типы: int→bool для has_24_7/is_verified/is_active/has_limit/available,
+    json-string→list для fuel_types, string→datetime для timestamps.
+    """
     import sqlite3 as _sq3
+    from datetime import datetime as _dt
     logger.info(f"Importing from SQLite: {DB_PATH}")
     sq = _sq3.connect(str(DB_PATH))
     sq.row_factory = _sq3.Row
+
+    def _ts(s):
+        if not s: return None
+        try: return _dt.fromisoformat(str(s))
+        except: return None
 
     # Stations
     rows = sq.execute("SELECT * FROM stations").fetchall()
@@ -288,14 +298,17 @@ async def _import_from_sqlite_pg(conn):
             if isinstance(ft, str):
                 try: ft = json.loads(ft)
                 except: ft = []
+            if not isinstance(ft, list): ft = []
             data.append((r["id"],r["osm_id"],r["name"],r["operator"],r["brand"],r["network"],
                 r["country"],r["region"],r["city"],r["address"],r["lat"],r["lon"],ft,
-                r["has_24_7"],r["phone"],r["website"],r["is_verified"],r["is_active"],
-                str(r["created_at"]),str(r["updated_at"])))
+                bool(r["has_24_7"]),r["phone"],r["website"],
+                bool(r["is_verified"]),bool(r["is_active"]),
+                _ts(r["created_at"]),_ts(r["updated_at"])))
         await conn.executemany('''INSERT INTO stations
             (id,osm_id,name,operator,brand,network,country,region,city,address,lat,lon,fuel_types,
              has_24_7,phone,website,is_verified,is_active,created_at,updated_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18,$19::timestamptz,$20::timestamptz)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+                    $14,$15,$16,$17,$18,$19,$20)
             ON CONFLICT (id) DO NOTHING''', data)
         logger.info(f"  stations: {len(data)}")
 
@@ -304,13 +317,14 @@ async def _import_from_sqlite_pg(conn):
     if rows:
         data = [(r["id"],r["telegram_id"],r["username"],r["first_name"],r["last_name"],
             r["language_code"],r["reputation"],r["total_reports"],r["confirmed_reports"],
-            r["badge"],r["region"],r["city"],r["is_owner"],r["is_blocked"],
-            str(r["created_at"]),str(r["last_active_at"])) for r in rows]
+            r["badge"],r["region"],r["city"],
+            bool(r["is_owner"]),bool(r["is_blocked"]),
+            _ts(r["created_at"]),_ts(r["last_active_at"])) for r in rows]
         await conn.executemany('''INSERT INTO users
             (id,telegram_id,username,first_name,last_name,language_code,reputation,
              total_reports,confirmed_reports,badge,region,city,is_owner,is_blocked,
              created_at,last_active_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::timestamptz,$16::timestamptz)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
             ON CONFLICT (id) DO NOTHING''', data)
         logger.info(f"  users: {len(data)}")
 
@@ -321,18 +335,21 @@ async def _import_from_sqlite_pg(conn):
         chunk = rows[i:i+3000]
         data = []
         for r in chunk:
+            avail = r["available"]
+            if avail == 1: avail_b = True
+            elif avail == 0: avail_b = False
+            else: avail_b = None
             nd = r["next_delivery_at"]
             data.append((r["id"],r["station_id"],r["user_id"],r["fuel_type"],
-                bool(r["available"]),r["price"],r["queue_size"],r["has_limit"],
+                avail_b,r["price"],r["queue_size"],bool(r["has_limit"]),
                 r["limit_liters"],r["comment"],r["confidence"],r["confirmations"],
-                r["disputes"],r["source"],str(r["expires_at"]) if r["expires_at"] else None,
-                str(nd) if nd else None, str(r["created_at"])))
+                r["disputes"],r["source"],_ts(r["expires_at"]),
+                _ts(nd),_ts(r["created_at"])))
         await conn.executemany('''INSERT INTO reports
             (id,station_id,user_id,fuel_type,available,price,queue_size,has_limit,
              limit_liters,comment,confidence,confirmations,disputes,source,expires_at,
              next_delivery_at,created_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-                    $15::timestamptz,$16::timestamptz,$17::timestamptz)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
             ON CONFLICT (id) DO NOTHING''', data)
         total += len(data)
     logger.info(f"  reports: {total}")
@@ -484,12 +501,6 @@ async def get_owner_station_by_user_and_station(user_id: int, station_id: int) -
             user_id, station_id, one=True,
         )
     return row
-    async with _db.acquire() as conn:
-        if one:
-            row = await conn.fetchrow(sql, *args)
-            return dict(row) if row else None
-        rows = await conn.fetch(sql, *args)
-        return [dict(r) for r in rows]
 
 
 # === Бейджи пользователей ===
@@ -727,12 +738,6 @@ async def get_premium_info(user_id: int) -> dict | None:
                 user_id,
             )
         return dict(row) if row else None
-    async with _db.acquire() as conn:
-        if one:
-            row = await conn.fetchrow(sql, *args)
-            return dict(row) if row else None
-        rows = await conn.fetch(sql, *args)
-        return [dict(r) for r in rows]
 
 
 async def _execute(sql: str, *args, returning: bool = False):
@@ -1894,118 +1899,6 @@ async def get_all_prices_for_station(station_id: int) -> dict:
                 it["is_best"] = False
 
     return by_fuel
-
-
-
-    """Аналитика для владельца АЗС: просмотры, отчёты, подписчики, цены."""
-    result = {
-        "station_id": station_id,
-        "period_days": days,
-        "views": 0,
-        "reports_30d": 0,
-        "reports_by_fuel": {},
-        "subscribers": 0,
-        "avg_price": None,
-        "last_price": None,
-        "last_report_at": None,
-        "views_chart": [],  # [{date, count}]
-    }
-    if USE_SQLITE:
-        # Просмотры
-        async with _db.execute(
-            """SELECT DATE(created_at) as d, COUNT(*) as c FROM events
-               WHERE event_type = 'station_viewed'
-                 AND json_extract(payload, '$.station_id') = ?
-                 AND created_at > datetime('now', ?)
-               GROUP BY d ORDER BY d""",
-            (station_id, f"-{days} days"),
-        ) as cur:
-            for r in await cur.fetchall():
-                result["views_chart"].append({"date": r["d"], "count": r["c"]})
-            result["views"] = sum(v["count"] for v in result["views_chart"])
-        # Отчёты
-        async with _db.execute(
-            """SELECT fuel_type, COUNT(*) as c, AVG(price) as avg_p, MAX(price) as max_p, MIN(price) as min_p
-               FROM reports
-               WHERE station_id = ? AND created_at > datetime('now', ?)
-               GROUP BY fuel_type""",
-            (station_id, f"-{days} days"),
-        ) as cur:
-            total_avg = []
-            for r in await cur.fetchall():
-                result["reports_by_fuel"][r["fuel_type"]] = {
-                    "count": r["c"],
-                    "avg_price": float(r["avg_p"]) if r["avg_p"] else None,
-                }
-                if r["avg_p"]:
-                    total_avg.append(float(r["avg_p"]))
-            result["reports_30d"] = sum(v["count"] for v in result["reports_by_fuel"].values())
-            result["avg_price"] = sum(total_avg) / len(total_avg) if total_avg else None
-        # Подписчики
-        async with _db.execute(
-            "SELECT COUNT(*) as c FROM subscriptions WHERE station_id = ? AND is_active = 1",
-            (station_id,),
-        ) as cur:
-            r = await cur.fetchone()
-            result["subscribers"] = r["c"] if r else 0
-        # Последний отчёт
-        async with _db.execute(
-            """SELECT fuel_type, available, price, created_at FROM reports
-               WHERE station_id = ? ORDER BY created_at DESC LIMIT 1""",
-            (station_id,),
-        ) as cur:
-            last = await cur.fetchone()
-        if last:
-            result["last_report_at"] = last["created_at"]
-            result["last_price"] = float(last["price"]) if last["price"] else None
-    else:
-        async with _db.acquire() as conn:
-            # Просмотры
-            rows = await conn.fetch(
-                """SELECT DATE(created_at) as d, COUNT(*) as c FROM events
-                   WHERE event_type = 'station_viewed'
-                     AND (payload->>'station_id')::int = $1
-                     AND created_at > NOW() - ($2 || ' days')::interval
-                   GROUP BY d ORDER BY d""",
-                station_id, str(days),
-            )
-            for r in rows:
-                result["views_chart"].append({"date": r["d"].isoformat(), "count": r["c"]})
-            result["views"] = sum(v["count"] for v in result["views_chart"])
-            # Отчёты
-            rows = await conn.fetch(
-                """SELECT fuel_type, COUNT(*) as c, AVG(price) as avg_p
-                   FROM reports
-                   WHERE station_id = $1 AND created_at > NOW() - ($2 || ' days')::interval
-                   GROUP BY fuel_type""",
-                station_id, str(days),
-            )
-            total_avg = []
-            for r in rows:
-                result["reports_by_fuel"][r["fuel_type"]] = {
-                    "count": r["c"],
-                    "avg_price": float(r["avg_p"]) if r["avg_p"] else None,
-                }
-                if r["avg_p"]:
-                    total_avg.append(float(r["avg_p"]))
-            result["reports_30d"] = sum(v["count"] for v in result["reports_by_fuel"].values())
-            result["avg_price"] = sum(total_avg) / len(total_avg) if total_avg else None
-            # Подписчики
-            row = await conn.fetchrow(
-                "SELECT COUNT(*) as c FROM subscriptions WHERE station_id = $1 AND is_active = TRUE",
-                station_id,
-            )
-            result["subscribers"] = row["c"] if row else 0
-            # Последний отчёт
-            row = await conn.fetchrow(
-                """SELECT fuel_type, available, price, created_at FROM reports
-                   WHERE station_id = $1 ORDER BY created_at DESC LIMIT 1""",
-                station_id,
-            )
-            if row:
-                result["last_report_at"] = row["created_at"].isoformat()
-                result["last_price"] = float(row["price"]) if row["price"] else None
-    return result
 
 
 async def get_stats() -> dict:
