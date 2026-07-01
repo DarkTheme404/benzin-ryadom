@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import re
+import os
 
 from vkbottle import Bot
 from vkbottle.bot import Message
@@ -81,8 +82,14 @@ async def _check_vk_subscription(user_id: int, api) -> bool:
         return True
 
     try:
-        resp = await api.groups.isMember(group_id=group_id, user_id=user_id)
-        is_sub = bool(resp)
+        import aiohttp
+        token = os.getenv("VK_TOKEN", "")
+        url = "https://api.vk.com/method/groups.isMember"
+        params = {"group_id": group_id, "user_id": user_id, "access_token": token, "v": "5.199"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                data = await resp.json()
+                is_sub = bool(data.get("response", 0))
         logger.info("_check_vk_subscription: user=%d group=%s is_sub=%s", user_id, group_id, is_sub)
     except Exception as e:
         logger.warning("_check_vk_subscription FAILED: user=%d group=%s error=%s", user_id, group_id, e)
@@ -797,7 +804,7 @@ async def run_vk_bot():
                 # --- Проверка подписки на сообщество ---
                 # /start и "В начало" — пропускаем проверку
                 if text not in ("/start", "start", "В начало"):
-                    is_sub = await _check_vk_subscription(uid, bot.api)
+                    is_sub = await _check_vk_subscription(uid, None)
                     if not is_sub:
                         await _send(
                             msg,
@@ -847,7 +854,7 @@ async def run_vk_bot():
                     return
                 if "Я подписался" in text:
                     _vk_subscribe_cache.pop(uid, None)
-                    is_sub = await _check_vk_subscription(uid, bot.api)
+                    is_sub = await _check_vk_subscription(uid, None)
                     if is_sub:
                         await _send(msg, "✅ Подписка подтверждена! Пользуйся ботом бесплатно.", vk_main_menu())
                     else:
