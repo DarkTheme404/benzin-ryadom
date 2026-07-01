@@ -225,13 +225,18 @@ def _uid_from_event(event: MessageEvent) -> int:
 
 # === Find stations ===
 async def cmd_find(msg: Message):
-    await _send(
-        msg,
-        "📍 <b>Выбери населённый пункт</b>\n\n"
-        "Иваново, Москва, СПб, и другие. "
-        "Или напиши свой город в сообщении — бот найдёт АЗС.",
-        vk_city_keyboard(),
-    )
+    logger.info(f"cmd_find called for peer_id={msg.peer_id}")
+    try:
+        await _send(
+            msg,
+            "📍 <b>Выбери населённый пункт</b>\n\n"
+            "Иваново, Москва, СПб, и другие. "
+            "Или напиши свой город в сообщении — бот найдёт АЗС.",
+            vk_city_keyboard(),
+        )
+        logger.info("cmd_find: sent city keyboard OK")
+    except Exception as e:
+        logger.exception(f"cmd_find CRASH: {e}")
 
 
 async def handle_city_select(event: MessageEvent):
@@ -573,15 +578,19 @@ async def _do_emergency(event_or_msg, city: str):
 
 # === Subscribe ===
 async def cmd_subscribe(msg: Message):
-    uid = await _ensure_user(msg)
-    _user_state[_uid(msg)] = {"awaiting": "subscribe_geo"}
-    await _send(
-        msg,
-        "🔔 <b>Подписка на уведомления о завозе.</b>\n\n"
-        "Отправь геолокацию — буду присылать уведомления, когда "
-        "в радиусе 5 км от тебя появится бензин.",
-        vk_subscribe_geo_keyboard(),
-    )
+    logger.info(f"cmd_subscribe called for peer_id={msg.peer_id}")
+    try:
+        uid = await _ensure_user(msg)
+        _user_state[_uid(msg)] = {"awaiting": "subscribe_geo"}
+        await _send(
+            msg,
+            "🔔 <b>Подписка на уведомления о завозе.</b>\n\n"
+            "Отправь геолокацию — буду присылать уведомления, когда "
+            "в радиусе 5 км от тебя появится бензин.",
+            vk_subscribe_geo_keyboard(),
+        )
+    except Exception as e:
+        logger.exception(f"cmd_subscribe CRASH: {e}")
 
 
 async def handle_geo_location(msg: Message):
@@ -1232,47 +1241,54 @@ async def run_vk_bot():
 
     @bot.on.message()
     async def on_geo_and_text(msg: Message):
-        if msg.geo:
-            await handle_geo_location(msg)
-            return
-        if msg.text:
-            text = msg.text.strip()
-            # Handle keyboard button labels (VK may add invisible chars)
-            if "Найти АЗС" in text:
-                await cmd_find(msg)
+        try:
+            if msg.geo:
+                await handle_geo_location(msg)
                 return
-            if "Сообщить" in text and "наличии" in text:
-                await _send(
-                    msg,
-                    "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
-                    vk_report_city_keyboard(),
-                )
-                return
-            if "Уведомлени" in text or "🔔" in text:
-                await cmd_subscribe(msg)
-                return
-            if "владелец" in text.lower() or "Я владелец" in text:
-                await cmd_register_owner(msg)
-                return
-            if "Профиль" in text:
-                await cmd_profile(msg)
-                return
-            if "Мои АЗС" in text:
-                await cmd_my_stations(msg)
-                return
-            if "Premium" in text:
-                await cmd_premium(msg)
-                return
-            if "Поддержать" in text:
-                await cmd_donate(msg)
-                return
-            if "Помощь" in text or "/help" in text:
-                await cmd_help(msg)
-                return
-            if "В начало" in text:
-                await cmd_start(msg)
-                return
-            await handle_text_input(msg)
+            if msg.text:
+                text = msg.text.strip()
+                logger.info(f"VK text received: {repr(text)}")
+                if "Найти АЗС" in text:
+                    await cmd_find(msg)
+                    return
+                if "Сообщить" in text and "наличии" in text:
+                    await _send(
+                        msg,
+                        "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
+                        vk_report_city_keyboard(),
+                    )
+                    return
+                if "Уведомлени" in text or "🔔" in text:
+                    await cmd_subscribe(msg)
+                    return
+                if "владелец" in text.lower() or "Я владелец" in text:
+                    await cmd_register_owner(msg)
+                    return
+                if "Профиль" in text:
+                    await cmd_profile(msg)
+                    return
+                if "Мои АЗС" in text:
+                    await cmd_my_stations(msg)
+                    return
+                if "Premium" in text:
+                    await cmd_premium(msg)
+                    return
+                if "Поддержать" in text:
+                    await cmd_donate(msg)
+                    return
+                if "Помощь" in text or "/help" in text:
+                    await cmd_help(msg)
+                    return
+                if "В начало" in text:
+                    await cmd_start(msg)
+                    return
+                await handle_text_input(msg)
+        except Exception as e:
+            logger.exception(f"VK on_geo_and_text CRASH: {e}")
+            try:
+                await _send(msg, "⚠️ Произошла ошибка. Попробуй /start", vk_main_menu())
+            except Exception:
+                pass
 
     # Callback events
     @bot.on.raw_event(MessageEvent)
