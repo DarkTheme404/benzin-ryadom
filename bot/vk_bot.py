@@ -947,8 +947,49 @@ async def _owner_finish_text(msg: Message, station_id: int, role: str, inn: str 
 # TEXT-BASED HANDLERS (Message-based, no callback needed)
 # ====================================================================
 
-async def cmd_find_stations(msg: Message, city: str, fuel: str | None = None, emergency: bool = False):
-    """Find stations in city — text-based version of _show_station_list."""
+def _station_list_keyboard(stations_page: list, total: int, page: int, pages: int) -> str:
+    """Клавиатура списка АЗС: до 3 АЗС + навигация + утилиты. VK max 6 rows."""
+    rows = []
+    for s in stations_page:
+        statuses = s.get("statuses", [])
+        name = (s.get("name") or "АЗС")[:20]
+        operator = (s.get("operator") or "")[:12]
+        has_available = any(st.get("available") is True and st.get("fuel_type") != "all" for st in statuses)
+        has_unavailable = any(st.get("available") is False and st.get("fuel_type") != "all" for st in statuses)
+        icon = "✅" if has_available else ("❌" if has_unavailable else ("⚠️" if s.get("has_data") else "❓"))
+        label = f"{icon} #{s['id']} {name}"[:30]
+        rows.append([_button(label, "primary")])
+
+    nav = []
+    if page > 0:
+        nav.append(_button("⬅️ Назад", "secondary"))
+    if page < pages - 1:
+        nav.append(_button("Далее ➡️", "secondary"))
+    if nav:
+        rows.append(nav)
+
+    rows.append([_button("🚨 Экстренный", "negative"), _button("🏭 Сеть", "secondary")])
+    rows.append([_button("🔄 Фильтры", "secondary"), _button(VK_BTN_HOME)])
+    return vk_keyboard(rows)
+
+
+def _network_filter_keyboard(networks: list[str], city: str) -> str:
+    """Клавиатура фильтра по сети АЗС. Max 6 rows."""
+    rows = []
+    for i in range(0, min(len(networks), 6), 2):
+        row = []
+        for j in range(i, min(i + 2, len(networks))):
+            row.append(_button(f"🏭 {networks[j]}"[:30], "primary"))
+        rows.append(row)
+    rows.append([_button("🏭 Все сети", "secondary")])
+    rows.append([_button("⬅️ К списку", "secondary"), _button(VK_BTN_HOME)])
+    return vk_keyboard(rows)
+
+
+async def cmd_find_stations(msg: Message, city: str, fuel: str | None = None,
+                            network: str | None = None, emergency: bool = False,
+                            page: int = 0):
+    """Find stations in city — paginated, max 3 per page."""
     try:
         if emergency:
             stations = await find_stations_by_city(city=city, has_stock=False, limit=50)
@@ -982,15 +1023,14 @@ async def cmd_find_stations(msg: Message, city: str, fuel: str | None = None, em
             await _send(msg, "\n".join(lines), vk_main_menu())
             return
 
-        logger.info("[cmd_find_stations] city=%s fuel=%s peer=%s", city, fuel, msg.peer_id)
-        stations = await find_stations_by_city(city=city, fuel_type=fuel, has_stock=None, limit=20)
+        logger.info("[cmd_find_stations] city=%s fuel=%s network=%s page=%s peer=%s", city, fuel, network, page, msg.peer_id)
+        stations = await find_stations_by_city(city=city, fuel_type=fuel, network=network, has_stock=None, limit=50)
         logger.info("[cmd_find_stations] found %d stations", len(stations))
         if not stations:
             await _send(msg, f"🔍 В {city} ничего не найдено.", vk_main_menu())
             return
 
         stations_with_status = await get_stations_with_statuses(stations)
-        logger.info("[cmd_find_stations] got statuses for %d", len(stations_with_status))
 
         promoted_ids = set(await get_promoted_station_ids(city) or [])
 
@@ -1003,23 +1043,25 @@ async def cmd_find_stations(msg: Message, city: str, fuel: str | None = None, em
             )
         stations_with_status.sort(key=_sort_key)
 
-        fuel_label = f" (АИ-{fuel})" if fuel else ""
-        title = f"⛽ {city}{fuel_label} — {len(stations_with_status)} АЗС\n"
-        rows = []
-        for s in stations_with_status[:3]:
-            statuses = s.get("statuses", [])
-            name = (s.get("name") or "АЗС")[:22]
-            has_available = any(st.get("available") is True and st.get("fuel_type") != "all" for st in statuses)
-            has_unavailable = any(st.get("available") is False and st.get("fuel_type") != "all" for st in statuses)
-            icon = "✅" if has_available else ("❌" if has_unavailable else ("⚠️" if s.get("has_data") else "❓"))
-            label = f"{icon} #{s['id']} {name}"[:30]
-            rows.append([_button(label, "primary")])
+        PAGE_SIZE = 3
+        total = len(stations_with_status)
+        pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(0, min(page, pages - 1))
+        start = page * PAGE_SIZE
+        page_stations = stations_with_status[start:start + PAGE_SIZE]
 
-        rows.append([_button("🚨 Экстренный", "negative")])
-        rows.append([_button("🔄 Фильтры", "secondary")])
-        rows.append([_button(VK_BTN_HOME)])
-        kb = vk_keyboard(rows)
+        fuel_label = f" (АИ-{fuel})" if fuel else ""
+        net_label = f" [{network}]" if network else ""
+        title = f"⛽ {city}{fuel_label}{net_label} — {total} АЗС (стр. {page + 1}/{pages})\n"
+
+        kb = _station_list_keyboard(page_stations, total, page, pages)
         await _send(msg, title, kb)
+
+        uid = _uid(msg)
+        _user_state[uid] = {
+            "city": city, "fuel": fuel, "network": network,
+            "page": page, "stations": stations_with_status,
+        }
     except Exception as e:
         logger.exception("[cmd_find_stations] FAILED: %s", e)
         err_msg = f"⚠️ Ошибка: {type(e).__name__}: {str(e)[:100]}"
@@ -1225,6 +1267,74 @@ async def run_vk_bot():
                         await cmd_find_stations(msg, city)
                         return
 
+                # --- Pagination: "Далее ➡️" / "⬅️ Назад" ---
+                if "Далее" in text or "Назад" in text and "К списку" not in text:
+                    state = _user_state.get(msg.peer_id, {})
+                    city = state.get("city", "")
+                    if city:
+                        page = state.get("page", 0)
+                        if "Далее" in text:
+                            page += 1
+                        else:
+                            page -= 1
+                        await cmd_find_stations(msg, city, fuel=state.get("fuel"),
+                                                network=state.get("network"), page=page)
+                    else:
+                        await _send(msg, "Сначала выбери город", vk_city_keyboard())
+                    return
+
+                # --- Network filter: "🏭 Сеть" ---
+                if text == "🏭 Сеть" or text == "🏭 сеть":
+                    state = _user_state.get(msg.peer_id, {})
+                    city = state.get("city", "")
+                    stations = state.get("stations", [])
+                    if city and stations:
+                        networks = []
+                        seen = set()
+                        for s in stations:
+                            op = (s.get("operator") or "").strip()
+                            if op and op not in seen:
+                                seen.add(op)
+                                networks.append(op)
+                        kb = _network_filter_keyboard(networks[:6], city)
+                        await _send(msg, f"🏭 Выбери сеть АЗС в {city}:", kb)
+                    else:
+                        await _send(msg, "Сначала найди АЗС", vk_main_menu())
+                    return
+
+                # --- Network filter select: "🏭 Лукойл" etc ---
+                if text.startswith("🏭 ") and text != "🏭 Все сети":
+                    network_name = text.replace("🏭", "").strip()
+                    state = _user_state.get(msg.peer_id, {})
+                    city = state.get("city", "")
+                    if city:
+                        await cmd_find_stations(msg, city, fuel=state.get("fuel"),
+                                                network=network_name)
+                    else:
+                        await _send(msg, "Сначала выбери город", vk_city_keyboard())
+                    return
+
+                # --- Network filter clear: "🏭 Все сети" ---
+                if text == "🏭 Все сети":
+                    state = _user_state.get(msg.peer_id, {})
+                    city = state.get("city", "")
+                    if city:
+                        await cmd_find_stations(msg, city, fuel=state.get("fuel"))
+                    else:
+                        await _send(msg, "Сначала выбери город", vk_city_keyboard())
+                    return
+
+                # --- Back to list: "⬅️ К списку" ---
+                if "К списку" in text:
+                    state = _user_state.get(msg.peer_id, {})
+                    city = state.get("city", "")
+                    if city:
+                        await cmd_find_stations(msg, city, fuel=state.get("fuel"),
+                                                network=state.get("network"))
+                    else:
+                        await _send(msg, "Сначала выбери город", vk_city_keyboard())
+                    return
+
                 # --- Filters ---
                 if "Фильтры" in text:
                     state = _user_state.get(msg.peer_id, {})
@@ -1249,10 +1359,9 @@ async def run_vk_bot():
                             fuel = val
                             break
                     if fuel and city:
-                        _user_state[msg.peer_id] = {"city": city, "fuel": fuel}
-                        await cmd_find_stations(msg, city, fuel=fuel)
+                        await cmd_find_stations(msg, city, fuel=fuel, network=state.get("network"))
                     elif city:
-                        await cmd_find_stations(msg, city)
+                        await cmd_find_stations(msg, city, network=state.get("network"))
                     else:
                         await _send(msg, "Сначала выбери город", vk_city_keyboard())
                     return
