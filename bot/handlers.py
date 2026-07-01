@@ -1117,6 +1117,12 @@ async def profile_callback(callback: CallbackQuery):
 
 
 async def help_callback(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     await callback.answer()
     await cmd_help(callback.message)
 
@@ -2282,6 +2288,12 @@ async def cmd_donate(message: Message):
 
 async def donate_callback(callback: CallbackQuery):
     """Обработка выбора суммы донейта — отправляет invoice."""
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
     try:
         amount = int(callback.data.split(":")[1])
     except (IndexError, ValueError):
