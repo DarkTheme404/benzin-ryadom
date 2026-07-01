@@ -70,7 +70,7 @@ from keyboards import (
     report_station_keyboard,
     BTN_FIND, BTN_REPORT, BTN_SUBSCRIBE, BTN_PROFILE,
     BTN_OWNER, BTN_MY_STATIONS, BTN_HELP, BTN_PREMIUM, BTN_HOME,
-    BTN_APP, BTN_BUG, BTN_IDEA,
+    BTN_APP, BTN_BUG, BTN_IDEA, BTN_DONATE,
 )
 from utils import format_distance, format_fuel_status, format_station_card
 from config import settings
@@ -822,6 +822,20 @@ async def successful_payment_handler(message: Message):
         if uid:
             await log_event(uid, "station_promoted", payload={"owner_station_id": osid, "stars": sp.total_amount})
 
+    elif payload.startswith("donate:"):
+        # Донейт — просто благодарим
+        try:
+            amount = int(payload.split(":")[1])
+        except (IndexError, ValueError):
+            amount = sp.total_amount
+        await message.answer(
+            f"❤️ <b>Спасибо за поддержку!</b>\n\n"
+            f"Ты задонатил {amount} ⭐ на развитие «Бензин рядом».\n"
+            f"Это помогает нам расти и добавлять новые функции!",
+        )
+        if uid:
+            await log_event(uid, "donate", payload={"stars": sp.total_amount})
+
 
 # === Inline mode ===
 async def inline_search(inline_query: InlineQuery):
@@ -972,6 +986,8 @@ async def handle_main_button(message: Message, state: FSMContext = None):
         await cmd_premium(message)
     elif text == BTN_APP or text == "📱 Приложение":
         await cmd_open_app(message)
+    elif text == BTN_DONATE or text == "❤️ Поддержать":
+        await cmd_donate(message)
     elif text == BTN_BUG or text == "🐛 Ошибка":
         await cmd_bug_report(message, state)
     elif text == BTN_IDEA or text == "💡 Предложение":
@@ -1076,6 +1092,8 @@ async def menu_callback(callback: CallbackQuery):
             await cmd_help(msg)
         elif action == "app":
             await cmd_open_app(msg)
+        elif action == "donate":
+            await cmd_donate(msg)
         elif action == "bug":
             await cmd_bug_report(msg, None)
         elif action == "idea":
@@ -2063,12 +2081,55 @@ async def subscribe_station(callback: CallbackQuery):
 # === Открыть приложение ===
 async def cmd_open_app(message: Message):
     """Показывает кнопку для открытия Telegram Web App."""
-    web_app_url = settings.WEB_APP_URL if hasattr(settings, 'WEB_APP_URL') else "https://example.com/miniapp"
+    web_app_url = settings.WEB_APP_URL if settings.WEB_APP_URL else ""
+    if not web_app_url:
+        await message.answer(
+            "📱 <b>Приложение «Бензин рядом»</b>\n\n"
+            "Скоро будет доступно! Следи за обновлениями.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
     await message.answer(
         "📱 <b>Приложение «Бензин рядом»</b>\n\n"
         "Открой приложение для удобного поиска АЗС с картой и фильтрами.",
         reply_markup=web_app_keyboard(web_app_url),
     )
+
+
+# === Поддержать разработку ===
+async def cmd_donate(message: Message):
+    """Показывает варианты поддержки проекта."""
+    await message.answer(
+        "❤️ <b>Поддержать «Бензин рядом»</b>\n\n"
+        "Проект бесплатный и работает на энтузиазме. "
+        "Твоя поддержка помогает развивать сервис!\n\n"
+        "Выбери сумму:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐ 50", callback_data="donate:50"),
+             InlineKeyboardButton(text="⭐ 100", callback_data="donate:100"),
+             InlineKeyboardButton(text="⭐ 250", callback_data="donate:250")],
+            [InlineKeyboardButton(text="⭐ 500", callback_data="donate:500")],
+            [InlineKeyboardButton(text="🏠 В начало", callback_data="go_home")],
+        ]),
+    )
+
+
+async def donate_callback(callback: CallbackQuery):
+    """Обработка выбора суммы донейта — отправляет invoice."""
+    try:
+        amount = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("Ошибка", show_alert=True)
+        return
+
+    await callback.message.answer_invoice(
+        title="Поддержка «Бензин рядом»",
+        description=f"Донейт на развитие проекта — {amount} ⭐",
+        payload=f"donate:{amount}",
+        currency="XTR",
+        prices=[{"label": "Донейт", "amount": amount}],
+    )
+    await callback.answer()
 
 
 # === Баг-репорт ===
@@ -2168,6 +2229,9 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(profile_callback, F.data == "cmd_profile")
     dp.callback_query.register(help_callback, F.data == "cmd_help")
     dp.callback_query.register(menu_callback, F.data.startswith("menu:"))
+
+    # Donate
+    dp.callback_query.register(donate_callback, F.data.startswith("donate:"))
 
     # Premium
     dp.message.register(cmd_premium, Command("premium"))
