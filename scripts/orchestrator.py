@@ -119,6 +119,9 @@ async def parse_vk_runner():
 
 async def parse_tg_runner():
     """Запускает Telethon-парсеры (если есть credentials)."""
+    if os.getenv("SKIP_TG", "").lower() in ("true", "1", "yes"):
+        print("  ⏭ TG: SKIP_TG=true, пропускаю")
+        return {}
     if not parse_tg_channels and not parse_tg_prices:
         print("  ⏭ TG: telethon не установлен (pip install telethon)")
         return {}
@@ -129,7 +132,7 @@ async def parse_tg_runner():
         return {}
     if parse_tg_channels:
         try:
-            sys.argv = ["parse_tg_channels.py", "--limit", "50"]
+            sys.argv = ["parse_tg_channels.py"]
             await parse_tg_channels.main()
         except SystemExit:
             pass
