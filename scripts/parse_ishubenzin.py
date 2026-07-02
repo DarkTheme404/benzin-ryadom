@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / "bot" / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent / "bot"))
-from db import init_db, close_db, add_report, find_stations_by_city, upsert_station_for_import
+from db import init_db, close_db, add_report, find_stations_by_city, upsert_station_for_import, stale_old_reports
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("ishubenzin")
@@ -147,6 +147,7 @@ def convert_station(raw: dict) -> dict | None:
 async def main():
     logger.info("=== ishubenzin.ru parser ===")
     await init_db()
+    await stale_old_reports("ishubenzin")
     logger.info("DB ready")
 
     total_reports = 0

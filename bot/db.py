@@ -1434,6 +1434,38 @@ async def add_report(
             return row["id"]
 
 
+async def stale_old_reports(source: str, older_than_hours: int = 2) -> int:
+    """Удаляет старые отчёты от конкретного источника.
+    
+    Вызывается перед началом нового цикла парсинга, чтобы станции,
+    которые НЕ появились в новых данных, не оставались 'available' 
+    со старыми отчётами.
+    Возвращает количество удалённых записей.
+    """
+    if USE_SQLITE:
+        cursor = await _db.execute(
+            """DELETE FROM reports 
+               WHERE source = ? 
+               AND created_at < datetime('now', ? || ' hours')""",
+            (source, f"-{older_than_hours}"),
+        )
+        deleted = cursor.rowcount
+        await _db.commit()
+    else:
+        async with _db.acquire() as conn:
+            result = await conn.execute(
+                """DELETE FROM reports 
+                   WHERE source = $1 
+                   AND created_at < NOW() - make_interval(hours => $2)""",
+                source, older_than_hours,
+            )
+            # result is like "DELETE 123"
+            deleted = int(result.split()[-1]) if result and "DELETE" in result else 0
+    if deleted:
+        logger.info("stale_old_reports(%s): удалено %d старых отчётов", source, deleted)
+    return deleted
+
+
 async def add_subscription(
     user_id: int,
     lat: float | None = None,

@@ -220,6 +220,7 @@ async def save_reports(stations_data: list, area_name: str):
 
 async def main():
     await db.init_db()
+    await db.stale_old_reports("gdebenz")
 
     total_saved = 0
     for area in SEARCH_AREAS:

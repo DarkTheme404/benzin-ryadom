@@ -216,6 +216,7 @@ async def main():
     print(f"=== Парсер fuelprice.ru ===")
     if not args.dry_run:
         await db.init_db()
+        await db.stale_old_reports(SOURCE_NAME)
 
     async with aiohttp.ClientSession() as session:
         cities = []

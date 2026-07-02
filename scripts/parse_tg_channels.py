@@ -742,6 +742,7 @@ async def run_once(upload_url: str = None, api_key: str = ""):
     await client.start()
     logger.info("Authorized as %s", (await client.get_me()).username)
     await db.init_db()
+    await db.stale_old_reports("tg")
 
     total_saved = 0
     for channel in CHANNELS:
