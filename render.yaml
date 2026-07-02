@@ -64,8 +64,8 @@ services:
         value: "false"
       # === Секреты наследуются от web service автоматически ===
       # DATABASE_URL, BOT_TOKEN, CHANNEL_CHAT_ID
-      # TG_API_ID, TG_API_HASH — задать вручную в Render Dashboard (секреты)
-      # TG_SESSION_STRING — задать вручную в Render Dashboard (секрет)
+      # ⚠️ TG_API_ID, TG_API_HASH, TG_SESSION_STRING — задать ВРУЧНУЮ 
+      # в Render Dashboard для benzin-parser-cron (не наследуются от web service!)
 
   # === Cron Job: мониторинг свежести данных каждые 2 часа ===
   - type: cron
