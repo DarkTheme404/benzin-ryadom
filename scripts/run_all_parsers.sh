@@ -37,9 +37,13 @@ python scripts/parse_gdebenz_fast.py 2>&1 | tail -5 || echo "gdebenz FAILED"
 echo "$(date '+%Y-%m-%d %H:%M:%S') ishubenzin..."
 python scripts/parse_ishubenzin.py 2>&1 | tail -5 || echo "ishubenzin FAILED"
 
-# 4. Telegram channels (наличие + цены) — ТОЛЬКО на VPS (нужен Telethon)
-echo "$(date '+%Y-%m-%d %H:%M:%S') tg channels..."
-python scripts/parse_tg_channels.py 2>&1 | tail -5 || echo "tg_channels FAILED"
+# 4. Telegram channels — ТОЛЬКО если TG_API заданы и Telegram доступен
+if [ -n "$TG_API_ID" ] && [ -n "$TG_API_HASH" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') tg channels..."
+    timeout 60 python scripts/parse_tg_channels.py 2>&1 | tail -5 || echo "  ⏭ tg channels: skipped (timeout or blocked)"
+else
+    echo "$(date '+%Y-%m-%d %H:%M:%S') tg channels: skipped (no API keys)"
+fi
 
 # 5. Seed data refresh
 echo "$(date '+%Y-%m-%d %H:%M:%S') seed demo..."
