@@ -1,6 +1,6 @@
 #!/bin/bash
-# Cron job: запуск всех парсеров каждый час
-# Add to crontab: 0 * * * * /path/to/run_all_parsers.sh >> /tmp/parsers.log 2>&1
+# VPS Cron: запуск всех парсеров каждый час
+# Установка: 0 * * * * /opt/benzin-ryadom/scripts/run_all_parsers.sh >> /tmp/parsers.log 2>&1
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -22,27 +22,27 @@ if [ -f "$PROJECT_DIR/bot/.env" ]; then
     set +a
 fi
 
+echo ""
 echo "$(date '+%Y-%m-%d %H:%M:%S') === Starting all parsers ==="
 
-# 1. fuelprice.ru (цены, 12 городов)
+# 1. fuelprice.ru (цены, 60+ городов)
 echo "$(date '+%Y-%m-%d %H:%M:%S') fuelprice..."
-python scripts/parse_fuelprice.py 2>&1 || true
+python scripts/parse_fuelprice.py 2>&1 | tail -5 || echo "fuelprice FAILED"
 
 # 2. gdebenz.ru (наличие, 40+ городов)
 echo "$(date '+%Y-%m-%d %H:%M:%S') gdebenz..."
-python scripts/parse_gdebenz_fast.py 2>&1 || true
+python scripts/parse_gdebenz_fast.py 2>&1 | tail -5 || echo "gdebenz FAILED"
 
 # 3. ishubenzin.ru (наличие, crowd-sourced)
 echo "$(date '+%Y-%m-%d %H:%M:%S') ishubenzin..."
-python scripts/parse_ishubenzin.py 2>&1 || true
+python scripts/parse_ishubenzin.py 2>&1 | tail -5 || echo "ishubenzin FAILED"
 
-# 4. Telegram channels (наличие + цены)
+# 4. Telegram channels (наличие + цены) — ТОЛЬКО на VPS (нужен Telethon)
 echo "$(date '+%Y-%m-%d %H:%M:%S') tg channels..."
-python scripts/parse_tg_channels.py 2>&1 || true
+python scripts/parse_tg_channels.py 2>&1 | tail -5 || echo "tg_channels FAILED"
 
 # 5. Seed data refresh
 echo "$(date '+%Y-%m-%d %H:%M:%S') seed demo..."
-python scripts/seed_top_cities.py 2>&1 || true
+python scripts/seed_top_cities.py 2>&1 | tail -3 || echo "seed FAILED"
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') === All parsers finished ==="
-echo "---"
