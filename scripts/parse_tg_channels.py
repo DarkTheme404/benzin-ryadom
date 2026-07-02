@@ -44,12 +44,33 @@ SESSION_PATH = Path(__file__).parent / "session"
 
 # Каналы для мониторинга. Можно переопределить через TG_CHANNELS в env (через запятую)
 DEFAULT_CHANNELS = [
-    "toplivo_gsm_ru",
-    "toplivo_chat",
-    "gdebenzru",
-    "azstatneft",
-    "azsdiller",
-    "azs_price",
+    # === Общероссийские ===
+    "benzin_price",        # Ежедневные цены по городам
+    "benzoopt",            # Биржевые цены (СПИМФ)
+    "fuelprice_ru",        # FuelPrice.ru
+    "benzup_ru",           # BenzUp.ru
+    "okolo_AZS",           # Аналитика OMT-Konsalt
+    "toplivo_gsm_ru",      # Цены АЗС
+    "toplivo_chat",        # Чат топливо
+    "gdebenzru",           # Где бензин
+    "azstatneft",          # Татнефть
+    "azsdiller",           # Дилеры АЗС
+    "azs_price",           # Цены АЗС
+    "russiabase_ru",       # Сводки по регионам
+    "gde_benz_rf",         # Где бензин РФ
+    "toplivo_rf",          # Нефтепродукты РФ
+    "toplivo_poisk",       # Поиск топлива
+    "pro_zapravki",        # Скидки на заправках
+    # === Региональные ===
+    "toplivoufo",          # ЮФО (Краснодар, Ростов, Волгоград)
+    "magistral116",        # Казань / Татарстан (М7)
+    "umbokzn16",           # Казань (бойкот АЗС)
+    "nottourists",         # Иваново
+    "kineshemec_ru",       # Кинешма
+    "tvernewsru",          # Тверь (новости + цены)
+    "nizhny01",            # Нижний Новгород (новости + цены)
+    "Neftexpert",          # Нефтяной рынок
+    "toplivo_live",        # Чаты водителей (Воронеж и др.)
 ]
 
 CHANNELS = [c.strip() for c in os.getenv("TG_CHANNELS", "").split(",") if c.strip()]
@@ -58,21 +79,33 @@ if not CHANNELS:
 
 # Город по умолчанию для канала (если город не указан в сообщении)
 CHANNEL_CITY_HINTS: dict[str, str] = {
-    "toplivo_chat": "Одесса",
-    "toplivo_news": "Одесса",
-    "toplivo_gsm_ru": None,  # общероссийский
+    # === Общероссийские (None = определить из текста) ===
+    "benzin_price": None,
+    "benzoopt": None,
+    "fuelprice_ru": None,
+    "benzup_ru": None,
+    "okolo_AZS": None,
+    "toplivo_gsm_ru": None,
     "gdebenzru": None,
     "azstatneft": None,
     "azsdiller": None,
     "azs_price": None,
+    "russiabase_ru": None,
+    "gde_benz_rf": None,
+    "toplivo_rf": None,
+    "toplivo_poisk": None,
+    "pro_zapravki": None,
+    "Neftexpert": None,
+    # === Региональные ===
+    "toplivoufo": None,           # ЮФО
+    "magistral116": "Казань",
+    "umbokzn16": "Казань",
     "nottourists": "Иваново",
     "kineshemec_ru": "Кинешма",
-    "td_tes": "Севастополь",
-    "comm_ivanovo": "Иваново",
-    "gde_benz_rf": None,  # общероссийский канал "Где бензин?"
-    "toplivo_poisk": None,  # общероссийский чат поиска топлива
-    "toplivo_rf": None,  # общероссийский нефтепродукты
-    "gpnbonus": None,  # Газпромнефть официальный
+    "toplivo_chat": None,
+    "toplivo_live": None,         # Воронеж и др.
+    "tvernewsru": "Тверь",
+    "nizhny01": "Нижний Новгород",
 }
 
 logging.basicConfig(
