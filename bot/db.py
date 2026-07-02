@@ -754,10 +754,17 @@ async def _execute(sql: str, *args, returning: bool = False):
                 return cur.lastrowid
         return None
     async with _db.acquire() as conn:
+        # Конвертируем ? обратно в $1, $2, ... (как в _fetch)
+        import re
+        pg_sql = sql
+        idx = 1
+        while "?" in pg_sql:
+            pg_sql = pg_sql.replace("?", f"${idx}", 1)
+            idx += 1
         if returning:
-            row = await conn.fetchrow(sql, *args)
+            row = await conn.fetchrow(pg_sql, *args)
             return row[0] if row else None
-        await conn.execute(sql, *args)
+        await conn.execute(pg_sql, *args)
 
 
 # === Пользователи ===
@@ -1460,8 +1467,8 @@ async def stale_old_reports(source: str, older_than_hours: int = 2) -> int:
             result = await conn.execute(
                 """DELETE FROM reports 
                    WHERE source = $1 
-                   AND created_at < NOW() - make_interval(hours => $2)""",
-                source, older_than_hours,
+                   AND created_at < NOW() - ($2 || ' hours')::interval""",
+                source, str(older_than_hours),
             )
             # result is like "DELETE 123"
             deleted = int(result.split()[-1]) if result and "DELETE" in result else 0

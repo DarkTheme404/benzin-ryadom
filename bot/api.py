@@ -1225,8 +1225,8 @@ async def handle_parse(request):
         if tg_api_id and tg_api_hash:
             try:
                 import parse_tg_channels
-                sys.argv = ["parse_tg_channels.py"]
-                await parse_tg_channels.main()
+                # run_once() напрямую — main() вызывает asyncio.run() что нельзя из event loop
+                await parse_tg_channels.run_once()
                 results["tg_channels"] = "ok"
             except Exception as e:
                 results["tg_channels"] = str(e)

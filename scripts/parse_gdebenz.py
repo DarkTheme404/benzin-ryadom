@@ -122,7 +122,7 @@ async def find_or_create_station(station_data: dict) -> Optional[int]:
     # Ищем по названию + координатам
     existing = await db._fetch(
         """SELECT id FROM stations WHERE name LIKE ? AND ABS(lat - ?) < 0.01 AND ABS(lon - ?) < 0.01 LIMIT 1""",
-        (f"%{name}%", lat, lon)
+        f"%{name}%", lat, lon
     )
     if existing:
         return existing[0]["id"]
@@ -140,7 +140,7 @@ async def find_or_create_station(station_data: dict) -> Optional[int]:
     cursor = await db._execute(
         """INSERT INTO stations (name, chain, city, lat, lon, address)
            VALUES (?, ?, ?, ?, ?, ?)""",
-        (name, chain, city, lat, lon, station_data.get("addr", ""))
+        name, chain, city, lat, lon, station_data.get("addr", "")
     )
     return cursor.lastrowid
 
@@ -190,7 +190,7 @@ async def save_reports(stations_data: list, area_name: str):
                 """SELECT id FROM reports
                    WHERE station_id=? AND fuel_type=? AND source='gdebenz'
                    AND created_at > datetime('now', '-2 hours') LIMIT 1""",
-                (station_id, normalized_fuel)
+                station_id, normalized_fuel
             )
             if existing:
                 continue
@@ -204,14 +204,12 @@ async def save_reports(stations_data: list, area_name: str):
             await db._execute(
                 """INSERT INTO reports (station_id, fuel_type, available, source, created_at, message_text)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    station_id,
-                    normalized_fuel,
-                    available,
-                    "gdebenz",
-                    datetime.now(timezone.utc).isoformat(),
-                    message[:500],
-                )
+                station_id,
+                normalized_fuel,
+                available,
+                "gdebenz",
+                datetime.now(timezone.utc).isoformat(),
+                message[:500],
             )
             saved += 1
 

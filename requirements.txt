@@ -13,5 +13,8 @@ certifi>=2023.7.22
 # === Optional: для парсера TG-каналов ===
 telethon>=1.36.0
 
+# === Optional: для парсера fuelprice.ru ===
+beautifulsoup4>=4.12.0
+
 # === VK Bot ===
 vkbottle>=4.10.0
