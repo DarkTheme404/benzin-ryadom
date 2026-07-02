@@ -1174,13 +1174,13 @@ async def handle_import_prices(request):
 
 
 async def handle_parse(request):
-    """POST /api/parse — запуск всех парсеров (вызывается внешним cron).
+    """POST/GET /api/parse — запуск всех парсеров (вызывается внешним cron).
     
-    Авторизация: header X-Parse-Key: <PARSE_API_KEY>
+    Авторизация: query ?key=<PARSE_API_KEY> или header X-Parse-Key
     Не блокирует основной процесс — запускает парсеры в фоне.
     """
     parse_key = os.environ.get("PARSE_API_KEY", "")
-    provided_key = request.headers.get("X-Parse-Key", "")
+    provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
     if not parse_key or not provided_key or provided_key != parse_key:
         return web.json_response({"error": "unauthorized"}, status=401)
     
@@ -1292,6 +1292,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/price-update", handle_price_update)
     app.router.add_post("/api/import_prices", handle_import_prices)
     app.router.add_post("/api/parse", handle_parse)
+    app.router.add_get("/api/parse", handle_parse)
     # Mini App static files
     miniapp_dir = Path(__file__).parent.parent / "miniapp"
     if miniapp_dir.exists():
