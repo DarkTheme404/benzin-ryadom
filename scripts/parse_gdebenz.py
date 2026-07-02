@@ -186,12 +186,20 @@ async def save_reports(stations_data: list, area_name: str):
             normalized_fuel = fuel_map.get(fuel_type, fuel_type)
 
             # Проверяем дубликаты
-            existing = await db._fetch(
-                """SELECT id FROM reports
-                   WHERE station_id=? AND fuel_type=? AND source='gdebenz'
-                   AND created_at > datetime('now', '-2 hours') LIMIT 1""",
-                station_id, normalized_fuel
-            )
+            if db.USE_SQLITE:
+                existing = await db._fetch(
+                    """SELECT id FROM reports
+                       WHERE station_id=? AND fuel_type=? AND source='gdebenz'
+                       AND created_at > datetime('now', '-2 hours') LIMIT 1""",
+                    station_id, normalized_fuel
+                )
+            else:
+                existing = await db._fetch(
+                    """SELECT id FROM reports
+                       WHERE station_id=$1 AND fuel_type=$2 AND source='gdebenz'
+                       AND created_at > NOW() - INTERVAL '2 hours' LIMIT 1""",
+                    station_id, normalized_fuel
+                )
             if existing:
                 continue
 
