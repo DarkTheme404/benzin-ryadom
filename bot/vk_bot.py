@@ -595,6 +595,7 @@ async def handle_report_address_search(msg: Message, query: str):
     stations = await find_stations_by_address(query, limit=10)
     if not stations:
         await _send(
+            msg,
             f"😔 АЗС по запросу «{query}» не найдены.\nПопробуй другой запрос.",
             vk_report_city_keyboard(),
         )
@@ -618,6 +619,7 @@ async def handle_review_submit(msg: Message, station_id: int, fuel: str, rating:
     stars = "⭐" * rating if rating > 0 else "Без звёзд"
     fuel_label = f"АИ-{fuel}" if fuel != "diesel" else "Дизель"
     await _send(
+        msg,
         f"✅ Отзыв принят!\n\nАЗС #{station_id}, {fuel_label}\nРейтинг: {stars}\n\nСпасибо за оценку!",
         vk_main_menu(),
     )
@@ -892,7 +894,7 @@ async def run_vk_bot():
                 if "Уведомлени" in text:
                     await cmd_subscribe(msg)
                     return
-                if "владелец" in text.lower():
+                if "владелец" in text.lower() and uid not in _owner_waiting_role:
                     await cmd_register_owner(msg)
                     return
                 if "Профиль" in text:
@@ -1206,7 +1208,7 @@ async def run_vk_bot():
                     return
 
                 # --- Cancel / back ---
-                if "Отмена" in text or "Назад" in text:
+                if "Отмен" in text or "Назад" in text:
                     _owner_waiting_search.discard(uid)
                     _owner_waiting_role.pop(uid, None)
                     _owner_waiting_inn.discard(uid)

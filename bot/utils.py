@@ -43,7 +43,8 @@ def format_fuel_status(status: dict | None) -> str:
         icon = "⚠️"
         text = "кончается"
 
-    line = f"  • {icon} <b>АИ-{fuel}</b>: {text}"
+    fuel_label = "Дизель" if fuel == "diesel" else f"АИ-{fuel}"
+    line = f"  • {icon} <b>{fuel_label}</b>: {text}"
 
     if price is not None:
         line += f"  •  <b>{price:.2f}₽</b>"
@@ -291,7 +292,8 @@ def format_station_card(station: dict, statuses: list | None = None) -> str:
             deliveries.sort(key=lambda x: x[0])
             nd, fuel = deliveries[0]
             soon_str = format_delivery_time(nd)
-            lines.append(f"🚚 <b>Ближайший завоз:</b> АИ-{fuel} {soon_str}")
+            fuel_label = "Дизель" if fuel == "diesel" else f"АИ-{fuel}" if fuel else "топливо"
+            lines.append(f"🚚 <b>Ближайший завоз:</b> {fuel_label} {soon_str}")
 
         lines.append("")
         lines.append("<b>По видам топлива:</b>")
@@ -344,7 +346,12 @@ def format_station_card(station: dict, statuses: list | None = None) -> str:
                     other_prices = " / ".join(f"{p:.2f}" for p in unique_prices[1:])
                     price_str += f"  <i>({other_prices})</i>"
 
-            fuel_label = ft if ft in ("all", "cng", "lpg") else f"АИ-{ft}"
+            if ft == "diesel":
+                fuel_label = "Дизель"
+            elif ft in ("all", "cng", "lpg"):
+                fuel_label = ft
+            else:
+                fuel_label = f"АИ-{ft}"
             line = f"  • {icon} <b>{fuel_label}</b>: {avail_text}{price_str}"
 
             # Очередь / лимит (из лучшего отчёта)

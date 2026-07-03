@@ -28,6 +28,8 @@ from db import (
     upsert_user,
     check_and_award_badges,
     BADGE_CATALOG,
+    is_premium,
+    get_premium_info,
 )
 import db  # for db._fetch, db.USE_SQLITE в get_source_stats
 import aiohttp  # для reverse geocoding
@@ -1143,23 +1145,20 @@ async def handle_import_prices(request):
         ids = list(seen_stations.keys())
         if USE_SQLITE:
             placeholders = ",".join("?" * len(ids))
-            row = await (
-                await _db.execute(
-                    f"SELECT id FROM stations WHERE id IN ({placeholders})",
-                    ids,
-                )
-            ).fetchall()
-            existing_ids = {r[0] for r in row}
+            rows = await db._fetch(
+                f"SELECT id FROM stations WHERE id IN ({placeholders})",
+                *ids,
+            )
+            existing_ids = {r["id"] for r in rows}
             new_stations = len(ids) - len(existing_ids)
             existing_stations = len(existing_ids)
         else:
-            async with _db.acquire() as conn:
-                rows = await conn.fetch(
-                    "SELECT id FROM stations WHERE id = ANY($1::bigint[])", ids,
-                )
-                existing_ids = {r["id"] for r in rows}
-                new_stations = len(ids) - len(existing_ids)
-                existing_stations = len(existing_ids)
+            rows = await db._fetch(
+                "SELECT id FROM stations WHERE id = ANY($1::bigint[])", ids,
+            )
+            existing_ids = {r["id"] for r in rows}
+            new_stations = len(ids) - len(existing_ids)
+            existing_stations = len(existing_ids)
     
     return web.json_response({
         "ok": True,
@@ -1259,8 +1258,10 @@ async def cors_middleware(app, handler):
 
 
 async def _on_startup(app: web.Application) -> None:
-    """Инициализация БД при старте API."""
-    await db.init_db()
+    """Инициализация БД при старте API (если ещё не инициализирована)."""
+    import db as _db_mod
+    if _db_mod._db is None:
+        await db.init_db()
     logger.info("API started, DB initialized")
 
 

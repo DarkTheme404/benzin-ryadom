@@ -7,7 +7,7 @@ import json
 import logging
 import math
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -462,7 +462,7 @@ async def is_station_promoted(station_id: int) -> bool:
             until_dt = datetime.fromisoformat(until.replace(" ", "T"))
         else:
             until_dt = until
-        return until_dt > datetime.now()
+        return until_dt > datetime.now(timezone.utc) if until_dt.tzinfo else until_dt > datetime.now()
     except Exception:
         return True
 
@@ -711,7 +711,9 @@ async def is_premium(user_id: int) -> bool:
             )
         if not row:
             return False
-        return row["expires_at"] > datetime.now()
+        exp = row["expires_at"]
+        now = datetime.now(timezone.utc) if exp and exp.tzinfo else datetime.now()
+        return exp > now
 
 
 async def get_premium_info(user_id: int) -> dict | None:
@@ -1605,19 +1607,20 @@ async def find_stations_by_address(query: str, limit: int = 10) -> list:
         params.append(f"%{words[0]}%")  # for sorting
         params.append(limit)
 
-        rows = await (await _db.acquire()).fetch(
-            f"""
-            SELECT id, name, operator, city, address, lat, lon, is_verified
-            FROM stations
-            WHERE is_active = TRUE AND {where}
-            ORDER BY
-                CASE WHEN name ILIKE ${idx} THEN 0 ELSE 1 END,
-                CASE WHEN address ILIKE ${idx+1} THEN 0 ELSE 1 END,
-                operator NULLS LAST, name
-            LIMIT ${idx+2}
-            """,
-            *params,
-        )
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT id, name, operator, city, address, lat, lon, is_verified
+                FROM stations
+                WHERE is_active = TRUE AND {where}
+                ORDER BY
+                    CASE WHEN name ILIKE ${idx} THEN 0 ELSE 1 END,
+                    CASE WHEN address ILIKE ${idx+1} THEN 0 ELSE 1 END,
+                    operator NULLS LAST, name
+                LIMIT ${idx+2}
+                """,
+                *params,
+            )
         return [dict(r) for r in rows]
 
 

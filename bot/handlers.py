@@ -242,8 +242,25 @@ _waiting_inn_nosm: set[int] = set()
 _owner_state: dict[int, dict] = {}
 
 
-def _tg_id(message) -> int:
-    return message.from_user.id
+def _tg_id(message_or_callback) -> int:
+    """Returns telegram user ID from Message or CallbackQuery."""
+    if hasattr(message_or_callback, "from_user") and message_or_callback.from_user is not None:
+        return message_or_callback.from_user.id
+    return 0
+
+
+async def _ensure_callback_user(callback) -> int:
+    """Creates/updates user from CallbackQuery and returns internal user_id."""
+    user = callback.from_user
+    if not user:
+        return 0
+    return await upsert_user(
+        telegram_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        language_code=getattr(user, "language_code", None),
+    )
 
 
 class _OwnerWaitingInnFilter(BaseFilter):
@@ -413,7 +430,7 @@ async def owner_inn_input_nosm(message: Message):
 
 
 async def owner_inn_skip_nosm(callback: CallbackQuery):
-    telegram_id = _tg_id(callback.message)
+    telegram_id = callback.from_user.id if callback.from_user else 0
     state = _owner_state.get(telegram_id)
     _waiting_inn_nosm.discard(telegram_id)
     if not state or "station_id" not in state:
@@ -469,7 +486,7 @@ async def owner_search_input(message: Message):
 
 async def owner_pick_search(callback: CallbackQuery):
     station_id = int(callback.data.split(":", 1)[1])
-    telegram_id = _tg_id(callback.message)
+    telegram_id = callback.from_user.id if callback.from_user else 0
 
     station = await get_station_by_id(station_id)
     if not station:
@@ -498,7 +515,7 @@ async def owner_pick_search(callback: CallbackQuery):
 
 
 async def owner_search_cancel(callback: CallbackQuery):
-    telegram_id = _tg_id(callback.message)
+    telegram_id = callback.from_user.id if callback.from_user else 0
     _waiting_owner_search.discard(telegram_id)
     _waiting_owner_role.pop(telegram_id, None)
     _owner_state.pop(telegram_id, None)
@@ -516,7 +533,7 @@ async def owner_role_picked(callback: CallbackQuery):
         await callback.answer("Неизвестная роль", show_alert=True)
         return
 
-    telegram_id = _tg_id(callback.message)
+    telegram_id = callback.from_user.id if callback.from_user else 0
     station_id = _waiting_owner_role.pop(telegram_id, None)
     if not station_id:
         await callback.answer("Ошибка. Попробуй сначала.", show_alert=True)
@@ -613,9 +630,7 @@ async def cmd_my_stations(message: Message):
 
 async def show_my_station(callback: CallbackQuery):
     station_id = int(callback.data.split(":")[1])
-    await get_or_create_user(callback.message)
-    telegram_id = _tg_id(callback.message)
-    uid = await get_user_id_by_telegram_id(telegram_id)
+    uid = await _ensure_callback_user(callback)
 
     if not uid or not await is_owner_of_station(uid, station_id):
         await callback.answer("Это не твоя АЗС", show_alert=True)
@@ -664,9 +679,7 @@ async def owner_quick_set(callback: CallbackQuery):
     fuel = parts[2]
     status = parts[3]
 
-    await get_or_create_user(callback.message)
-    telegram_id = _tg_id(callback.message)
-    uid = await get_user_id_by_telegram_id(telegram_id)
+    uid = await _ensure_callback_user(callback)
 
     if not uid or not await is_owner_of_station(uid, station_id):
         await callback.answer("Это не твоя АЗС", show_alert=True)
@@ -807,8 +820,7 @@ async def cmd_premium(message: Message):
 
 async def premium_trial_callback(callback: CallbackQuery):
     await callback.answer()
-    await get_or_create_user(callback.message)
-    uid = await get_user_id_by_telegram_id(_tg_id(callback.message))
+    uid = await _ensure_callback_user(callback)
     if not uid:
         await callback.message.answer("Ошибка: пользователь не найден.")
         return
@@ -835,7 +847,7 @@ async def premium_trial_callback(callback: CallbackQuery):
 
 
 async def buy_premium_callback(callback: CallbackQuery):
-    await get_or_create_user(callback.message)
+    await _ensure_callback_user(callback)
     prices = [LabeledPrice(label=f"Premium · {settings.PREMIUM_DURATION_DAYS} дней", amount=settings.PREMIUM_PRICE_STARS)]
     try:
         await callback.message.answer_invoice(
@@ -1844,7 +1856,7 @@ async def show_station_details(callback: CallbackQuery):
             pass
         return
     station_id = int(callback.data.split(":")[1])
-    user_id = await get_or_create_user(callback.message)
+    user_id = await _ensure_callback_user(callback)
     await log_event(user_id, "station_viewed", {"station_id": station_id})
 
     station = await get_station_by_id(station_id)
@@ -1864,7 +1876,7 @@ async def show_station_details(callback: CallbackQuery):
 
     # Если пользователь — владелец АЗС, добавляем кнопку продвижения
     from db import is_owner_of_station, is_station_promoted, get_owner_station_by_user_and_station, PROMO_PRICE_STARS
-    tid = _tg_id(callback.message)
+    tid = callback.from_user.id if callback.from_user else 0
     uid_owner = await get_user_id_by_telegram_id(tid) if tid else None
     if uid_owner and await is_owner_of_station(uid_owner, station_id):
         owner_station = await get_owner_station_by_user_and_station(uid_owner, station_id)
@@ -1939,7 +1951,7 @@ def esc(s: str) -> str:
 async def promote_callback(callback: CallbackQuery):
     """Отправить invoice для продвижения АЗС."""
     station_id = int(callback.data.split(":")[1])
-    tid = _tg_id(callback.message)
+    tid = callback.from_user.id if callback.from_user else 0
     uid = await get_user_id_by_telegram_id(tid) if tid else None
     if not uid:
         await callback.answer("Ошибка", show_alert=True)
@@ -2115,9 +2127,7 @@ async def report_submit(callback: CallbackQuery):
     available = available_map[status]
     queue_size = queue_map[status]
 
-    await get_or_create_user(callback.message)
-    telegram_id = _tg_id(callback.message)
-    uid = await get_user_id_by_telegram_id(telegram_id)
+    uid = await _ensure_callback_user(callback)
 
     report_id = await add_report(
         station_id=station_id,
@@ -2216,9 +2226,7 @@ async def review_submit(callback: CallbackQuery):
     fuel = parts[2]
     rating = int(parts[3])
 
-    await get_or_create_user(callback.message)
-    telegram_id = _tg_id(callback.message)
-    uid = await get_user_id_by_telegram_id(telegram_id)
+    uid = await _ensure_callback_user(callback)
 
     if not uid:
         await callback.answer("Ошибка. Попробуй /start", show_alert=True)
@@ -2253,9 +2261,7 @@ async def subscribe_radius(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала отправь геолокацию", show_alert=True)
         return
 
-    await get_or_create_user(callback.message)
-    telegram_id = _tg_id(callback.message)
-    uid = await get_user_id_by_telegram_id(telegram_id)
+    uid = await _ensure_callback_user(callback)
     if not uid:
         await callback.answer("Ошибка. Нажми /start", show_alert=True)
         return
@@ -2339,7 +2345,7 @@ async def handle_back_to_list(callback: CallbackQuery):
 
 # === 🏠 "В начало" ===
 async def go_home_callback(callback: CallbackQuery, state: FSMContext = None):
-    telegram_id = _tg_id(callback.message)
+    telegram_id = callback.from_user.id if callback.from_user else 0
     _waiting_owner_search.discard(telegram_id)
     _waiting_owner_role.pop(telegram_id, None)
     _waiting_inn_nosm.discard(telegram_id)
@@ -2376,9 +2382,7 @@ async def go_home_text(message: Message, state: FSMContext = None):
 # === Подписка на конкретную АЗС ===
 async def subscribe_station(callback: CallbackQuery):
     station_id = int(callback.data.split(":")[1])
-    await get_or_create_user(callback.message)
-    telegram_id = _tg_id(callback.message)
-    uid = await get_user_id_by_telegram_id(telegram_id)
+    uid = await _ensure_callback_user(callback)
     if not uid:
         await callback.answer("Ошибка. Нажми /start", show_alert=True)
         return
@@ -2525,7 +2529,7 @@ def register_all_handlers(dp: Dispatcher):
     # Report flow
     dp.callback_query.register(report_city_callback, F.data.startswith("report_city:"))
     dp.callback_query.register(report_pick_callback, F.data.startswith("report_pick:"))
-    dp.callback_query.register(report_start, F.data.startswith("report:") & ~F.data.contains("fuel:") & ~F.data.contains("status:"))
+    dp.callback_query.register(report_start, F.data.regexp(r"^report:\d+$"))
     dp.callback_query.register(report_fuel, F.data.startswith("report_fuel:"))
     dp.callback_query.register(report_submit, F.data.startswith("report_status:"))
     dp.callback_query.register(subscribe_station, F.data.startswith("sub_station:"))
