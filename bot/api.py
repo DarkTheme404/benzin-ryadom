@@ -1358,21 +1358,37 @@ async def handle_parse_benzin(request):
     city = request.query.get("city", "Москва")
     import asyncio
     import sys
+    import io
     scripts_dir = str(Path(__file__).parent.parent / "scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
 
+    # Перехватываем логи в StringIO
+    log_stream = io.StringIO()
+    log_handler = logging.StreamHandler(log_stream)
+    log_handler.setLevel(logging.INFO)
+    log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+
     try:
         import parse_benzin_status_tech
+        # Подключаем handler к логгеру парсера
+        parser_logger = logging.getLogger("benzin_status_tech")
+        parser_logger.addHandler(log_handler)
+        parser_logger.setLevel(logging.INFO)
+
         os.environ["_API_MODE"] = "1"
         count = await parse_benzin_status_tech.run([city])
-        return web.json_response({"ok": True, "city": city, "saved": count})
+        logs = log_stream.getvalue()
+        parser_logger.removeHandler(log_handler)
+        return web.json_response({"ok": True, "city": city, "saved": count, "logs": logs})
     except Exception as e:
         import traceback
+        logs = log_stream.getvalue()
         return web.json_response({
             "ok": False,
             "error": str(e),
             "traceback": traceback.format_exc(),
+            "logs": logs,
         }, status=500)
 
 
