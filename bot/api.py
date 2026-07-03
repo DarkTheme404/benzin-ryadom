@@ -1320,7 +1320,7 @@ async def handle_parse(request):
         else:
             results["tg_channels"] = "skipped (no API keys)"
 
-        # benzin_status_bot (интерактивный user-facing бот)
+        # benzin_status_bot (интерактивный user-facing бот) — с жёстким таймаутом
         if tg_api_id and tg_api_hash and os.getenv("TG_SESSION_STRING"):
             try:
                 import parse_benzin_status_bot
@@ -1331,8 +1331,14 @@ async def handle_parse(request):
                     "Омск", "Ростов-на-Дону", "Уфа", "Красноярск",
                     "Воронеж", "Волгоград", "Пермь", "Иваново",
                 ]
-                await parse_benzin_status_bot.run(million_cities)
+                # Жёсткий таймаут 90 секунд, чтобы не зависнуть
+                await asyncio.wait_for(
+                    parse_benzin_status_bot.run(million_cities),
+                    timeout=90.0,
+                )
                 results["benzin_status_bot"] = "ok"
+            except asyncio.TimeoutError:
+                results["benzin_status_bot"] = "timeout (90s)"
             except Exception as e:
                 results["benzin_status_bot"] = str(e)
         else:
