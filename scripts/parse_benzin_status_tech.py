@@ -104,9 +104,12 @@ async def search_city(session, city: str) -> Optional[dict]:
 
 
 async def fetch_stations_in_bbox(session, lat: float, lng: float, count: int) -> list:
-    """Загружает все АЗС в bbox ~10км вокруг центра города."""
+    """Загружает все АЗС в bbox ~10км вокруг центра города.
+
+    bbox формат: minLat,minLng,maxLat,maxLng (широта первой)
+    """
     radius = 0.1  # ~11 км
-    bbox = f"{lng - radius},{lat - radius},{lng + radius},{lat + radius}"
+    bbox = f"{lat - radius},{lng - radius},{lat + radius},{lng + radius}"
     try:
         async with session.get(
             f"{API_BASE}/stations",
