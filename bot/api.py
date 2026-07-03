@@ -1331,11 +1331,11 @@ async def handle_parse(request):
             ]
             await asyncio.wait_for(
                 parse_benzin_status_tech.run(tech_cities),
-                timeout=110.0,
+                timeout=240.0,
             )
             results["benzin_status_tech"] = "ok"
         except asyncio.TimeoutError:
-            results["benzin_status_tech"] = "timeout (110s)"
+            results["benzin_status_tech"] = "timeout (240s)"
         except Exception as e:
             results["benzin_status_tech"] = str(e)
         
