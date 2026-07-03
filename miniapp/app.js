@@ -17,7 +17,10 @@
   if (tg) {
     tg.ready();
     tg.expand();
-    if (tg.colorScheme === 'light') {
+    // Force dark theme — light theme has white background + light text,
+    // which makes cards/text unreadable. We always use dark.
+    // To re-enable light theme support, set LOCAL_STORAGE_FORCE_LIGHT=1.
+    if (tg.colorScheme === 'light' && localStorage.getItem('force_light') === '1') {
       document.body.classList.add('tg-light');
     }
   }
@@ -69,12 +72,21 @@
   })();
 
   function applyTheme() {
-    if (platform.scheme === 'bright_light' || platform.scheme === 'light') {
+    // Force dark theme by default — light theme has white background + light text
+    // which makes cards/text unreadable. To re-enable light theme, set
+    // localStorage('force_light') = '1' before page load.
+    const forceLight = (() => {
+      try { return localStorage.getItem('force_light') === '1'; }
+      catch (e) { return false; }
+    })();
+
+    if (forceLight && (platform.scheme === 'bright_light' || platform.scheme === 'light')) {
       document.body.classList.add('vk-light');
       document.body.classList.remove('vk-dark');
     } else {
+      // Default: always dark (и в TG light, и в VK bright_light)
       document.body.classList.add('vk-dark');
-      document.body.classList.remove('vk-light');
+      document.body.classList.remove('vk-light', 'tg-light');
     }
   }
 
