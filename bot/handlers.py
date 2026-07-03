@@ -2394,7 +2394,7 @@ async def subscribe_station(callback: CallbackQuery):
 # === Открыть приложение ===
 async def cmd_open_app(message: Message):
     """Показывает кнопку для открытия Telegram Web App."""
-    web_app_url = settings.WEB_APP_URL if settings.WEB_APP_URL else ""
+    web_app_url = settings.WEB_APP_URL or "https://benzin-ryadom.onrender.com/miniapp"
     if not web_app_url:
         await message.answer(
             "📱 <b>Приложение «Бензин рядом»</b>\n\n"

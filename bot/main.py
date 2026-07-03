@@ -102,20 +102,18 @@ async def run_bot():
         logger.warning("delete_webhook failed (continuing): %s", e)
 
     # === Menu button для Mini App ===
-    if settings.WEB_APP_URL:
-        try:
-            from aiogram.types import MenuButtonWebApp
-            await bot.set_chat_menu_button(
-                menu_button=MenuButtonWebApp(
-                    text="📱 Приложение",
-                    web_app=MenuButtonWebApp.WebAppInfo(url=settings.WEB_APP_URL),
-                )
+    web_app_url = settings.WEB_APP_URL or "https://benzin-ryadom.onrender.com/miniapp"
+    try:
+        from aiogram.types import MenuButtonWebApp
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(
+                text="📱 Приложение",
+                web_app=MenuButtonWebApp.WebAppInfo(url=web_app_url),
             )
-            logger.info("Menu button set: %s", settings.WEB_APP_URL)
-        except Exception as e:
-            logger.warning("set_chat_menu_button failed: %s", e)
-    else:
-        logger.info("WEB_APP_URL не задан — menu button не установлена")
+        )
+        logger.info("Menu button set: '📱 Приложение' → %s", web_app_url)
+    except Exception as e:
+        logger.warning("set_chat_menu_button failed: %s", e)
 
     # === Команды в меню TG ===
     try:
