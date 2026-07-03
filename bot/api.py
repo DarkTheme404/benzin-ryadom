@@ -1378,7 +1378,6 @@ async def handle_parse(request):
 
 
 async def handle_parse_benzin(request):
-    """GET /api/parse-benzin?key=... — синхронный запуск benzin-status.tech парсера для диагностики."""
     parse_key = os.environ.get("PARSE_API_KEY", "")
     provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
     if not parse_key or not provided_key or provided_key != parse_key:
@@ -1422,6 +1421,64 @@ async def handle_parse_benzin(request):
             "traceback": traceback.format_exc(),
             "logs": logs,
         }, status=500)
+
+
+async def handle_vk_callback(request):
+    """POST /api/vk/callback — VK Callback API webhook.
+
+    События:
+      - confirmation → вернуть VK_CONFIRMATION_TOKEN
+      - message_new → обработать через vk_callback.process_message_new
+      - message_event → обработать inline-кнопку
+
+    Безопасность: проверяет secret, если задан VK_CALLBACK_SECRET.
+    """
+    try:
+        event = await request.json()
+    except Exception as e:
+        logger.warning("VK callback: invalid JSON: %s", e)
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    event_type = event.get("type", "")
+    logger.info("VK callback: type=%s", event_type)
+
+    # Проверка secret (если задан)
+    secret = os.environ.get("VK_CALLBACK_SECRET", "")
+    if secret and event.get("secret") != secret:
+        logger.warning("VK callback: invalid secret")
+        return web.json_response({"error": "invalid secret"}, status=403)
+
+    # Confirmation
+    if event_type == "confirmation":
+        token = os.environ.get("VK_CONFIRMATION_TOKEN", "")
+        if not token:
+            logger.error("VK callback: VK_CONFIRMATION_TOKEN not set")
+            return web.json_response({"error": "confirmation token not configured"}, status=500)
+        logger.info("VK callback: confirmation OK")
+        return web.Response(text=token, content_type="text/plain")
+
+    # Импорт обработчика
+    try:
+        from vk_callback import process_message_new, process_message_event
+    except ImportError as e:
+        logger.exception("VK callback: import failed: %s", e)
+        return web.json_response({"error": "callback handler not available"}, status=500)
+
+    # Обработка событий
+    if event_type == "message_new":
+        try:
+            await process_message_new(event)
+        except Exception as e:
+            logger.exception("VK callback: process_message_new failed: %s", e)
+    elif event_type == "message_event":
+        try:
+            await process_message_event(event)
+        except Exception as e:
+            logger.exception("VK callback: process_message_event failed: %s", e)
+    else:
+        logger.debug("VK callback: unhandled type=%s", event_type)
+
+    return web.Response(text="ok", content_type="text/plain")
 
 
 # === CORS ===
@@ -1549,6 +1606,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/parse", handle_parse)
     app.router.add_get("/api/parse", handle_parse)
     app.router.add_get("/api/parse-benzin", handle_parse_benzin)
+    app.router.add_post("/api/vk/callback", handle_vk_callback)
     app.router.add_get("/api/enrich", handle_enrich)
     app.router.add_get("/api/import-osm", handle_import_osm)
     # Mini App static files

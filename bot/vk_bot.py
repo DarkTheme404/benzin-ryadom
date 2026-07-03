@@ -2,6 +2,7 @@
 VK-бот «Бензин рядом» — полная копия Telegram-бота на vkbottle.
 Запускается параллельно с TG-ботом.
 """
+import asyncio
 import json
 import logging
 import time
@@ -835,8 +836,17 @@ async def run_vk_bot():
             logger.warning("VK_TOKEN не задан — VK-бот НЕ запускается")
             return
 
+        # Если включён Callback API, отключаем Long Poll (избегаем двойной обработки)
+        if os.getenv("VK_CALLBACK_ENABLED", "").lower() in ("1", "true", "yes"):
+            logger.info("VK Callback API enabled — Long Poll отключён")
+            logger.info("События принимаются через /api/vk/callback")
+            # Просто держим задачу живой
+            while True:
+                await asyncio.sleep(3600)
+            return
+
         bot = Bot(token=vk_token)
-        logger.info("VK-бот инициализирован")
+        logger.info("VK-бот инициализирован (Long Poll)")
     except Exception as e:
         logger.exception(f"run_vk_bot() CRASH during init: {e}")
         return
