@@ -2481,7 +2481,7 @@ def register_all_handlers(dp: Dispatcher):
     # Callback «Я подписался»
     dp.callback_query.register(_on_check_subscribe, F.data == "check_subscribe")
 
-    # Команды (как fallback)
+    dp.message.register(cmd_open_app, Command("app"))
     dp.message.register(cmd_start, CommandStart())
     dp.message.register(cmd_help, Command("help"))
     dp.message.register(cmd_find, Command("find"))

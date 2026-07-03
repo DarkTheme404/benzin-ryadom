@@ -100,6 +100,38 @@ async def run_bot():
         await bot.delete_webhook(drop_pending_updates=False)
     except Exception as e:
         logger.warning("delete_webhook failed (continuing): %s", e)
+
+    # === Menu button для Mini App ===
+    if settings.WEB_APP_URL:
+        try:
+            from aiogram.types import MenuButtonWebApp
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="📱 Приложение",
+                    web_app=MenuButtonWebApp.WebAppInfo(url=settings.WEB_APP_URL),
+                )
+            )
+            logger.info("Menu button set: %s", settings.WEB_APP_URL)
+        except Exception as e:
+            logger.warning("set_chat_menu_button failed: %s", e)
+    else:
+        logger.info("WEB_APP_URL не задан — menu button не установлена")
+
+    # === Команды в меню TG ===
+    try:
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([
+            BotCommand(command="start", description="🏠 Главное меню"),
+            BotCommand(command="find", description="🔍 Найти АЗС"),
+            BotCommand(command="app", description="📱 Открыть приложение"),
+            BotCommand(command="subscribe", description="🔔 Уведомления"),
+            BotCommand(command="profile", description="👤 Профиль"),
+            BotCommand(command="my_stations", description="🏪 Мои АЗС"),
+            BotCommand(command="help", description="❓ Помощь"),
+        ])
+    except Exception as e:
+        logger.warning("set_my_commands failed: %s", e)
+
     logger.info("Бот запущен")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
