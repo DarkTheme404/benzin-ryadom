@@ -53,6 +53,28 @@ def _vkapp_button(label: str, app_id: int, hash: str = "", owner_id: int = 0) ->
     }
 
 
+def _callback_button(label: str, payload: dict | str, color: str = "secondary") -> dict:
+    """Callback-кнопка (отправляет message_event с payload).
+
+    Требует Callback API. Нажатие НЕ создаёт новое сообщение,
+    а показывает spinner; ответ через messages.sendMessageEventAnswer.
+
+    payload: dict (сериализуется в JSON) или готовая JSON-строка.
+    """
+    if isinstance(payload, dict):
+        payload_str = json.dumps(payload, ensure_ascii=False)
+    else:
+        payload_str = payload
+    return {
+        "action": {
+            "type": "callback",
+            "label": label,
+            "payload": payload_str,
+        },
+        "color": color,
+    }
+
+
 def _location_button() -> dict:
     """Кнопка отправки геолокации."""
     return {
@@ -85,9 +107,12 @@ VK_BTN_HOME = "🏠 В начало"
 
 
 def vk_main_menu() -> str:
-    """Главное меню VK."""
+    """Главное меню VK — использует callback-кнопки для inline-навигации."""
     rows = [
-        [_button(VK_BTN_FIND, "primary"), _button(VK_BTN_REPORT, "positive")],
+        [
+            _callback_button(VK_BTN_FIND, {"a": "find"}, "primary"),
+            _callback_button(VK_BTN_REPORT, {"a": "report_start"}, "positive"),
+        ],
     ]
     # Добавляем кнопку Mini App если задан VK_MINI_APP_ID
     import os
@@ -95,26 +120,34 @@ def vk_main_menu() -> str:
     if app_id and app_id.isdigit():
         rows.append([_vkapp_button("📱 Открыть приложение", int(app_id))])
     rows.append([
-        _button(VK_BTN_SUBSCRIBE), _button(VK_BTN_OWNER),
+        _callback_button(VK_BTN_SUBSCRIBE, {"a": "subscribe"}),
+        _callback_button(VK_BTN_OWNER, {"a": "owner"}),
     ])
     rows.append([
-        _button(VK_BTN_PROFILE), _button(VK_BTN_HELP),
+        _callback_button(VK_BTN_PROFILE, {"a": "profile"}),
+        _callback_button(VK_BTN_HELP, {"a": "help"}),
     ])
     return vk_keyboard(rows)
 
 
 def vk_city_keyboard() -> str:
-    """Выбор города."""
+    """Выбор города — callback-кнопки с payload {a: "city", c: <name>}."""
     from keyboards import TOP_CITIES
     rows = []
     for i in range(0, min(len(TOP_CITIES), 8), 2):
         row = []
         for j in range(i, min(i + 2, len(TOP_CITIES))):
             name, _ = TOP_CITIES[j]
-            row.append(_button(f"📍 {name}", "primary"))
+            row.append(_callback_button(
+                f"📍 {name}",
+                {"a": "city", "c": name},
+                "primary",
+            ))
         rows.append(row)
-    rows.append([_button("✏️ Другой город", "secondary")])
-    rows.append([_button(VK_BTN_HOME)])
+    rows.append([
+        _callback_button("✏️ Другой город", {"a": "city_input"}, "secondary"),
+        _callback_button("🏠 В начало", {"a": "home"}),
+    ])
     return vk_keyboard(rows)
 
 
@@ -148,16 +181,22 @@ def vk_station_list_keyboard(stations: list[dict], city: str) -> str:
 
 
 def vk_station_actions(station_id: int, lat: float | None = None, lon: float | None = None) -> str:
-    """Действия с АЗС."""
+    """Действия с АЗС — callback-кнопки."""
     rows = []
     if lat and lon:
         yandex_url = f"https://yandex.ru/maps/?rtext={lat},{lon}&rtt=auto"
         rows.append([_link_button("🗺 Маршрут", yandex_url)])
-    rows.append([_button(f"📝 Отчёт #{station_id}", "positive")])
-    rows.append([_button(f"⭐ Оценить качество #{station_id}", "primary")])
-    rows.append([_button(f"🔔 Подписка #{station_id}", "primary")])
-    rows.append([_button("◀️ Назад к списку", "secondary")])
-    rows.append([_button(VK_BTN_HOME)])
+    rows.append([
+        _callback_button("📝 Отчёт", {"a": "report", "s": station_id}, "positive"),
+        _callback_button("⭐ Отзыв", {"a": "review", "s": station_id}, "primary"),
+    ])
+    rows.append([
+        _callback_button("🔔 Подписка", {"a": "sub_station", "s": station_id}, "primary"),
+        _callback_button("◀️ Назад", {"a": "find"}, "secondary"),
+    ])
+    rows.append([
+        _callback_button("🏠 В начало", {"a": "home"}),
+    ])
     return vk_keyboard(rows)
 
 
@@ -165,24 +204,38 @@ def vk_fuel_type_keyboard(station_id: int) -> str:
     """Выбор типа топлива для отчёта."""
     return vk_keyboard([
         [
-            _button(f"⛽ 92 #{station_id}", "primary"),
-            _button(f"⛽ 95 #{station_id}", "primary"),
+            _callback_button("⛽ АИ-92", {"a": "report_fuel", "s": station_id, "f": "92"}, "primary"),
+            _callback_button("⛽ АИ-95", {"a": "report_fuel", "s": station_id, "f": "95"}, "primary"),
         ],
         [
-            _button(f"⛽ 98 #{station_id}", "secondary"),
-            _button(f"🛢 ДТ #{station_id}", "secondary"),
+            _callback_button("⛽ АИ-98", {"a": "report_fuel", "s": station_id, "f": "98"}, "secondary"),
+            _callback_button("🛢 Дизель", {"a": "report_fuel", "s": station_id, "f": "diesel"}, "secondary"),
         ],
-        [_button("◀️ Отмена", "secondary")],
+        [
+            _callback_button("⛽ АИ-100", {"a": "report_fuel", "s": station_id, "f": "100"}, "secondary"),
+            _callback_button("🔥 Газ", {"a": "report_fuel", "s": station_id, "f": "lpg"}, "secondary"),
+        ],
+        [
+            _callback_button("◀️ Отмена", {"a": "station", "s": station_id}, "secondary"),
+        ],
     ])
 
 
 def vk_report_status_keyboard(station_id: int, fuel: str) -> str:
     """Статус наличия топлива."""
     return vk_keyboard([
-        [_button(f"✅ Есть #{station_id}:{fuel}", "positive")],
-        [_button(f"⚠️ Кончается #{station_id}:{fuel}", "secondary")],
-        [_button(f"❌ Нет #{station_id}:{fuel}", "negative")],
-        [_button("◀️ Назад", "secondary")],
+        [
+            _callback_button("✅ Есть", {"a": "report_status", "s": station_id, "f": fuel, "v": "yes"}, "positive"),
+        ],
+        [
+            _callback_button("⚠️ Кончается", {"a": "report_status", "s": station_id, "f": fuel, "v": "low"}, "secondary"),
+        ],
+        [
+            _callback_button("❌ Нет", {"a": "report_status", "s": station_id, "f": fuel, "v": "no"}, "negative"),
+        ],
+        [
+            _callback_button("◀️ Назад", {"a": "report", "s": station_id}, "secondary"),
+        ],
     ])
 
 
@@ -190,7 +243,8 @@ def vk_subscribe_geo_keyboard() -> str:
     """Кнопка отправки геолокации для подписки."""
     return vk_keyboard([
         [_location_button()],
-        [_button(VK_BTN_HOME)],
+        [_callback_button("◀️ Назад", {"a": "home"}, "secondary"),
+         _callback_button("🏠 В начало", {"a": "home"})],
     ])
 
 
@@ -198,11 +252,11 @@ def vk_subscribe_radius_keyboard() -> str:
     """Выбор радиуса подписки."""
     return vk_keyboard([
         [
-            _button("3 км", "primary"),
-            _button("5 км", "primary"),
-            _button("10 км", "primary"),
+            _callback_button("3 км", {"a": "sub_radius", "r": 3}, "primary"),
+            _callback_button("5 км", {"a": "sub_radius", "r": 5}, "primary"),
+            _callback_button("10 км", {"a": "sub_radius", "r": 10}, "primary"),
         ],
-        [_button(VK_BTN_HOME)],
+        [_callback_button("🏠 В начало", {"a": "home"})],
     ])
 
 
@@ -214,7 +268,7 @@ def vk_premium_keyboard() -> str:
     """Кнопки Premium — ссылка на VK Донат."""
     return vk_keyboard([
         [_link_button("💎 Поддержать 99₽", VK_DONATE_URL)],
-        [_button(VK_BTN_HOME)],
+        [_callback_button("◀️ Назад", {"a": "home"}, "secondary")],
     ])
 
 
@@ -226,7 +280,7 @@ def vk_donate_keyboard() -> str:
         [_link_button("🔧 250₽", VK_DONATE_URL)],
         [_link_button("💎 500₽", VK_DONATE_URL)],
         [_link_button("👑 Шейх 10 000₽", VK_DONATE_URL)],
-        [_button(VK_BTN_HOME)],
+        [_callback_button("◀️ Назад", {"a": "home"}, "secondary")],
     ])
 
 
@@ -291,31 +345,38 @@ def vk_review_fuel_keyboard(station_id: int) -> str:
     """Выбор типа топлива для отзыва."""
     return vk_keyboard([
         [
-            _button(f"⛽ 92 #{station_id}", "primary"),
-            _button(f"⛽ 95 #{station_id}", "primary"),
+            _callback_button("⛽ АИ-92", {"a": "review_fuel", "s": station_id, "f": "92"}, "primary"),
+            _callback_button("⛽ АИ-95", {"a": "review_fuel", "s": station_id, "f": "95"}, "primary"),
         ],
         [
-            _button(f"⛽ 98 #{station_id}", "secondary"),
-            _button(f"🛢 ДТ #{station_id}", "secondary"),
+            _callback_button("⛽ АИ-98", {"a": "review_fuel", "s": station_id, "f": "98"}, "secondary"),
+            _callback_button("🛢 Дизель", {"a": "review_fuel", "s": station_id, "f": "diesel"}, "secondary"),
         ],
-        [_button("◀️ Отмена", "secondary")],
+        [
+            _callback_button("⛽ АИ-100", {"a": "review_fuel", "s": station_id, "f": "100"}, "secondary"),
+            _callback_button("🔥 Газ", {"a": "review_fuel", "s": station_id, "f": "lpg"}, "secondary"),
+        ],
+        [
+            _callback_button("◀️ Отмена", {"a": "station", "s": station_id}, "secondary"),
+        ],
     ])
 
 
 def vk_review_rating_keyboard(station_id: int, fuel: str) -> str:
-    """Клавиатура для выбора рейтинга качества бензина (0-5 звёзд)."""
+    """Клавиатура для выбора рейтинга качества бензина (1-5 звёзд)."""
     return vk_keyboard([
         [
-            _button(f"⭐⭐⭐⭐⭐ #{station_id}:{fuel}", "positive"),
-            _button(f"⭐⭐⭐⭐ #{station_id}:{fuel}", "positive"),
+            _callback_button("⭐⭐⭐⭐⭐", {"a": "review_rating", "s": station_id, "f": fuel, "r": 5}, "positive"),
+            _callback_button("⭐⭐⭐⭐", {"a": "review_rating", "s": station_id, "f": fuel, "r": 4}, "positive"),
         ],
         [
-            _button(f"⭐⭐⭐ #{station_id}:{fuel}", "secondary"),
-            _button(f"⭐⭐ #{station_id}:{fuel}", "secondary"),
+            _callback_button("⭐⭐⭐", {"a": "review_rating", "s": station_id, "f": fuel, "r": 3}, "secondary"),
+            _callback_button("⭐⭐", {"a": "review_rating", "s": station_id, "f": fuel, "r": 2}, "secondary"),
         ],
         [
-            _button(f"⭐ #{station_id}:{fuel}", "negative"),
-            _button(f"Без звёзд #{station_id}:{fuel}", "secondary"),
+            _callback_button("⭐", {"a": "review_rating", "s": station_id, "f": fuel, "r": 1}, "negative"),
         ],
-        [_button("◀️ Назад", "secondary")],
+        [
+            _callback_button("◀️ Назад", {"a": "review", "s": station_id}, "secondary"),
+        ],
     ])
