@@ -475,7 +475,8 @@ async def _do_text_search(msg: Message, query: str):
     uid = await _ensure_user(msg)
     if uid:
         await log_event(uid, "vk_text_search", {"query": query})
-    stations = await find_stations_by_name(query, limit=5)
+    priority_city = _user_state.get(_uid(msg), {}).get("city")
+    stations = await find_stations_by_name(query, limit=5, priority_city=priority_city)
     if not stations:
         await _send(
             msg,
@@ -516,7 +517,8 @@ async def _do_text_search(msg: Message, query: str):
 async def _owner_search_handler(msg: Message, query: str):
     uid = _uid(msg)
     _owner_waiting_search.discard(uid)
-    stations = await find_stations_by_name(query, limit=5)
+    priority_city = _user_state.get(uid, {}).get("city")
+    stations = await find_stations_by_name(query, limit=5, priority_city=priority_city)
     if not stations:
         await _send(msg, f"😔 По «{query}» ничего не нашёл.", vk_main_menu())
         return

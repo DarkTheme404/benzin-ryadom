@@ -1101,7 +1101,7 @@ async def handle_main_button(message: Message, state: FSMContext = None):
     elif text == BTN_IDEA or text == "💡 Предложение":
         await cmd_idea(message, state)
     else:
-        await handle_text_search(message)
+        await handle_text_search(message, state)
 
 
 # === /profile ===
@@ -1235,7 +1235,7 @@ async def menu_callback(callback: CallbackQuery):
 
 
 # === city:* — выбор города ===
-async def city_callback(callback: CallbackQuery):
+async def city_callback(callback: CallbackQuery, state: FSMContext):
     if not await _require_subscription_callback(callback):
         try:
             await callback.answer()
@@ -1248,6 +1248,7 @@ async def city_callback(callback: CallbackQuery):
     msg = callback.message
 
     if city_name == "other":
+        await state.update_data(awaiting_city_text=True)
         await msg.answer(
             "✏️ <b>Напиши название города</b> в сообщении:\n\n"
             "Например: <code>Иваново</code>, <code>Москва</code>, <code>Краснодар</code>",
@@ -1255,6 +1256,7 @@ async def city_callback(callback: CallbackQuery):
         )
         return
 
+    await state.update_data(user_city=city_name)
     await show_city_filters(msg, city_name)
 
 
@@ -1820,7 +1822,7 @@ def _get_main_status_icon(statuses: list) -> str:
 
 
 # === Поиск по тексту ===
-async def handle_text_search(message: Message):
+async def handle_text_search(message: Message, state: FSMContext | None = None):
     if not message.text:
         return
     query = message.text.strip()
@@ -1830,7 +1832,17 @@ async def handle_text_search(message: Message):
     user_id = await get_or_create_user(message)
     await log_event(user_id, "text_search", {"query": query})
 
-    stations = await find_stations_by_name(query, limit=8)
+    # Определяем приоритетный город из FSM
+    priority_city = None
+    if state:
+        data = await state.get_data()
+        priority_city = data.get("user_city")
+        # Если пользователь ввёл город вручную ("другой город")
+        if data.get("awaiting_city_text"):
+            await state.update_data(user_city=query, awaiting_city_text=False)
+            priority_city = query
+
+    stations = await find_stations_by_name(query, limit=8, priority_city=priority_city)
     if not stations:
         await message.answer(
             f"😔 По запросу <b>«{query}»</b> ничего не нашёл.\n\n"

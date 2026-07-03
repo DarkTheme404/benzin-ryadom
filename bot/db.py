@@ -1511,48 +1511,68 @@ async def add_subscription(
             return row["id"]
 
 
-async def find_stations_by_name(query: str, limit: int = 5) -> list:
-    """Ищет АЗС по имени, оператору, городу или адресу (для /find без геолокации)."""
+async def find_stations_by_name(query: str, limit: int = 5, priority_city: str | None = None) -> list:
+    """Ищет АЗС по имени, оператору, городу или адресу (для /find без геолокации).
+    
+    priority_city: город пользователя — АЗС из этого города показываются первыми.
+    """
     if USE_SQLITE:
         # py_lower() корректно работает с кириллицей (в отличие от LOWER()).
-        sql = """
-            SELECT id, name, operator, city, address, lat, lon, is_verified
-            FROM stations
-            WHERE is_active = 1
-              AND (py_lower(name) LIKE ? OR py_lower(operator) LIKE ?
-                   OR py_lower(city) LIKE ? OR py_lower(address) LIKE ?)
+        city_priority_expr = ""
+        city_priority_params = []
+        if priority_city:
+            city_priority_expr = "CASE WHEN py_lower(s.city) LIKE ? THEN 0 ELSE 1 END,"
+            city_priority_params = [f"%{priority_city.lower()}%"]
+
+        sql = f"""
+            SELECT s.id, s.name, s.operator, s.city, s.address, s.lat, s.lon, s.is_verified
+            FROM stations s
+            WHERE s.is_active = 1
+              AND (py_lower(s.name) LIKE ? OR py_lower(s.operator) LIKE ?
+                   OR py_lower(s.city) LIKE ? OR py_lower(s.address) LIKE ?)
             ORDER BY
-                CASE WHEN py_lower(name) LIKE ? THEN 0
-                     WHEN py_lower(operator) LIKE ? THEN 1
-                     WHEN py_lower(address) LIKE ? THEN 2
+                {city_priority_expr}
+                CASE WHEN py_lower(s.name) LIKE ? THEN 0
+                     WHEN py_lower(s.operator) LIKE ? THEN 1
+                     WHEN py_lower(s.address) LIKE ? THEN 2
                      ELSE 3 END,
-                operator,
-                name
+                s.operator,
+                s.name
             LIMIT ?
         """
         like = f"%{query.lower()}%"
-        async with _db.execute(sql, (like, like, like, like, like, like, like, limit)) as cur:
+        params = city_priority_params + [like, like, like, like, like, like, like, limit]
+        async with _db.execute(sql, params) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
     else:
+        city_order = ""
+        city_params = []
+        if priority_city:
+            city_order = f"CASE WHEN LOWER(s.city) LIKE ${len(city_params) + 1} THEN 0 ELSE 1 END,"
+            city_params = [f"%{priority_city.lower()}%"]
+
+        p1 = len(city_params) + 1
+        p2 = len(city_params) + 2
         async with _db.acquire() as conn:
             rows = await conn.fetch(
-                """
-                SELECT id, name, operator, city, address, lat, lon, is_verified
-                FROM stations
-                WHERE is_active = TRUE
-                  AND (name ILIKE $1 OR operator ILIKE $1
-                       OR city ILIKE $1 OR address ILIKE $1)
+                f"""
+                SELECT s.id, s.name, s.operator, s.city, s.address, s.lat, s.lon, s.is_verified
+                FROM stations s
+                WHERE s.is_active = TRUE
+                  AND (s.name ILIKE ${p1} OR s.operator ILIKE ${p1}
+                       OR s.city ILIKE ${p1} OR s.address ILIKE ${p1})
                 ORDER BY
-                    CASE WHEN name ILIKE $1 THEN 0
-                         WHEN operator ILIKE $1 THEN 1
-                         WHEN address ILIKE $1 THEN 2
+                    {city_order}
+                    CASE WHEN s.name ILIKE ${p1} THEN 0
+                         WHEN s.operator ILIKE ${p1} THEN 1
+                         WHEN s.address ILIKE ${p1} THEN 2
                          ELSE 3 END,
-                    operator NULLS LAST,
-                    name
-                LIMIT $2
+                    s.operator NULLS LAST,
+                    s.name
+                LIMIT ${p2}
                 """,
-                f"%{query}%", limit,
+                f"%{query}%", limit, *city_params,
             )
         return [dict(r) for r in rows]
 
