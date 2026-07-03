@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1080">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 1080px; height: 1080px; font-family: 'Segoe UI', Arial, sans-serif; overflow: hidden; }
+
+.slide {
+  width: 1080px; height: 1080px;
+  background: linear-gradient(135deg, #0f3460, #16213e, #1a1a2e);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: white; text-align: center; padding: 50px;
+}
+.title { font-size: 52px; font-weight: 900; margin-bottom: 40px; }
+.map {
+  width: 900px; height: 500px; background: rgba(255,255,255,0.05);
+  border-radius: 30px; border: 2px solid rgba(255,255,255,0.1);
+  position: relative; margin-bottom: 40px; overflow: hidden;
+}
+.city {
+  position: absolute; text-align: center;
+}
+.city-name { font-size: 16px; font-weight: 700; margin-bottom: 5px; }
+.city-price {
+  background: rgba(22,160,133,0.9); padding: 8px 15px; border-radius: 10px;
+  font-size: 18px; font-weight: 700; white-space: nowrap;
+}
+.city-price.cheap { background: rgba(22,160,133,0.9); }
+.city-price.mid { background: rgba(241,196,15,0.9); color: #333; }
+.city-price.exp { background: rgba(231,76,60,0.9); }
+.dot {
+  width: 16px; height: 16px; background: #16a085; border-radius: 50%;
+  margin: 0 auto 8px; border: 2px solid white;
+}
+.lighthouse {
+  position: absolute; right: 40px; bottom: 40px;
+  background: rgba(255,255,255,0.1); border-radius: 20px; padding: 20px 30px;
+  text-align: left; border: 1px solid rgba(255,255,255,0.2);
+}
+.lighthouse-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+.lighthouse-text { font-size: 16px; color: #a0a0c0; line-height: 1.5; }
+.cta {
+  background: #16a085; color: white; padding: 18px 45px; border-radius: 50px;
+  font-size: 26px; font-weight: 700;
+}
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="title">⛽ ЦЕНЫ НА ВЫХОДНЫЕ</div>
+  <div class="map">
+    <div class="city" style="top:80px;left:400px">
+      <div class="city-name">Москва</div>
+      <div class="dot"></div>
+      <div class="city-price mid">АИ-92: 58.4₽</div>
+    </div>
+    <div class="city" style="top:60px;left:550px">
+      <div class="city-name">СПб</div>
+      <div class="dot"></div>
+      <div class="city-price cheap">АИ-92: 57.9₽</div>
+    </div>
+    <div class="city" style="top:250px;left:350px">
+      <div class="city-name">Воронеж</div>
+      <div class="dot"></div>
+      <div class="city-price cheap">АИ-92: 57.2₽</div>
+    </div>
+    <div class="city" style="top:300px;left:200px">
+      <div class="city-name">Краснодар</div>
+      <div class="dot"></div>
+      <div class="city-price cheap">АИ-92: 56.5₽</div>
+    </div>
+    <div class="city" style="top:150px;left:650px">
+      <div class="city-name">Челябинск</div>
+      <div class="dot"></div>
+      <div class="city-price cheap">АИ-92: 56.8₽</div>
+    </div>
+    <div class="lighthouse">
+      <div class="lighthouse-title">💡 Лайфхак</div>
+      <div class="lighthouse-text">Цены на трассе обычно<br>на 2-3₽ выше.<br>Ищи заправки в городе —<br>сэкономишь 100-200₽</div>
+    </div>
+  </div>
+  <div class="cta">Проверь цену в своём городе</div>
+</div>
+</body>
+</html>

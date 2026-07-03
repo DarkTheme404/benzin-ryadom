@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1080">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 1080px; height: 1080px; font-family: 'Segoe UI', Arial, sans-serif; overflow: hidden; }
+
+.slide {
+  width: 1080px; height: 1080px;
+  background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: white; text-align: center; padding: 60px;
+}
+.quote {
+  font-size: 42px; font-style: italic; line-height: 1.5;
+  max-width: 800px; margin-bottom: 40px; position: relative;
+  padding: 40px; background: rgba(255,255,255,0.05); border-radius: 30px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.quote::before { content: '«'; font-size: 80px; position: absolute; top: 10px; left: 20px; color: #16a085; }
+.quote::after { content: '»'; font-size: 80px; position: absolute; bottom: 10px; right: 20px; color: #16a085; }
+.author {
+  font-size: 28px; color: #16a085; font-weight: 700; margin-bottom: 50px;
+}
+.stats-row {
+  display: flex; gap: 40px; margin-bottom: 50px;
+}
+.stat-card {
+  background: rgba(22,160,133,0.15); border-radius: 20px; padding: 25px 35px;
+  border: 1px solid rgba(22,160,133,0.3); text-align: center;
+}
+.stat-icon { font-size: 40px; margin-bottom: 10px; }
+.stat-text { font-size: 20px; color: #a0c0b0; }
+.cta-row { display: flex; gap: 20px; align-items: center; }
+.cta {
+  background: #16a085; color: white; padding: 18px 40px; border-radius: 50px;
+  font-size: 24px; font-weight: 700;
+}
+.donate {
+  background: rgba(255,255,255,0.1); color: white; padding: 18px 30px; border-radius: 50px;
+  font-size: 20px; border: 1px solid rgba(255,255,255,0.2);
+}
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="quote">
+    Вчера ехал в Воронеж. Зашёл в бота — увидел, что на трассе АЗС закрыта. Свернул на другую, сэкономил 40 минут.
+  </div>
+  <div class="author">— Алексей, водитель</div>
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-icon">🚗</div>
+      <div class="stat-text">Водителям — не стоять в очередях</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">👨‍👩‍👧‍👦</div>
+      <div class="stat-text">Семьям — планировать поездки</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">💼</div>
+      <div class="stat-text">Курьерам — оптимизировать маршрут</div>
+    </div>
+  </div>
+  <div class="cta-row">
+    <div class="cta">ПРИСОЕДИНЯЙСЯ</div>
+    <div class="donate">💰 Донат от 50₽</div>
+  </div>
+</div>
+</body>
+</html>

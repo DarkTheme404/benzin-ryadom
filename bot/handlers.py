@@ -996,9 +996,11 @@ async def inline_search(inline_query: InlineQuery):
         lon = s.get("lon", 0)
         verified = s.get("is_verified", False)
 
-        text = f"{'✓ ' if verified else ''}⛽ <b>{name}</b>\n"
-        if operator and operator != name:
-            text += f"🏢 {operator}\n"
+        # Сеть → адрес
+        display_name = operator if operator else name
+        text = f"{'✓ ' if verified else ''}⛽ <b>{display_name}</b>\n"
+        if operator and name and name != operator:
+            text += f"📌 {name}\n"
         if address:
             text += f"📍 {address}\n"
         if city:
@@ -1018,10 +1020,11 @@ async def inline_search(inline_query: InlineQuery):
             ],
         ]
 
+        title_display = operator if operator else name
         results.append(
             InlineQueryResultArticle(
                 id=f"st:{station_id}:{i}",
-                title=f"{'✓ ' if verified else ''}⛽ {name}",
+                title=f"{'✓ ' if verified else ''}⛽ {title_display}",
                 description=f"{address[:80]} | {status_icons[:30]}",
                 input_message_content=InputTextMessageContent(
                     message_text=text,
@@ -1305,11 +1308,17 @@ async def show_city_results(msg, city: str, fuel: str = None, max_price: float =
         buttons = []
         for s in stations_with_status[:10]:
             statuses = s.get("statuses", [])
-            name = (s.get("name") or "АЗС")[:22]
             operator = (s.get("operator") or "")[:14]
-            if operator and operator != name:
-                short = f"{name} · {operator}"
+            address = (s.get("address") or "")[:18]
+            # Сеть → адрес → статус
+            if operator and address:
+                short = f"{operator} — {address}"
+            elif operator:
+                short = operator
+            elif address:
+                short = address
             else:
+                name = (s.get("name") or "АЗС")[:22]
                 short = name
             best_price = None
             best_fuel = None
@@ -1428,8 +1437,8 @@ async def emergency_handler(msg, city: str = None):
         buttons = []
         for s in stations_with_status[:10]:
             statuses = s.get("statuses", [])
-            name = (s.get("name") or "АЗС")[:22]
             operator = (s.get("operator") or "")[:14]
+            address = (s.get("address") or "")[:18]
 
             best = None
             for st in statuses:
@@ -1439,9 +1448,15 @@ async def emergency_handler(msg, city: str = None):
             if not best and statuses:
                 best = statuses[0]
 
-            if operator and operator != name:
-                short = f"{name} · {operator}"
+            # Сеть → адрес
+            if operator and address:
+                short = f"{operator} — {address}"
+            elif operator:
+                short = operator
+            elif address:
+                short = address
             else:
+                name = (s.get("name") or "АЗС")[:22]
                 short = name
             if best and best.get("price") is not None:
                 short += f" · АИ-{best.get('fuel_type', '?')} {best['price']:.2f}₽"

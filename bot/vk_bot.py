@@ -642,11 +642,21 @@ def _station_list_keyboard(stations_page: list, total: int, page: int, pages: in
     rows = []
     for s in stations_page:
         statuses = s.get("statuses", [])
-        name = (s.get("name") or "АЗС")[:20]
+        operator = (s.get("operator") or "")[:12]
+        address = (s.get("address") or "")[:14]
         has_available = any(st.get("available") is True and st.get("fuel_type") != "all" for st in statuses)
         has_unavailable = any(st.get("available") is False and st.get("fuel_type") != "all" for st in statuses)
         icon = "✅" if has_available else ("❌" if has_unavailable else ("⚠️" if s.get("has_data") else "❓"))
-        label = f"{icon} #{s['id']} {name}"[:30]
+        # Сеть → адрес
+        if operator and address:
+            label = f"{icon} #{s['id']} {operator} {address}"[:30]
+        elif operator:
+            label = f"{icon} #{s['id']} {operator}"[:30]
+        elif address:
+            label = f"{icon} #{s['id']} {address}"[:30]
+        else:
+            name = (s.get("name") or "АЗС")[:20]
+            label = f"{icon} #{s['id']} {name}"[:30]
         rows.append([_button(label, "primary")])
     nav = []
     if page > 0:
@@ -694,14 +704,23 @@ async def cmd_find_stations(msg: Message, city: str, fuel: str | None = None,
             lines = [f"🚨 {city} — {len(stations_with_status)} АЗС\n"]
             for s in stations_with_status[:5]:
                 statuses = s.get("statuses", [])
-                name = (s.get("name") or "АЗС")[:22]
                 operator = (s.get("operator") or "")[:14]
+                address = (s.get("address") or "")[:16]
                 best = None
                 for st in statuses:
                     if st.get("available") is True and st.get("fuel_type") != "all":
                         if not best or (st.get("price") is not None and (best.get("price") is None or st["price"] < best["price"])):
                             best = st
-                short = f"{name} · {operator}" if operator and operator != name else name
+                # Сеть → адрес
+                if operator and address:
+                    short = f"{operator} — {address}"
+                elif operator:
+                    short = operator
+                elif address:
+                    short = address
+                else:
+                    name = (s.get("name") or "АЗС")[:22]
+                    short = name
                 if best and best.get("price") is not None:
                     short += f" · АИ-{best.get('fuel_type', '?')} {best['price']:.0f}₽"
                 elif best:

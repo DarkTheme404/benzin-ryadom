@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1080">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 1080px; height: 1080px; font-family: 'Segoe UI', Arial, sans-serif; overflow: hidden; }
+
+.slide {
+  width: 1080px; height: 1080px;
+  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: white; text-align: center; padding: 50px; position: relative;
+}
+.top-badge {
+  position: absolute; top: 30px; background: rgba(22,160,133,0.2);
+  padding: 10px 30px; border-radius: 20px; font-size: 18px;
+  border: 1px solid rgba(22,160,133,0.4);
+}
+.title { font-size: 64px; font-weight: 900; margin-bottom: 20px; margin-top: 40px; }
+.subtitle { font-size: 32px; color: #a0a0c0; margin-bottom: 40px; }
+.phone-mockup {
+  width: 350px; height: 550px; background: #1a1a2e; border-radius: 35px;
+  border: 3px solid rgba(255,255,255,0.2); padding: 15px; margin-bottom: 40px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.phone-screen {
+  width: 100%; height: 100%; background: white; border-radius: 25px;
+  padding: 20px; color: #333; text-align: left;
+}
+.phone-header {
+  font-size: 18px; font-weight: 700; text-align: center; margin-bottom: 15px;
+  padding-bottom: 10px; border-bottom: 2px solid #eee;
+}
+.station-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+.station-icon { font-size: 22px; }
+.station-info { flex: 1; }
+.station-name { font-size: 14px; font-weight: 600; }
+.station-addr { font-size: 12px; color: #888; }
+.station-price { font-size: 16px; font-weight: 700; color: #16a085; }
+.features-row {
+  display: flex; gap: 20px; margin-bottom: 30px;
+}
+.feature-pill {
+  background: rgba(255,255,255,0.08); padding: 12px 25px; border-radius: 25px;
+  font-size: 18px; border: 1px solid rgba(255,255,255,0.1);
+}
+.bots-row {
+  display: flex; gap: 20px; margin-bottom: 20px;
+}
+.bot-badge {
+  padding: 15px 30px; border-radius: 15px; font-size: 22px; font-weight: 700;
+}
+.bot-tg { background: #2AABEE; }
+.bot-vk { background: #4C75A3; }
+.donate-badge {
+  position: absolute; bottom: 30px; right: 30px;
+  background: rgba(241,196,15,0.2); padding: 12px 25px; border-radius: 15px;
+  font-size: 18px; border: 1px solid rgba(241,196,15,0.4);
+}
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="top-badge">⛽ Топливный бот №1</div>
+  <div class="title">БЕНЗИН РЯДОМ</div>
+  <div class="subtitle">Узнай где есть топливо за 5 секунд</div>
+  <div class="phone-mockup">
+    <div class="phone-screen">
+      <div class="phone-header">⛽ Ближайшие АЗС</div>
+      <div class="station-item">
+        <span class="station-icon">✅</span>
+        <div class="station-info">
+          <div class="station-name">Лукойл</div>
+          <div class="station-addr">ул. Мира, 15</div>
+        </div>
+        <div class="station-price">58.4₽</div>
+      </div>
+      <div class="station-item">
+        <span class="station-icon">✅</span>
+        <div class="station-info">
+          <div class="station-name">Газпромнефть</div>
+          <div class="station-addr">Ленина, 42</div>
+        </div>
+        <div class="station-price">57.9₽</div>
+      </div>
+      <div class="station-item">
+        <span class="station-icon">⚠️</span>
+        <div class="station-info">
+          <div class="station-name">Роснефть</div>
+          <div class="station-addr">Советская, 8</div>
+        </div>
+        <div class="station-price">68.1₽</div>
+      </div>
+      <div class="station-item">
+        <span class="station-icon">❌</span>
+        <div class="station-info">
+          <div class="station-name">Татнефть</div>
+          <div class="station-addr">Мира, 27</div>
+        </div>
+        <div class="station-price">—</div>
+      </div>
+    </div>
+  </div>
+  <div class="features-row">
+    <div class="feature-pill">✅ Наличие</div>
+    <div class="feature-pill">💰 Цены</div>
+    <div class="feature-pill">🚗 Очереди</div>
+    <div class="feature-pill">🕐 Обновление/час</div>
+  </div>
+  <div class="bots-row">
+    <div class="bot-badge bot-tg">📱 @benzyn_ryadom</div>
+    <div class="bot-badge bot-vk">📱 vk.com/benzyn_ryadom</div>
+  </div>
+  <div class="donate-badge">💰 Донат от 50₽ — поддержи проект</div>
+</div>
+</body>
+</html>

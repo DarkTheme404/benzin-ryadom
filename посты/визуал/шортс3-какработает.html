@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1080, initial-scale=1.0">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 1080px; height: 1920px; overflow: hidden;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  background: #0a0a1a; color: white;
+}
+.slide {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  opacity: 0; transform: scale(0.95); transition: all 0.5s ease;
+}
+.slide.active { opacity: 1; transform: scale(1); }
+
+.s1 { background: linear-gradient(180deg, #0f0c29, #302b63); }
+.s1 .step-num {
+  font-size: 120px; font-weight: 900; color: #16a085;
+  animation: pulse 1.5s infinite;
+}
+.s1 .step-text { font-size: 48px; font-weight: 600; margin-top: 20px; }
+.s1 .sub { font-size: 28px; color: #888; margin-top: 15px; }
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.8; }
+}
+
+.s2 { background: linear-gradient(180deg, #1a1a2e, #16213e); }
+.s2 .phone {
+  width: 420px; height: 750px; background: #1a1a2e; border-radius: 40px;
+  border: 4px solid #2AABEE; padding: 15px; position: relative;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+}
+.s2 .notch {
+  width: 150px; height: 30px; background: #0a0a1a; border-radius: 15px;
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 10;
+}
+.s2 .screen {
+  width: 100%; height: 100%; background: white; border-radius: 30px;
+  padding: 50px 20px 20px; color: #333;
+}
+.s2 .chat { display: flex; flex-direction: column; gap: 12px; }
+.s2 .msg {
+  max-width: 80%; padding: 12px 16px; border-radius: 18px; font-size: 16px;
+  opacity: 0; animation: msgIn 0.4s forwards;
+}
+.s2 .msg-bot {
+  background: #f0f0f0; align-self: flex-start; border-bottom-left-radius: 4px;
+}
+.s2 .msg-user {
+  background: #2AABEE; color: white; align-self: flex-end; border-bottom-right-radius: 4px;
+}
+.s2 .msg:nth-child(1) { animation-delay: 0.3s; }
+.s2 .msg:nth-child(2) { animation-delay: 0.8s; }
+.s2 .msg:nth-child(3) { animation-delay: 1.3s; }
+.s2 .msg:nth-child(4) { animation-delay: 1.8s; }
+.s2 .step-label {
+  position: absolute; bottom: -50px; left: 50%; transform: translateX(-50%);
+  font-size: 28px; font-weight: 700; white-space: nowrap; color: #2AABEE;
+}
+
+@keyframes msgIn { to { opacity: 1; transform: translateY(0); } }
+.s2 .msg { transform: translateY(10px); }
+
+.s3 { background: linear-gradient(180deg, #0a1a0a, #16213e); }
+.s3 .title { font-size: 52px; font-weight: 900; text-align: center; margin-bottom: 40px; }
+.s3 .flow {
+  display: flex; flex-direction: column; gap: 20px; width: 850px;
+}
+.s3 .step {
+  display: flex; align-items: center; gap: 25px;
+  background: rgba(255,255,255,0.05); border-radius: 20px; padding: 25px 30px;
+  border: 1px solid rgba(255,255,255,0.1);
+  opacity: 0; animation: slideRight 0.5s forwards;
+}
+.s3 .step:nth-child(1) { animation-delay: 0.2s; }
+.s3 .step:nth-child(2) { animation-delay: 0.5s; }
+.s3 .step:nth-child(3) { animation-delay: 0.8s; }
+.s3 .step-num {
+  width: 60px; height: 60px; background: #16a085; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px; font-weight: 900; flex-shrink: 0;
+}
+.s3 .step-icon { font-size: 40px; }
+.s3 .step-text { font-size: 26px; }
+
+@keyframes slideRight { to { opacity: 1; transform: translateX(0); } }
+.s3 .step { transform: translateX(-20px); }
+
+.s4 { background: linear-gradient(180deg, #1a1a2e, #16a085); }
+.s4 .title { font-size: 56px; font-weight: 900; text-align: center; margin-bottom: 30px; }
+.s4 .sources {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 850px;
+}
+.s4 .src {
+  background: rgba(255,255,255,0.08); border-radius: 18px; padding: 25px;
+  text-align: center; border: 1px solid rgba(255,255,255,0.1);
+  opacity: 0; animation: pop 0.4s forwards;
+}
+.s4 .src:nth-child(1) { animation-delay: 0.2s; }
+.s4 .src:nth-child(2) { animation-delay: 0.4s; }
+.s4 .src:nth-child(3) { animation-delay: 0.6s; }
+.s4 .src:nth-child(4) { animation-delay: 0.8s; }
+.s4 .src-icon { font-size: 48px; margin-bottom: 10px; }
+.s4 .src-name { font-size: 22px; font-weight: 700; }
+.s4 .src-desc { font-size: 18px; color: #888; margin-top: 5px; }
+.s4 .badge {
+  margin-top: 40px; background: #16a085; padding: 15px 35px; border-radius: 50px;
+  font-size: 26px; font-weight: 700;
+}
+
+@keyframes pop { 0% { transform: scale(0.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+
+.progress {
+  position: absolute; bottom: 0; left: 0; height: 6px; background: #16a085;
+  width: 0; transition: width linear;
+}
+</style>
+</head>
+<body>
+
+<div class="slide s1 active" id="s1">
+  <div class="step-num">3</div>
+  <div class="step-text">ШАГА</div>
+  <div class="sub">до ближайшей АЗС с топливом</div>
+</div>
+
+<div class="slide s2" id="s2">
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="chat">
+        <div class="msg msg-bot">Привет! Нажми кнопку «Поиск АЗС» 👇</div>
+        <div class="msg msg-user">🔍 Поиск АЗС</div>
+        <div class="msg msg-bot">Отправь геолокацию 📍</div>
+        <div class="msg msg-bot">✅ Нашёл 5 АЗС рядом!<br><br>1. Лукойл — 63.2₽ ✅<br>2. Газпром — 58.4₽ ✅<br>3. Роснефть — 68.1₽ ⚠️<br>4. Татнефть — нет ❌</div>
+      </div>
+    </div>
+    <div class="step-label">Шаг 1: Открой бота</div>
+  </div>
+</div>
+
+<div class="slide s3" id="s3">
+  <div class="title">КАК ЭТО РАБОТАЕТ</div>
+  <div class="flow">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-icon">📱</div>
+      <div class="step-text">Открой бота в Telegram или VK</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-icon">📍</div>
+      <div class="step-text">Отправь геолокацию</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-icon">⛽</div>
+      <div class="step-text">Получи список АЗС с ценами</div>
+    </div>
+  </div>
+</div>
+
+<div class="slide s4" id="s4">
+  <div class="title">ИСТОЧНИКИ ДАННЫХ</div>
+  <div class="sources">
+    <div class="src"><div class="src-icon">📊</div><div class="src-name">fuelprice.ru</div><div class="src-desc">2400+ АЗС</div></div>
+    <div class="src"><div class="src-icon">🗺️</div><div class="src-name">2ГИС</div><div class="src-desc">Наличие и цены</div></div>
+    <div class="src"><div class="src-icon">💬</div><div class="src-name">TG-каналы</div><div class="src-desc">28 каналов</div></div>
+    <div class="src"><div class="src-icon">👥</div><div class="src-name">Пользователи</div><div class="src-desc">Отчёты водителей</div></div>
+  </div>
+  <div class="badge">🕐 Каждый час обновление</div>
+</div>
+
+<div class="progress" id="progress"></div>
+
+<script>
+const slides = ['s1','s2','s3','s4'];
+const durations = [2500, 5000, 4000, 4000];
+let current = 0;
+const progress = document.getElementById('progress');
+
+function showSlide(idx) {
+  document.querySelectorAll('.slide').forEach(s => s.classList.remove('active'));
+  document.getElementById(slides[idx]).classList.add('active');
+  progress.style.width = '0';
+  void progress.offsetWidth;
+  progress.style.transition = `width ${durations[idx]}ms linear`;
+  progress.style.width = '100%';
+}
+
+function next() {
+  current++;
+  if (current < slides.length) {
+    showSlide(current);
+    setTimeout(next, durations[current]);
+  }
+}
+
+showSlide(0);
+setTimeout(next, durations[0]);
+</script>
+</body>
+</html>

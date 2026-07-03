@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1080">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 1080px; height: 1080px; font-family: 'Segoe UI', Arial, sans-serif; overflow: hidden; }
+
+.slide {
+  width: 1080px; height: 1080px;
+  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+  display: flex; color: white; overflow: hidden;
+}
+.half {
+  width: 540px; height: 1080px; padding: 50px; display: flex;
+  flex-direction: column; justify-content: center; position: relative;
+}
+.half-left {
+  background: rgba(231,76,60,0.1); border-right: 2px solid rgba(255,255,255,0.1);
+}
+.half-right {
+  background: rgba(22,160,133,0.1);
+}
+.badge-top {
+  position: absolute; top: 30px; left: 50%; transform: translateX(-50%);
+  padding: 10px 25px; border-radius: 20px; font-size: 18px; font-weight: 700;
+}
+.badge-bad { background: rgba(231,76,60,0.8); }
+.badge-good { background: rgba(22,160,133,0.8); }
+.half-title { font-size: 32px; font-weight: 900; margin-bottom: 30px; text-align: center; }
+.feature-list { list-style: none; }
+.feature-list li {
+  padding: 15px 0; font-size: 22px; border-bottom: 1px solid rgba(255,255,255,0.1);
+  display: flex; align-items: center; gap: 15px;
+}
+.feature-list .icon { font-size: 28px; }
+.feature-list .text { color: #c0c0c0; }
+.feature-list .text.good { color: #16a085; }
+.arrow-center {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  font-size: 60px; color: #16a085; z-index: 10;
+  background: rgba(0,0,0,0.5); width: 80px; height: 80px;
+  display: flex; align-items: center; justify-content: center; border-radius: 50%;
+}
+.bottom-bar {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 120px;
+  background: rgba(0,0,0,0.5); display: flex; align-items: center;
+  justify-content: center; gap: 40px;
+}
+.bottom-text { font-size: 28px; font-weight: 700; }
+.bottom-sub { font-size: 20px; color: #888; }
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="half half-left">
+    <div class="badge-top badge-bad">Яндекс.Карты</div>
+    <div class="half-title" style="color:#e74c3c">Просто АЗС</div>
+    <ul class="feature-list">
+      <li><span class="icon">📍</span><span class="text">Координаты АЗС</span></li>
+      <li><span class="icon">❌</span><span class="text">Нет цен</span></li>
+      <li><span class="icon">❌</span><span class="text">Нет наличия</span></li>
+      <li><span class="icon">❌</span><span class="text">Нет очередей</span></li>
+      <li><span class="icon">❌</span><span class="text">Нет отчётов</span></li>
+    </ul>
+  </div>
+  <div class="arrow-center">→</div>
+  <div class="half half-right">
+    <div class="badge-top badge-good">Бензин рядом</div>
+    <div class="half-title" style="color:#16a085">АЗС + данные</div>
+    <ul class="feature-list">
+      <li><span class="icon">📍</span><span class="text good">Координаты АЗС</span></li>
+      <li><span class="icon">💰</span><span class="text good">Цены в реальном времени</span></li>
+      <li><span class="icon">✅</span><span class="text good">Наличие топлива</span></li>
+      <li><span class="icon">🚗</span><span class="text good">Очереди и лимиты</span></li>
+      <li><span class="icon">💬</span><span class="text good">Отчёты водителей</span></li>
+    </ul>
+  </div>
+  <div class="bottom-bar">
+    <div class="bottom-text">СКАЧАЙ БЕСПЛАТНО</div>
+    <div class="bottom-sub">@benzyn_ryadom | vk.com/benzyn_ryadom</div>
+  </div>
+</div>
+</body>
+</html>
