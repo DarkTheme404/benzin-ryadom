@@ -1452,10 +1452,17 @@ async def handle_vk_callback(request):
     if event_type == "confirmation":
         token = os.environ.get("VK_CONFIRMATION_TOKEN", "")
         if not token:
-            logger.error("VK callback: VK_CONFIRMATION_TOKEN not set")
-            return web.json_response({"error": "confirmation token not configured"}, status=500)
-        logger.info("VK callback: confirmation OK")
-        return web.Response(text=token, content_type="text/plain")
+            # Возвращаем 200 + пустую строку, чтобы не ломать процесс подтверждения
+            # (иначе VK зацикливается на ошибке). Но в логах — ERROR.
+            logger.error(
+                "VK callback: confirmation request received, but VK_CONFIRMATION_TOKEN not set! "
+                "Set it in Render env (the token VK displayed: %r) and redeploy.",
+                event.get("group_id"),
+            )
+            return web.Response(text="", content_type="text/plain", status=200)
+        logger.info("VK callback: confirmation OK (group_id=%s)", event.get("group_id"))
+        # Возвращаем ТОЛЬКО токен, без пробелов и переносов
+        return web.Response(body=token, content_type="text/plain", charset="utf-8")
 
     # Импорт обработчика
     try:
