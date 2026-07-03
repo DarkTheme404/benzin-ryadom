@@ -1325,9 +1325,13 @@ def create_app() -> web.Application:
     miniapp_dir = Path(__file__).parent.parent / "miniapp"
     if miniapp_dir.exists():
         async def serve_index(request):
-            return web.FileResponse(miniapp_dir / "index.html")
+            response = web.FileResponse(miniapp_dir / "index.html")
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
         # Serve static files under /app/ prefix (avoids conflicts with /miniapp/ route)
-        app.router.add_static("/app/", miniapp_dir)
+        app.router.add_static("/app/", miniapp_dir, append_version=False)
         # /miniapp/ → index.html (the Telegram WebApp URL)
         app.router.add_get("/miniapp", serve_index)
         app.router.add_get("/miniapp/", serve_index)
