@@ -417,20 +417,31 @@
 
   // ============= STATION DETAIL =============
   async function openStationDetail(s) {
+    if (!s || !s.id) {
+      showToast('Ошибка: нет данных об АЗС', 'error');
+      return;
+    }
     state.selectedStation = s;
     showScreen('station');
-    showLoading();
+    // Render skeleton immediately
+    const detailEl = $('#station-detail');
+    if (detailEl) {
+      detailEl.innerHTML = '<div class="map-empty">⏳ Загрузка...</div>';
+    }
     try {
       // Load full station data
-      const [detail, reviews] = await Promise.all([
-        api(`/api/stations/${s.id}`),
-        api(`/api/stations/${s.id}/prices`).catch(() => null),
-      ]);
-      renderStationDetail(detail, reviews);
+      const detail = await api(`/api/stations/${s.id}`).catch(e => {
+        logger.error('station detail failed:', e);
+        return { station: s, statuses: s.statuses || [] };
+      });
+      // Prices is optional, don't fail if it errors
+      const pricesData = await api(`/api/stations/${s.id}/prices`).catch(() => null);
+      renderStationDetail(detail, pricesData);
     } catch (e) {
+      logger.error('openStationDetail error:', e);
       showToast('Не удалось загрузить: ' + e.message, 'error');
-    } finally {
-      hideLoading();
+      // Still try to render with what we have
+      renderStationDetail({ station: s, statuses: s.statuses || [] }, null);
     }
   }
 
@@ -534,12 +545,18 @@
       </div>
     `;
 
-    // Bind back button
-    $('[data-action="back"]').addEventListener('click', () => showScreen('home'));
-    $('[data-action="report"]').addEventListener('click', () => openReportSheet(s.id, operator));
-    $('[data-action="review"]').addEventListener('click', () => openReviewSheet(s.id, operator));
-    $('[data-action="route"]').addEventListener('click', () => openMap(lat, lon, operator));
-    $('[data-action="subscribe"]').addEventListener('click', () => subscribeStation(s.id));
+    // Bind back button (scoped to station-detail)
+    const detailEl2 = $('#station-detail');
+    const backBtn = detailEl2.querySelector('[data-action="back"]');
+    if (backBtn) backBtn.addEventListener('click', () => showScreen('home'));
+    const reportBtn = detailEl2.querySelector('[data-action="report"]');
+    if (reportBtn) reportBtn.addEventListener('click', () => openReportSheet(s.id, operator));
+    const reviewBtn = detailEl2.querySelector('[data-action="review"]');
+    if (reviewBtn) reviewBtn.addEventListener('click', () => openReviewSheet(s.id, operator));
+    const routeBtn = detailEl2.querySelector('[data-action="route"]');
+    if (routeBtn) routeBtn.addEventListener('click', () => openMap(lat, lon, operator));
+    const subBtn = detailEl2.querySelector('[data-action="subscribe"]');
+    if (subBtn) subBtn.addEventListener('click', () => subscribeStation(s.id));
 
     // Load reviews
     loadReviews(s.id);
