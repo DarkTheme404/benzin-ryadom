@@ -1323,20 +1323,19 @@ async def handle_parse(request):
         # benzin-status.tech (Mini App для @benzin_status_bot) — прямой API
         try:
             import parse_benzin_status_tech
+            # Только топ-10 городов за один проход (остальные — в следующий час)
             tech_cities = [
                 "Москва", "Санкт-Петербург", "Новосибирск", "Екатеринбург",
                 "Казань", "Нижний Новгород", "Челябинск", "Самара",
-                "Омск", "Ростов-на-Дону", "Уфа", "Красноярск",
-                "Воронеж", "Волгоград", "Пермь", "Краснодар",
-                "Иваново", "Тюмень", "Саратов", "Барнаул",
+                "Омск", "Ростов-на-Дону",
             ]
             await asyncio.wait_for(
                 parse_benzin_status_tech.run(tech_cities),
-                timeout=120.0,
+                timeout=110.0,
             )
             results["benzin_status_tech"] = "ok"
         except asyncio.TimeoutError:
-            results["benzin_status_tech"] = "timeout (120s)"
+            results["benzin_status_tech"] = "timeout (110s)"
         except Exception as e:
             results["benzin_status_tech"] = str(e)
         
