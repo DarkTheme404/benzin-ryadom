@@ -54,6 +54,7 @@ from db import (
     is_premium,
     log_event,
     set_owner_station_verified,
+    upsert_user,
 )
 from keyboards import (
     flow_keyboard,
