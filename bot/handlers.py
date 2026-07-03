@@ -466,14 +466,24 @@ async def owner_search_input(message: Message):
     text = f"🔍 Нашёл <b>{len(stations)}</b> АЗС по запросу «{query}». Выбери свою:"
     buttons = []
     for s in stations:
-        name = (s.get("name") or "АЗС")[:30]
         operator = (s.get("operator") or "")[:15]
+        address = (s.get("address") or "")[:20]
         city = (s.get("city") or "")[:12]
-        label = f"⛽ {name}"
-        if operator:
-            label += f" · {operator}"
-        if city:
-            label += f" ({city})"
+        # Сеть → адрес → город
+        if operator and address:
+            label = f"⛽ {operator} — {address}"
+        elif operator and city:
+            label = f"⛽ {operator} — {city}"
+        elif operator:
+            label = f"⛽ {operator}"
+        elif address and city:
+            label = f"⛽ {city}, {address}"
+        elif address:
+            label = f"⛽ {address}"
+        elif city:
+            label = f"⛽ {city}"
+        else:
+            label = f"⛽ {s.get('name', 'АЗС')}"
         buttons.append([
             InlineKeyboardButton(text=label, callback_data=f"owner_pick_search:{s['id']}")
         ])
@@ -1837,13 +1847,27 @@ async def handle_text_search(message: Message):
     for s in stations:
         statuses = s.get("statuses", [])
         status_icon = _get_main_status_icon(statuses)
-        name = (s.get("name") or "АЗС")[:25]
+        operator = (s.get("operator") or "")[:14]
+        address = (s.get("address") or "")[:18]
         city = (s.get("city") or "")[:12]
-        btn_text = f"{status_icon} {name}"
-        if city:
-            btn_text += f" • {city}"
+        # Сеть → адрес → город
+        if operator and address:
+            short = f"{operator} — {address}"
+        elif operator and city:
+            short = f"{operator} — {city}"
+        elif operator:
+            short = operator
+        elif address and city:
+            short = f"{city}, {address}"
+        elif address:
+            short = address
+        elif city:
+            short = city
+        else:
+            short = (s.get("name") or "АЗС")[:22]
+        btn_text = f"{status_icon} {short}"
         buttons.append([
-            InlineKeyboardButton(text=btn_text, callback_data=f"st:{s['id']}")
+            InlineKeyboardButton(text=btn_text[:64], callback_data=f"st:{s['id']}")
         ])
     await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=buttons)))
 

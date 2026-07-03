@@ -443,9 +443,26 @@ async def _show_station_list_from_msg(msg: Message, city: str, fuel=None):
         rows = []
         for s in stations_with_status[:5]:
             statuses = s.get("statuses", [])
-            name = (s.get("name") or "АЗС")[:22]
+            operator = (s.get("operator") or "")[:12]
+            address = (s.get("address") or "")[:14]
+            city_name = (s.get("city") or "")[:12]
             icon = _get_main_status_icon(statuses)
-            rows.append([_button(f"{icon} #{s['id']} {name}"[:40], "primary")])
+            # Сеть → адрес → город
+            if operator and address:
+                name_label = f"{operator} {address}"
+            elif operator and city_name:
+                name_label = f"{operator} {city_name}"
+            elif operator:
+                name_label = operator
+            elif address and city_name:
+                name_label = f"{city_name} {address}"
+            elif address:
+                name_label = address
+            elif city_name:
+                name_label = city_name
+            else:
+                name_label = (s.get("name") or "АЗС")[:22]
+            rows.append([_button(f"{icon} #{s['id']} {name_label}"[:40], "primary")])
         rows.append([_button("🚨 Экстренный", "negative")])
         rows.append([_button("🏠 В начало", "secondary")])
         await _send(msg, title, vk_keyboard(_limit_rows(rows), inline=False))
@@ -472,9 +489,25 @@ async def _do_text_search(msg: Message, query: str):
     for s in stations:
         statuses = s.get("statuses", [])
         icon = _get_main_status_icon(statuses)
-        name = (s.get("name") or "АЗС")[:25]
+        operator = (s.get("operator") or "")[:12]
+        address = (s.get("address") or "")[:14]
         city = (s.get("city") or "")[:12]
-        btn_text = f"{icon} #{s['id']} {name}" + (f" • {city}" if city else "")
+        # Сеть → адрес → город
+        if operator and address:
+            name_label = f"{operator} {address}"
+        elif operator and city:
+            name_label = f"{operator} {city}"
+        elif operator:
+            name_label = operator
+        elif address and city:
+            name_label = f"{city} {address}"
+        elif address:
+            name_label = address
+        elif city:
+            name_label = city
+        else:
+            name_label = (s.get("name") or "АЗС")[:22]
+        btn_text = f"{icon} #{s['id']} {name_label}"
         rows.append([_button(btn_text[:40], "primary")])
     rows.append([_button("🏠 В начало", "secondary")])
     await _send(msg, text, vk_keyboard(_limit_rows(rows), inline=False))
@@ -490,8 +523,24 @@ async def _owner_search_handler(msg: Message, query: str):
     _user_state[uid] = {"owner_pick_flow": True}
     rows = []
     for s in stations:
-        name = (s.get("name") or "АЗС")[:25]
-        rows.append([_button(f"#{s['id']} {name}"[:40], "primary")])
+        operator = (s.get("operator") or "")[:12]
+        address = (s.get("address") or "")[:14]
+        city = (s.get("city") or "")[:12]
+        if operator and address:
+            name_label = f"{operator} {address}"
+        elif operator and city:
+            name_label = f"{operator} {city}"
+        elif operator:
+            name_label = operator
+        elif address and city:
+            name_label = f"{city} {address}"
+        elif address:
+            name_label = address
+        elif city:
+            name_label = city
+        else:
+            name_label = (s.get("name") or "АЗС")[:22]
+        rows.append([_button(f"#{s['id']} {name_label}"[:40], "primary")])
     rows.append([_button("❌ Отменить", "secondary")])
     await _send(msg, f"🔍 Нашёл <b>{len(stations)}</b> АЗС:", vk_keyboard(_limit_rows(rows), inline=False))
 
