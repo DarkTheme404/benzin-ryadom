@@ -677,41 +677,69 @@
     const list = document.getElementById('station-picker-list');
     if (!list) return;
 
-    let stations = state.stations || [];
-    if (stations.length === 0) {
-      // Load stations first
+    const ql = query.trim();
+
+    // If query is empty — show local stations from current city
+    if (!ql) {
+      let stations = state.stations || [];
+      if (stations.length === 0) {
+        // Load stations first
+        showLoading();
+        const params = new URLSearchParams();
+        params.set('city', state.city);
+        if (state.fuel) params.set('fuel', state.fuel);
+        params.set('limit', '100');
+        api('/api/stations/by-city?' + params).then(data => {
+          state.stations = data.stations || [];
+          renderStationPicker('');
+          hideLoading();
+        }).catch(e => {
+          hideLoading();
+          showToast('Ошибка: ' + e.message, 'error');
+          list.innerHTML = '<div class="empty-mini">Не удалось загрузить АЗС</div>';
+        });
+        return;
+      }
+      renderStationList(stations);
+      return;
+    }
+
+    // If query has 2+ chars — search entire DB via API
+    if (ql.length >= 2) {
       showLoading();
-      const params = new URLSearchParams();
-      params.set('city', state.city);
-      if (state.fuel) params.set('fuel', state.fuel);
-      params.set('limit', '100');
-      api('/api/stations/by-city?' + params).then(data => {
-        state.stations = data.stations || [];
-        renderStationPicker(query);
+      // Debounce not needed here (handler called only on input)
+      const tgId = getTgId();
+      let url = '/api/search?q=' + encodeURIComponent(ql);
+      if (tgId) url += '&telegram_id=' + tgId;
+      api(url).then(data => {
         hideLoading();
+        const stations = data.stations || [];
+        if (stations.length === 0) {
+          list.innerHTML = `<div class="empty-mini">По запросу «${escape(ql)}» ничего не найдено.<br>Попробуйте изменить запрос.</div>`;
+          return;
+        }
+        list.innerHTML = '';
+        renderStationListInto(stations, list);
       }).catch(e => {
         hideLoading();
-        showToast('Ошибка: ' + e.message, 'error');
-        list.innerHTML = '<div class="empty-mini">Не удалось загрузить АЗС</div>';
+        showToast('Ошибка поиска: ' + e.message, 'error');
       });
       return;
     }
+  }
 
-    const ql = query.trim().toLowerCase();
-    const filtered = ql ? stations.filter(s => {
-      const name = (s.name || '').toLowerCase();
-      const op = (s.operator || '').toLowerCase();
-      const addr = (s.address || '').toLowerCase();
-      return name.includes(ql) || op.includes(ql) || addr.includes(ql);
-    }) : stations;
+  function renderStationList(stations) {
+    renderStationListInto(stations, document.getElementById('station-picker-list'));
+  }
 
+  function renderStationListInto(stations, list) {
+    if (!list) return;
     list.innerHTML = '';
-    if (filtered.length === 0) {
-      list.innerHTML = '<div class="empty-mini">Ничего не найдено</div>';
+    if (stations.length === 0) {
+      list.innerHTML = '<div class="empty-mini">Нет АЗС</div>';
       return;
     }
-
-    filtered.forEach(s => {
+    stations.forEach(s => {
       const op = s.operator || s.name || 'АЗС';
       const addr = s.address || s.city || '';
       const item = document.createElement('div');
@@ -733,8 +761,13 @@
   }
 
   function onStationPickerSearch(e) {
-    renderStationPicker(e.target.value);
+    clearTimeout(_stationPickerSearchTimer);
+    const q = e.target.value;
+    _stationPickerSearchTimer = setTimeout(() => {
+      renderStationPicker(q);
+    }, 300);
   }
+  let _stationPickerSearchTimer = null;
 
   // ============= MAP =============
   function loadMap() {
