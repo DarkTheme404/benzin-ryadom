@@ -280,6 +280,7 @@ async def parse_city(session, city: str) -> int:
     radius = 0.1
     min_lat, max_lat = lat - radius, lat + radius
     min_lng, max_lng = lng - radius, lng + radius
+    logger.info("  bbox: lat[%.3f..%.3f] lon[%.3f..%.3f]", min_lat, max_lat, min_lng, max_lng)
     if db.USE_SQLITE:
         our_stations = await db._fetch(
             """SELECT id, lat, lon, operator, name, address FROM stations
@@ -295,26 +296,31 @@ async def parse_city(session, city: str) -> int:
             )
     our_list = [dict(r) if not isinstance(r, dict) else r for r in our_stations]
     logger.info("  в нашей БД: %d АЗС в том же bbox", len(our_list))
+    if our_list:
+        logger.info("    пример: id=%d lat=%.4f lon=%.4f op=%s",
+                    our_list[0]["id"], our_list[0]["lat"], our_list[0]["lon"],
+                    (our_list[0].get("operator") or "")[:30])
 
     # Сопоставляем по координатам (O(N*M), но N,M < 1000 — быстро)
     def match_our(their_lat, their_lng):
         for ours in our_list:
             if abs(ours["lat"] - their_lat) < 0.005 and abs(ours["lon"] - their_lng) < 0.005:
-                # Приоритет: сначала по operator, затем по адресу
                 return ours
         return None
 
     saved = 0
     processed = 0
+    matched = 0
     for st in stations[:50]:  # лимит 50 на город
         lat_st = st.get("lat")
         lng_st = st.get("lng")
         if not lat_st or not lng_st:
             continue
+        processed += 1
         our = match_our(lat_st, lng_st)
         if not our:
             continue
-        processed += 1
+        matched += 1
         try:
             # Получаем детали только для matching АЗС
             detail = await fetch_station_detail(session, st.get("id"))
@@ -327,7 +333,7 @@ async def parse_city(session, city: str) -> int:
             logger.debug("  station %s: %s", st.get("id"), e)
         await asyncio.sleep(0.3)  # rate limit
 
-    logger.info("  matched: %d, сохранено: %d", processed, saved)
+    logger.info("  processed: %d, matched: %d, сохранено: %d", processed, matched, saved)
     return saved
 
 
@@ -381,6 +387,7 @@ async def save_station_reports(station_id: int, station_obj: dict, detail: dict)
 
 async def run(cities: list[str]) -> int:
     logger.info("=== Парсер benzin-status.tech (%d городов) ===", len(cities))
+    logger.info("  USE_SQLITE=%s _API_MODE=%s", db.USE_SQLITE, os.getenv("_API_MODE"))
     if not os.getenv("_API_MODE"):
         await db.init_db()
     await db.stale_old_reports("benzin_status_tech")
@@ -393,7 +400,7 @@ async def run(cities: list[str]) -> int:
                 logger.info("  ✅ [%s] сохранено: %d", city, count)
                 total += count
             except Exception as e:
-                logger.warning("  [%s] ошибка: %s", city, e)
+                logger.warning("  [%s] ошибка: %s", city, e, exc_info=True)
             await asyncio.sleep(1)  # rate limit между городами
 
     if not os.getenv("_API_MODE"):
