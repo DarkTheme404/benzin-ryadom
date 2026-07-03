@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Импорт ВСЕХ АЗС Ивановской области из OpenStreetMap через Overpass API.
-Overpass API: https://overpass-api.de/api/interpreter
+Импорт ВСЕХ АЗС Ивановской области из OpenStreetMap.
+Данные заранее сохранены в data/osm_ivanovo.json (нельзя вызвать Overpass из Render — network blocked).
 
-Парсит amenity=fuel в области и загружает в БД.
 Идемпотентно — повторный запуск не дублирует.
 """
 import asyncio
@@ -12,8 +11,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-import urllib.request
-import urllib.parse
 
 logger = logging.getLogger(__name__)
 
@@ -26,53 +23,41 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", "bot", ".env"))
 import db
 from db import _fetch, _execute
 
-# === Ивановская область (bbox: 55.5,39.5,57.5,43.5) ===
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-BBOX = "55.5,39.5,57.5,43.5"  # south, west, north, east
+# === Конфиг ===
 REGION_NAME = "Ивановская область"
-
-OVERPASS_QUERY = f"""
-[out:json][timeout:90];
-(
-  node["amenity"="fuel"]({BBOX});
-  way["amenity"="fuel"]({BBOX});
-);
-out center tags;
-"""
+DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "osm_ivanovo.json")
 
 
-def fetch_overpass() -> dict:
-    """Запрашивает все АЗС в bbox у Overpass API."""
-    data = urllib.parse.urlencode({"data": OVERPASS_QUERY}).encode("utf-8")
-    req = urllib.request.Request(OVERPASS_URL, data=data, headers={
-        "User-Agent": "benzin-ryadom/1.0 (https://t.me/benzyn_ryadom)"
-    })
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        return json.loads(resp.read())
+def load_osm_data() -> list:
+    """Загружает OSM данные из файла."""
+    if not os.path.exists(DATA_FILE):
+        logger.error(f"Файл {DATA_FILE} не найден!")
+        return []
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("elements", [])
 
 
 def osm_tags_to_station(elem: dict) -> dict:
     """Превращает OSM-элемент в нашу модель станции."""
     tags = elem.get("tags", {})
-    center = elem.get("center", {})  # для way
+    center = elem.get("center", {})
     lat = elem.get("lat") or center.get("lat")
+
     lon = elem.get("lon") or center.get("lon")
 
     if not lat or not lon:
         return None
 
-    # Название и оператор
     name = tags.get("name") or tags.get("brand") or "АЗС"
     operator = tags.get("operator") or tags.get("brand")
 
-    # Адрес
     addr = tags.get("addr:street", "")
     if tags.get("addr:housenumber"):
         addr += f", {tags['addr:housenumber']}"
     if not addr:
         addr = tags.get("addr:full", "")
 
-    # Город
     city = tags.get("addr:city") or tags.get("is_in:city") or ""
 
     return {
@@ -86,10 +71,6 @@ def osm_tags_to_station(elem: dict) -> dict:
 
 
 async def import_to_db(stations: list) -> tuple[int, int, int]:
-    """
-    Импортирует станции в БД.
-    Возвращает (total, added, updated).
-    """
     added = 0
     updated = 0
 
@@ -97,7 +78,6 @@ async def import_to_db(stations: list) -> tuple[int, int, int]:
         if not s.get("lat") or not s.get("lon"):
             continue
 
-        # Проверяем, есть ли уже такая станция (по координатам ±50м)
         if db.USE_SQLITE:
             existing = await _fetch(
                 "SELECT id, name, operator, city, address FROM stations "
@@ -114,7 +94,6 @@ async def import_to_db(stations: list) -> tuple[int, int, int]:
             )
 
         if existing:
-            # Обновляем только если поля пустые
             updates = []
             params = []
             idx = 1
@@ -140,7 +119,6 @@ async def import_to_db(stations: list) -> tuple[int, int, int]:
                 await _execute(sql, *params)
                 updated += 1
         else:
-            # Создаём новую
             if db.USE_SQLITE:
                 await _execute(
                     "INSERT INTO stations (name, operator, city, region, address, lat, lon, is_active, created_at) "
@@ -163,19 +141,50 @@ async def import_to_db(stations: list) -> tuple[int, int, int]:
 
 
 async def main() -> dict:
-    logger.info(f"=== Импорт АЗС {REGION_NAME} из OpenStreetMap ===")
-    logger.info(f"BBox: {BBOX}")
+    logger.info(f"=== Импорт АЗС {REGION_NAME} из OSM (из файла) ===")
 
     if not os.getenv("_API_MODE"):
         await db.init_db()
 
-    logger.info("Запрашиваю Overpass API...")
-    try:
-        data = fetch_overpass()
-    except Exception as e:
-        logger.error(f"❌ Ошибка Overpass: {e}")
+    elements = load_osm_data()
+    logger.info(f"Загружено элементов из файла: {len(elements)}")
+
+    stations = []
+    for e in elements:
+        s = osm_tags_to_station(e)
+        if s:
+            stations.append(s)
+
+    logger.info(f"Валидных станций: {len(stations)}")
+
+    if not stations:
+        logger.warning("Нет станций для импорта")
         if not os.getenv("_API_MODE"):
             await db.close_db()
+        return {"ok": True, "added": 0, "updated": 0, "total": 0}
+
+    # Показываем разбивку по операторам
+    from collections import Counter
+    ops = Counter()
+    for s in stations:
+        op = s.get("operator") or s["name"]
+        ops[op] += 1
+    logger.info("Топ операторов:")
+    for op, cnt in ops.most_common(10):
+        logger.info(f"  {op}: {cnt}")
+
+    total, added, updated = await import_to_db(stations)
+    logger.info(f"=== OSM result: total={total}, added={added}, updated={updated} ===")
+
+    if not os.getenv("_API_MODE"):
+        await db.close_db()
+
+    return {"ok": True, "total": total, "added": added, "updated": updated}
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    asyncio.run(main())
         return {"ok": False, "error": str(e), "added": 0, "updated": 0}
 
     elements = data.get("elements", [])
