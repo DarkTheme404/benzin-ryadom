@@ -1026,6 +1026,7 @@ img { max-width: 100%; display: block; }
   justify-content: center;
   z-index: 400;
 }
+.loading-overlay[hidden] { display: none !important; }
 
 .spinner-ring {
   width: 40px;
