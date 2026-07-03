@@ -1,114 +1,339 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Бензин рядом</title>
-<link rel="stylesheet" href="/app/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0e1a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Бензин рядом</title>
+  <link rel="stylesheet" href="/app/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 
-<div class="container" id="app">
-  <!-- Header -->
-  <div class="header">
-    <h1>⛽ Бензин рядом</h1>
-    <div class="subtitle" id="header-subtitle">Выбери город</div>
-  </div>
+<!-- ============= APP SHELL ============= -->
+<div class="app" id="app">
 
-  <!-- City selector -->
-  <div class="city-bar">
-    <select id="city-select">
-      <option value="">Загрузка...</option>
-    </select>
-    <button class="geo-btn" id="geo-btn" title="Моё местоположение">📍</button>
-  </div>
-
-  <!-- Emergency -->
-  <button class="emergency-btn" id="emergency-btn">🚨 Экстренный поиск — нужен бензин!</button>
-
-  <!-- Search -->
-  <div class="search-box">
-    <span class="icon">🔍</span>
-    <input type="text" id="search-input" placeholder="Поиск АЗС...">
-  </div>
-
-  <!-- Fuel filters -->
-  <div class="filters" id="fuel-filters">
-    <div class="filter-chip active" data-fuel="">Все</div>
-    <div class="filter-chip" data-fuel="92">АИ-92</div>
-    <div class="filter-chip" data-fuel="95">АИ-95</div>
-    <div class="filter-chip" data-fuel="98">АИ-98</div>
-    <div class="filter-chip" data-fuel="diesel">ДТ</div>
-  </div>
-
-  <!-- Price filter -->
-  <div class="filter-row" id="price-filters">
-    <div class="filter-chip active" data-price="">Любая цена</div>
-    <div class="filter-chip" data-price="50">до 50₽</div>
-    <div class="filter-chip" data-price="60">до 60₽</div>
-    <div class="filter-chip" data-price="70">до 70₽</div>
-    <div class="filter-chip" data-price="80">до 80₽</div>
-  </div>
-
-  <!-- Network filter -->
-  <div class="network-chips" id="network-filters">
-    <div class="network-chip active" data-net="">Все сети</div>
-    <div class="network-chip" data-net="Лукойл">Лукойл</div>
-    <div class="network-chip" data-net="Газпром">Газпром</div>
-    <div class="network-chip" data-net="Роснефть">Роснефть</div>
-    <div class="network-chip" data-net="Татнефть">Татнефть</div>
-    <div class="network-chip" data-net="Газоил">Газоил</div>
-    <div class="network-chip" data-net="ОПТИ">ОПТИ</div>
-    <div class="network-chip" data-net="Shell">Shell</div>
-  </div>
-
-  <!-- Stations -->
-  <div class="stations-list" id="stations-list">
-    <div class="loading">
-      <div class="spinner"></div>
-      <div>Загрузка...</div>
+  <!-- ===== TOP BAR ===== -->
+  <header class="top-bar">
+    <div class="top-bar-left">
+      <div class="logo">
+        <span class="logo-icon">⛽</span>
+        <span class="logo-text">Бензин<span class="logo-accent">рядом</span></span>
+      </div>
     </div>
-  </div>
+    <div class="top-bar-right">
+      <button class="icon-btn" id="btn-profile" aria-label="Профиль">
+        <span id="profile-avatar">👤</span>
+      </button>
+    </div>
+  </header>
 
-  <!-- Disclaimer -->
-  <div class="disclaimer" id="disclaimer" style="display:none"></div>
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="main" id="main">
+
+    <!-- ============ HOME SCREEN ============ -->
+    <section class="screen screen-home active" data-screen="home">
+
+      <!-- City selector -->
+      <div class="city-selector" id="city-selector">
+        <div class="city-selector-inner">
+          <span class="city-icon">📍</span>
+          <div class="city-text">
+            <div class="city-label">Город</div>
+            <div class="city-name" id="current-city">Определяем...</div>
+          </div>
+          <span class="city-chevron">›</span>
+        </div>
+      </div>
+
+      <!-- Hero Search -->
+      <div class="hero-search">
+        <div class="search-input-wrap">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="search-input" placeholder="Найти АЗС по адресу или сети..." autocomplete="off">
+          <button class="search-clear" id="search-clear" hidden>×</button>
+        </div>
+        <button class="geo-btn" id="btn-geo" title="Моё местоположение">
+          <span class="geo-btn-icon">📍</span>
+        </button>
+      </div>
+
+      <!-- Emergency CTA -->
+      <button class="emergency-card" id="btn-emergency">
+        <div class="emergency-icon">🚨</div>
+        <div class="emergency-text">
+          <div class="emergency-title">Экстренный поиск</div>
+          <div class="emergency-subtitle">Срочно нужен бензин?</div>
+        </div>
+        <div class="emergency-arrow">→</div>
+      </button>
+
+      <!-- Fuel chips -->
+      <div class="chips-row">
+        <button class="chip chip-fuel active" data-fuel="">Все</button>
+        <button class="chip chip-fuel" data-fuel="92">АИ-92</button>
+        <button class="chip chip-fuel" data-fuel="95">АИ-95</button>
+        <button class="chip chip-fuel" data-fuel="98">АИ-98</button>
+        <button class="chip chip-fuel" data-fuel="diesel">Дизель</button>
+        <button class="chip chip-fuel" data-fuel="lpg">Газ</button>
+      </div>
+
+      <!-- Section: nearest / results -->
+      <div class="section-header">
+        <h2 class="section-title" id="results-title">Ближайшие АЗС</h2>
+        <span class="section-count" id="results-count">0</span>
+      </div>
+
+      <!-- Stations list -->
+      <div class="stations" id="stations-list">
+        <!-- Skeleton loaders -->
+        <div class="station-card skeleton" aria-hidden="true">
+          <div class="skeleton-line w70"></div>
+          <div class="skeleton-line w40"></div>
+          <div class="skeleton-line w90"></div>
+        </div>
+        <div class="station-card skeleton" aria-hidden="true">
+          <div class="skeleton-line w70"></div>
+          <div class="skeleton-line w40"></div>
+          <div class="skeleton-line w90"></div>
+        </div>
+        <div class="station-card skeleton" aria-hidden="true">
+          <div class="skeleton-line w70"></div>
+          <div class="skeleton-line w40"></div>
+          <div class="skeleton-line w90"></div>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div class="empty-state" id="empty-state" hidden>
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">Ничего не найдено</div>
+        <div class="empty-subtitle">Попробуй другой запрос или смени город</div>
+      </div>
+
+      <!-- Disclaimer -->
+      <div class="disclaimer">
+        ⚠️ Данные обновляются пользователями и парсерами. Перед поездкой перезвоните на АЗС.
+      </div>
+    </section>
+
+    <!-- ============ STATION DETAIL SCREEN ============ -->
+    <section class="screen screen-station" data-screen="station">
+      <div class="station-detail" id="station-detail">
+        <!-- Filled dynamically -->
+      </div>
+    </section>
+
+    <!-- ============ PROFILE SCREEN ============ -->
+    <section class="screen screen-profile" data-screen="profile">
+      <div class="profile-header">
+        <div class="profile-avatar" id="profile-big-avatar">👤</div>
+        <div class="profile-name" id="profile-name">Загрузка...</div>
+        <div class="profile-id" id="profile-id">ID: —</div>
+      </div>
+
+      <!-- Stats cards -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-reports">0</div>
+          <div class="stat-label">Отчётов</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-reviews">0</div>
+          <div class="stat-label">Отзывов</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-badges">0</div>
+          <div class="stat-label">Наград</div>
+        </div>
+      </div>
+
+      <!-- Badges -->
+      <div class="profile-section">
+        <h3 class="profile-section-title">Награды</h3>
+        <div class="badges-grid" id="badges-grid">
+          <div class="badge-empty">Пока нет наград</div>
+        </div>
+      </div>
+
+      <!-- Premium -->
+      <div class="premium-card" id="premium-card">
+        <div class="premium-icon">💎</div>
+        <div class="premium-text">
+          <div class="premium-title">Premium</div>
+          <div class="premium-subtitle">Push без задержек + расширенная аналитика</div>
+        </div>
+        <button class="btn btn-premium" id="btn-premium">Купить</button>
+      </div>
+
+      <!-- Subscriptions -->
+      <div class="profile-section">
+        <h3 class="profile-section-title">Подписки</h3>
+        <div class="subs-list" id="subs-list">
+          <div class="empty-mini">Нет активных подписок</div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="profile-actions">
+        <button class="btn btn-secondary" id="btn-share">📤 Поделиться ботом</button>
+        <button class="btn btn-secondary" id="btn-donate">❤️ Поддержать проект</button>
+        <button class="btn btn-secondary" id="btn-help">❓ Помощь</button>
+      </div>
+    </section>
+
+    <!-- ============ CITY PICKER SCREEN ============ -->
+    <section class="screen screen-cities" data-screen="cities">
+      <div class="screen-header">
+        <button class="icon-btn back-btn" data-action="back">‹</button>
+        <h2 class="screen-title">Выбери город</h2>
+      </div>
+      <div class="search-input-wrap search-input-lg">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="city-search" placeholder="Начни вводить название..." autocomplete="off">
+      </div>
+      <div class="cities-list" id="cities-list">
+        <!-- Filled dynamically -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== BOTTOM NAV ===== -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-tab="home">
+      <span class="nav-icon">🏠</span>
+      <span class="nav-label">Главная</span>
+    </button>
+    <button class="nav-item" data-tab="map">
+      <span class="nav-icon">🗺️</span>
+      <span class="nav-label">Карта</span>
+    </button>
+    <button class="nav-item" data-tab="report">
+      <span class="nav-icon">📝</span>
+      <span class="nav-label">Отчёт</span>
+    </button>
+    <button class="nav-item" data-tab="profile">
+      <span class="nav-icon">👤</span>
+      <span class="nav-label">Профиль</span>
+    </button>
+  </nav>
+
 </div>
 
-<!-- Report overlay -->
-<div class="report-overlay" id="report-overlay">
-  <div class="report-sheet">
-    <h3 id="report-title">Сообщить о наличии</h3>
+<!-- ============= REPORT BOTTOM SHEET ============= -->
+<div class="sheet" id="report-sheet" hidden>
+  <div class="sheet-backdrop" data-action="close-sheet"></div>
+  <div class="sheet-content">
+    <div class="sheet-handle"></div>
+    <h3 class="sheet-title">Сообщить о наличии</h3>
+    <div class="sheet-subtitle" id="report-sheet-station">Выбери АЗС</div>
+
     <div class="field">
-      <label>Топливо</label>
-      <div class="fuel-options" id="report-fuel-options">
-        <div class="fuel-opt selected" data-fuel="92">АИ-92</div>
-        <div class="fuel-opt" data-fuel="95">АИ-95</div>
-        <div class="fuel-opt" data-fuel="98">АИ-98</div>
-        <div class="fuel-opt" data-fuel="diesel">ДТ</div>
+      <label class="field-label">Топливо</label>
+      <div class="chips-row chips-row-tight">
+        <button class="chip chip-fuel-sheet active" data-fuel="92">АИ-92</button>
+        <button class="chip chip-fuel-sheet" data-fuel="95">АИ-95</button>
+        <button class="chip chip-fuel-sheet" data-fuel="98">АИ-98</button>
+        <button class="chip chip-fuel-sheet" data-fuel="diesel">Дизель</button>
+        <button class="chip chip-fuel-sheet" data-fuel="lpg">Газ</button>
       </div>
     </div>
+
     <div class="field">
-      <label>Наличие</label>
-      <div class="avail-options" id="report-avail">
-        <div class="avail-opt yes selected" data-avail="true">✅ Есть</div>
-        <div class="avail-opt no" data-avail="false">❌ Нет</div>
+      <label class="field-label">Наличие</label>
+      <div class="avail-row">
+        <button class="avail-btn avail-yes active" data-avail="true">
+          <span class="avail-emoji">✅</span>
+          <span class="avail-text">Есть</span>
+        </button>
+        <button class="avail-btn avail-low" data-avail="queue">
+          <span class="avail-emoji">⚠️</span>
+          <span class="avail-text">Очередь</span>
+        </button>
+        <button class="avail-btn avail-no" data-avail="false">
+          <span class="avail-emoji">❌</span>
+          <span class="avail-text">Нет</span>
+        </button>
       </div>
     </div>
+
     <div class="field">
-      <label>Цена (₽/л, необязательно)</label>
-      <input type="number" id="report-price" placeholder="например 56.50" step="0.10" min="0" max="500">
+      <label class="field-label">Цена (₽/л)</label>
+      <input type="number" class="field-input" id="report-price" placeholder="Необязательно" step="0.10" min="0" max="500" inputmode="decimal">
     </div>
+
+    <div class="field">
+      <label class="field-label">Очередь (машин)</label>
+      <input type="number" class="field-input" id="report-queue" placeholder="0" min="0" max="100" inputmode="numeric">
+    </div>
+
     <div class="btn-row">
-      <button class="btn btn-secondary" id="report-cancel">Отмена</button>
+      <button class="btn btn-secondary" data-action="close-sheet">Отмена</button>
       <button class="btn btn-primary" id="report-submit">Отправить</button>
     </div>
   </div>
 </div>
 
-<!-- Toast -->
-<div class="toast" id="toast"></div>
+<!-- ============= REVIEW BOTTOM SHEET ============= -->
+<div class="sheet" id="review-sheet" hidden>
+  <div class="sheet-backdrop" data-action="close-sheet"></div>
+  <div class="sheet-content">
+    <div class="sheet-handle"></div>
+    <h3 class="sheet-title">Оценить качество</h3>
+    <div class="sheet-subtitle" id="review-sheet-station">АЗС</div>
 
+    <div class="field">
+      <label class="field-label">Топливо</label>
+      <div class="chips-row chips-row-tight" id="review-fuel-chips">
+        <button class="chip chip-review-fuel active" data-fuel="92">АИ-92</button>
+        <button class="chip chip-review-fuel" data-fuel="95">АИ-95</button>
+        <button class="chip chip-review-fuel" data-fuel="98">АИ-98</button>
+        <button class="chip chip-review-fuel" data-fuel="diesel">Дизель</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="field-label">Оценка</label>
+      <div class="stars-row" id="stars-row">
+        <span class="star" data-rating="1">★</span>
+        <span class="star" data-rating="2">★</span>
+        <span class="star" data-rating="3">★</span>
+        <span class="star" data-rating="4">★</span>
+        <span class="star" data-rating="5">★</span>
+      </div>
+      <div class="rating-hint" id="rating-hint">Нажми на звезду</div>
+    </div>
+
+    <div class="field">
+      <label class="field-label">Комментарий (необязательно)</label>
+      <textarea class="field-input field-textarea" id="review-comment" placeholder="Например: плохой бензин, много примесей..." rows="3" maxlength="500"></textarea>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-secondary" data-action="close-sheet">Отмена</button>
+      <button class="btn btn-primary" id="review-submit">Отправить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= TOAST ============= -->
+<div class="toast" id="toast" hidden></div>
+
+<!-- ============= LOADING OVERLAY ============= -->
+<div class="loading-overlay" id="loading-overlay" hidden>
+  <div class="loading-spinner">
+    <div class="spinner-ring"></div>
+  </div>
+</div>
+
+<!-- Scripts -->
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
 <script src="/app/app.js"></script>
 </body>
 </html>

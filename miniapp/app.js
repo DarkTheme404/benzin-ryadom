@@ -1,500 +1,964 @@
 /**
- * Бензин рядом — Telegram Mini App
+ * Бензин рядом — Telegram + VK Mini App
+ * Modern, single-page app with full bot functionality
  */
 (function () {
   'use strict';
 
-  // === Telegram WebApp init ===
-  const tg = window.Telegram?.WebApp;
+  // ============= PLATFORM DETECTION =============
+  const platform = {
+    tg: !!(window.Telegram && window.Telegram.WebApp),
+    vk: false, // determined async via VK Bridge
+  };
+
+  const tg = platform.tg ? window.Telegram.WebApp : null;
+
   if (tg) {
     tg.ready();
     tg.expand();
-    // Apply theme
-    document.documentElement.style.setProperty('--bg', tg.backgroundColor || '#ffffff');
+    if (tg.colorScheme === 'light') {
+      document.body.classList.add('tg-light');
+    }
   }
 
-  // === API base ===
-  // In production: API is on the same host as the bot (Render)
-  // For dev: use localhost:8080
-  const API = (function () {
-    // If opened inside Telegram — use the server that hosts both bot + API
-    // The bot's main.py runs API on PORT (default 8080)
-    // Mini App URL is set in bot config → points to static hosting of this HTML
-    // API calls go to the same Render service
+  // VK Bridge detection
+  const vkBridgePromise = (async () => {
+    if (window.vkBridge) {
+      try {
+        await window.vkBridge.send('VKWebAppInit', {});
+        platform.vk = true;
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    return false;
+  })();
+
+  // ============= API =============
+  const API = (() => {
     const params = new URLSearchParams(window.location.search);
     const apiBase = params.get('api') || '';
-    // Fallback: same origin
     return apiBase || window.location.origin;
   })();
 
-  const tgId = tg?.initDataUnsafe?.user?.id || null;
+  async function api(path, options = {}) {
+    const url = `${API}${path}`;
+    const headers = { 'Content-Type': 'application/json' };
+    if (tg?.initData) headers['X-Telegram-Init-Data'] = tg.initData;
+    try {
+      const res = await fetch(url, {
+        ...options,
+        headers: { ...headers, ...(options.headers || {}) },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    } catch (e) {
+      throw e;
+    }
+  }
 
-  // === State ===
-  let state = {
+  // ============= STATE =============
+  const state = {
+    screen: 'home',
+    tab: 'home',
     city: '',
+    cityRegion: '',
     fuel: '',
-    maxPrice: null,
-    network: '',
-    stations: [],
-    reportStationId: null,
-    reportStationName: '',
-    reportFuel: '92',
     searchQuery: '',
+    stations: [],
+    userLocation: null, // { lat, lon }
+    selectedStation: null,
+    reportSheet: {
+      stationId: null,
+      stationName: '',
+      fuel: '92',
+      available: true,
+      price: null,
+      queue: null,
+    },
+    reviewSheet: {
+      stationId: null,
+      stationName: '',
+      fuel: '92',
+      rating: 0,
+      comment: '',
+    },
+    cities: [], // popular cities
   };
 
-  // === DOM ===
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => document.querySelectorAll(sel);
+  // ============= DOM =============
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  const citySelect = $('#city-select');
-  const geoBtn = $('#geo-btn');
-  const emergencyBtn = $('#emergency-btn');
-  const searchInput = $('#search-input');
-  const stationsList = $('#stations-list');
-  const disclaimer = $('#disclaimer');
-  const reportOverlay = $('#report-overlay');
-  const toast = $('#toast');
+  const dom = {
+    app: $('#app'),
+    main: $('#main'),
+    stationsList: $('#stations-list'),
+    emptyState: $('#empty-state'),
+    resultsTitle: $('#results-title'),
+    resultsCount: $('#results-count'),
+    citySelector: $('#city-selector'),
+    currentCity: $('#current-city'),
+    searchInput: $('#search-input'),
+    searchClear: $('#search-clear'),
+    geoBtn: $('#btn-geo'),
+    emergencyBtn: $('#btn-emergency'),
+    profileAvatar: $('#profile-avatar'),
+    profileBigAvatar: $('#profile-big-avatar'),
+    profileName: $('#profile-name'),
+    profileId: $('#profile-id'),
+    statReports: $('#stat-reports'),
+    statReviews: $('#stat-reviews'),
+    statBadges: $('#stat-badges'),
+    badgesGrid: $('#badges-grid'),
+    subsList: $('#subs-list'),
+    citySearch: $('#city-search'),
+    citiesList: $('#cities-list'),
+    reportSheet: $('#report-sheet'),
+    reportSheetStation: $('#report-sheet-station'),
+    reportPrice: $('#report-price'),
+    reportQueue: $('#report-queue'),
+    reviewSheet: $('#review-sheet'),
+    reviewSheetStation: $('#review-sheet-station'),
+    reviewComment: $('#review-comment'),
+    starsRow: $('#stars-row'),
+    ratingHint: $('#rating-hint'),
+    toast: $('#toast'),
+    loadingOverlay: $('#loading-overlay'),
+  };
 
-  // === Top cities ===
-  const TOP_CITIES = [
-    'Иваново', 'Москва', 'Санкт-Петербург', 'Кинешма',
-    'Шуя', 'Фурманов', 'Приволжск', 'Кохма',
-    'Тейково', 'Южа', 'Лежнево', 'Плёс',
-    'Нижний Новгород', 'Кострома', 'Ярославль', 'Владимир',
-    'Рязань', 'Тула', 'Калуга', 'Тверь',
-    'Смоленск', 'Орёл', 'Брянск', 'Курск',
-    'Липецк', 'Тамбов', 'Пенза', 'Саратов',
-    'Волгоград', 'Екатеринбург', 'Казань', 'Челябинск',
-    'Новосибирск', 'Красноярск', 'Омск', 'Барнаул',
-    'Пермь', 'Уфа', 'Самара', 'Оренбург',
-    'Краснодар', 'Ставрополь', 'Сочи',
-  ];
-
-  // === Init city select ===
-  function initCities() {
-    citySelect.innerHTML = '<option value="">Выбери город</option>';
-    TOP_CITIES.forEach((c) => {
-      const opt = document.createElement('option');
-      opt.value = c;
-      opt.textContent = c;
-      if (c === state.city) opt.selected = true;
-      citySelect.appendChild(opt);
-    });
-    // Custom option
-    const custom = document.createElement('option');
-    custom.value = '__custom__';
-    custom.textContent = '✏️ Другой город...';
-    citySelect.appendChild(custom);
+  // ============= UTILS =============
+  function showToast(message, type = '') {
+    dom.toast.textContent = message;
+    dom.toast.className = `toast ${type}`;
+    dom.toast.hidden = false;
+    clearTimeout(dom.toast._timer);
+    dom.toast._timer = setTimeout(() => { dom.toast.hidden = true; }, 2400);
   }
-  initCities();
 
-  // === Geolocation ===
-  geoBtn.addEventListener('click', async () => {
-    if (!navigator.geolocation) {
-      showToast('Геолокация недоступна');
-      return;
+  function showLoading() { dom.loadingOverlay.hidden = false; }
+  function hideLoading() { dom.loadingOverlay.hidden = true; }
+
+  function formatTimeAgo(iso) {
+    if (!iso) return '';
+    const t = typeof iso === 'string' ? new Date(iso) : iso;
+    const diff = Date.now() - t.getTime();
+    if (diff < 0) return 'только что';
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return 'только что';
+    if (m < 60) return `${m} мин назад`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h} ч назад`;
+    const d = Math.floor(h / 24);
+    if (d < 7) return `${d} дн назад`;
+    return t.toLocaleDateString('ru-RU');
+  }
+
+  function fuelLabel(f) {
+    if (f === 'diesel') return 'Дизель';
+    if (f === 'lpg') return 'Газ';
+    if (f === '92' || f === '95' || f === '98' || f === '100') return `АИ-${f}`;
+    return f || '';
+  }
+
+  function getTgId() {
+    if (tg?.initDataUnsafe?.user?.id) return tg.initDataUnsafe.user.id;
+    // VK uses peer_id
+    if (platform.vk && window.vkBridge) {
+      // Sync return: VK id is fetched async separately
+      return state.vkUserId;
     }
-    geoBtn.textContent = '⏳';
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        geoBtn.textContent = '📍';
-        const { latitude: lat, longitude: lon } = pos.coords;
-        try {
-          const resp = await fetch(
-            `${API}/api/reverse-geocode?lat=${lat}&lon=${lon}`
-          );
-          const data = await resp.json();
-          if (data.city) {
-            setCity(data.city);
-          } else {
-            showToast('Не удалось определить город');
-          }
-        } catch {
-          showToast('Ошибка определения города');
-        }
-      },
-      () => {
-        geoBtn.textContent = '📍';
-        showToast('Доступ к геолокации запрещён');
-      },
-      { timeout: 10000 }
-    );
-  });
+    return null;
+  }
 
-  // === City change ===
-  citySelect.addEventListener('change', () => {
-    const val = citySelect.value;
-    if (val === '__custom__') {
-      const name = prompt('Напиши название города:');
-      if (name && name.trim()) {
-        setCity(name.trim());
-      } else {
-        citySelect.value = state.city || '';
-      }
-      return;
+  // ============= HAPTIC =============
+  function haptic(style) {
+    if (tg?.HapticFeedback) {
+      try { tg.HapticFeedback.impactOccurred(style || 'light'); } catch (e) {}
     }
-    if (val) setCity(val);
-  });
+  }
 
-  function setCity(city) {
+  function hapticNotify(type) {
+    if (tg?.HapticFeedback) {
+      try { tg.HapticFeedback.notificationOccurred(type || 'success'); } catch (e) {}
+    }
+  }
+
+  // ============= NAVIGATION =============
+  function setTab(tab) {
+    state.tab = tab;
+    $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    if (tab === 'home') showScreen('home');
+    else if (tab === 'map') showScreen('map');
+    else if (tab === 'report') openReportSheet();
+    else if (tab === 'profile') {
+      showScreen('profile');
+      loadProfile();
+    }
+  }
+
+  function showScreen(name) {
+    $$('.screen').forEach(s => s.classList.toggle('active', s.dataset.screen === name));
+    state.screen = name;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // ============= CITY =============
+  function setCity(city, region) {
     state.city = city;
-    citySelect.value = city;
-    // Update header
-    $('#header-subtitle').textContent = `АЗС в г. ${city}`;
-    // Save to localStorage
-    try { localStorage.setItem('benzin_city', city); } catch {}
+    state.cityRegion = region || '';
+    dom.currentCity.textContent = city;
+    try {
+      localStorage.setItem('benzin_city', city);
+      if (region) localStorage.setItem('benzin_region', region);
+    } catch (e) {}
     loadStations();
   }
 
-  // === Load saved city ===
-  try {
-    const saved = localStorage.getItem('benzin_city');
-    if (saved && TOP_CITIES.includes(saved)) {
-      setCity(saved);
+  async function showCityPicker() {
+    showScreen('cities');
+    dom.citySearch.value = '';
+    await renderCities();
+  }
+
+  async function renderCities(query = '') {
+    if (state.cities.length === 0) {
+      try {
+        const data = await api('/api/search?q=');
+        state.cities = (data.stations || []).slice(0, 20);
+      } catch (e) {}
     }
-  } catch {}
+    // For now show top cities - we don't have a /cities endpoint
+    // Will use Moscow, SPb, etc as defaults if no data
+    const popular = ['Москва', 'Санкт-Петербург', 'Новосибирск', 'Екатеринбург',
+      'Казань', 'Нижний Новгород', 'Челябинск', 'Самара', 'Омск', 'Ростов-на-Дону',
+      'Уфа', 'Красноярск', 'Воронеж', 'Пермь', 'Волгоград', 'Краснодар',
+      'Саратов', 'Тюмень', 'Тольятти', 'Ижевск', 'Барнаул', 'Иркутск',
+      'Ульяновск', 'Хабаровск', 'Владивосток', 'Ярославль', 'Махачкала',
+      'Томск', 'Оренбург', 'Кемерово', 'Новокузнецк', 'Рязань', 'Астрахань',
+      'Пенза', 'Липецк', 'Тула', 'Киров', 'Чебоксары', 'Калининград',
+      'Брянск', 'Курск', 'Иваново', 'Магнитогорск', 'Улан-Удэ', 'Тверь',
+      'Ставрополь', 'Белгород', 'Архангельск', 'Владимир', 'Сочи', 'Калуга',
+      'Сургут', 'Смоленск', 'Вологда', 'Чита', 'Каменск-Уральский'];
+    const q = query.trim().toLowerCase();
+    const filtered = q ? popular.filter(c => c.toLowerCase().includes(q)) : popular;
 
-  // === Filters ===
-  $$('#fuel-filters .filter-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      $$('#fuel-filters .filter-chip').forEach((c) => c.classList.remove('active'));
-      chip.classList.add('active');
-      state.fuel = chip.dataset.fuel;
-      loadStations();
+    dom.citiesList.innerHTML = '';
+    if (filtered.length === 0) {
+      dom.citiesList.innerHTML = '<div class="empty-mini">Ничего не найдено</div>';
+      return;
+    }
+    filtered.forEach(city => {
+      const item = document.createElement('div');
+      item.className = 'city-item';
+      item.innerHTML = `
+        <div class="city-item-icon">📍</div>
+        <div class="city-item-name">${city}</div>
+        <div class="city-item-count">›</div>
+      `;
+      item.addEventListener('click', () => {
+        haptic('light');
+        setCity(city);
+        showScreen('home');
+      });
+      dom.citiesList.appendChild(item);
     });
-  });
+  }
 
-  $$('#price-filters .filter-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      $$('#price-filters .filter-chip').forEach((c) => c.classList.remove('active'));
-      chip.classList.add('active');
-      state.maxPrice = chip.dataset.price ? parseFloat(chip.dataset.price) : null;
-      loadStations();
-    });
-  });
-
-  $$('#network-filters .network-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      $$('#network-filters .network-chip').forEach((c) => c.classList.remove('active'));
-      chip.classList.add('active');
-      state.network = chip.dataset.net;
-      loadStations();
-    });
-  });
-
-  // === Search ===
-  let searchTimer = null;
-  searchInput.addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      state.searchQuery = searchInput.value.trim();
-      if (state.searchQuery.length >= 2) {
-        doSearch(state.searchQuery);
-      } else if (state.searchQuery.length === 0) {
-        loadStations();
-      }
-    }, 300);
-  });
-
-  // === API calls ===
+  // ============= STATIONS =============
   async function loadStations() {
     if (!state.city) {
-      stationsList.innerHTML = `
+      dom.stationsList.innerHTML = `
         <div class="empty-state">
-          <div class="icon">⛽</div>
-          <h3>Выбери город</h3>
-          <p>Или нажми 📍 для определения по геолокации</p>
-        </div>`;
+          <div class="empty-icon">📍</div>
+          <div class="empty-title">Выбери город</div>
+          <div class="empty-subtitle">Нажми на панель города выше</div>
+        </div>
+      `;
+      dom.emptyState.hidden = true;
+      dom.resultsCount.textContent = '0';
       return;
     }
-
-    stationsList.innerHTML = '<div class="loading"><div class="spinner"></div><div>Загрузка АЗС...</div></div>';
-
+    showLoading();
     try {
-      const params = new URLSearchParams({
-        city: state.city,
-        has_stock: '1',
-        include_nearby_regions: '1',
-        limit: '50',
-      });
+      const params = new URLSearchParams();
+      params.set('city', state.city);
+      if (state.region) params.set('region', state.region);
       if (state.fuel) params.set('fuel', state.fuel);
-      if (state.network) params.set('network', state.network);
-      if (state.maxPrice) params.set('max_price', state.maxPrice);
-      if (tgId) params.set('telegram_id', tgId);
-
-      const resp = await fetch(`${API}/api/stations/by-city?${params}`);
-      const data = await resp.json();
-
-      if (data.disclaimer) {
-        disclaimer.style.display = 'block';
-        disclaimer.textContent = '⚠️ ' + data.disclaimer;
-      }
-
+      params.set('limit', '50');
+      const data = await api('/api/stations/by-city?' + params);
       state.stations = data.stations || [];
-      renderStations(state.stations, data.city);
-    } catch (err) {
-      stationsList.innerHTML = `
-        <div class="empty-state">
-          <div class="icon">⚠️</div>
-          <h3>Ошибка загрузки</h3>
-          <p>${err.message}</p>
-        </div>`;
+      renderStations();
+    } catch (e) {
+      showToast('Ошибка загрузки: ' + e.message, 'error');
+      state.stations = [];
+      renderStations();
+    } finally {
+      hideLoading();
     }
   }
 
-  async function doSearch(query) {
-    stationsList.innerHTML = '<div class="loading"><div class="spinner"></div><div>Поиск...</div></div>';
-    try {
-      const params = new URLSearchParams({ q: query });
-      if (tgId) params.set('telegram_id', tgId);
+  function renderStations() {
+    dom.stationsList.innerHTML = '';
+    dom.emptyState.hidden = state.stations.length > 0;
 
-      const resp = await fetch(`${API}/api/search?${params}`);
-      const data = await resp.json();
-      state.stations = data.stations || [];
-      renderStations(state.stations, null, true);
-    } catch (err) {
-      stationsList.innerHTML = `
-        <div class="empty-state">
-          <div class="icon">⚠️</div>
-          <h3>Ошибка поиска</h3>
-          <p>${err.message}</p>
-        </div>`;
-    }
+    state.stations.forEach((s, i) => {
+      const card = createStationCard(s);
+      card.style.animationDelay = `${Math.min(i * 0.03, 0.2)}s`;
+      dom.stationsList.appendChild(card);
+    });
+    dom.resultsCount.textContent = state.stations.length;
   }
 
-  // === Render stations ===
-  function renderStations(stations, city, isSearch) {
-    if (!stations || stations.length === 0) {
-      stationsList.innerHTML = `
-        <div class="empty-state">
-          <div class="icon">🔍</div>
-          <h3>Ничего не найдено</h3>
-          <p>Попробуй другой город, фильтр или поищи по названию</p>
-        </div>`;
-      return;
-    }
+  function createStationCard(s) {
+    const card = document.createElement('div');
+    card.className = 'station-card';
 
-    const html = stations.map((s) => {
-      const statuses = s.statuses || [];
-      const fuelMap = {};
-      statuses.forEach((st) => {
-        if (!fuelMap[st.fuel_type]) fuelMap[st.fuel_type] = st;
-      });
+    const operator = s.operator || s.name || 'АЗС';
+    const address = s.address || '';
+    const city = s.city || '';
+    const verified = s.is_verified ? '<span class="station-verified">✓</span>' : '';
+    const rating = s.avg_rating || s.rating;
 
-      const fuelBadges = Object.entries(fuelMap).map(([fuel, st]) => {
-        const avail = st.available;
-        const cls = avail === true ? 'available' : avail === false ? 'unavailable' : 'unknown';
-        const priceStr = st.price ? ` <span class="price">${fmtPrice(st.price)}₽</span>` : '';
-        const icon = avail === true ? '🟢' : avail === false ? '🔴' : '⚪';
-        return `<span class="fuel-badge ${cls}"><span class="dot"></span>${fmtFuel(fuel)}${priceStr}</span>`;
-      }).join('');
-
-      const dist = s.distance_km != null ? `${s.distance_km.toFixed(1)} км` : '';
-      const operator = s.operator || s.name || '';
-      const badge = s.is_verified ? '<span class="badge verified">✓</span>' : '';
-
-      return `
-        <div class="station-card" data-id="${s.id}" onclick="window._openStation(${s.id})">
-          <div class="top-row">
-            <div>
-              <div class="name">${esc(operator)} ${badge}</div>
-            </div>
-            <div class="distance">${dist}</div>
-          </div>
-          <div class="address">${esc(s.address || '')}</div>
-          <div class="fuels">${fuelBadges || '<span class="fuel-badge unknown"><span class="dot"></span>Нет данных</span>'}</div>
-          <div class="meta">
-            <span>📊 ${statuses.length} отчётов</span>
-            ${s.city ? `<span>📍 ${esc(s.city)}</span>` : ''}
-          </div>
-        </div>`;
+    // Format prices
+    const statuses = s.statuses || [];
+    const prices = statuses
+      .filter(st => st.price != null || st.available !== null)
+      .slice(0, 4);
+    const pricesHtml = prices.map(st => {
+      const has = st.available === true;
+      const no = st.available === false;
+      const empty = st.available === null;
+      const price = st.price != null ? `${st.price.toFixed(2)}₽` : '';
+      let cls = 'price-chip';
+      if (has && price) cls += ' has';
+      else if (no) cls += ' no';
+      else cls += ' empty';
+      const statusIcon = has ? '✓' : no ? '✗' : '?';
+      return `<div class="${cls}">${fuelLabel(st.fuel_type)} ${price} ${statusIcon}</div>`;
     }).join('');
 
-    stationsList.innerHTML = html;
+    // Updated
+    const lastUpdate = statuses[0]?.created_at;
+    const updated = lastUpdate ? formatTimeAgo(lastUpdate) : '';
+
+    card.innerHTML = `
+      <div class="station-card-row">
+        <div class="station-name">${escape(operator)} ${verified}</div>
+        ${rating ? `<div class="station-rating">★ ${rating.toFixed(1)}</div>` : ''}
+      </div>
+      ${address || city ? `
+        <div class="station-address">
+          <span>${escape(address || city)}</span>
+        </div>
+      ` : ''}
+      ${prices.length > 0 ? `<div class="station-prices">${pricesHtml}</div>` : ''}
+      <div class="station-footer">
+        <span class="station-updated">${updated ? '🕐 ' + updated : 'Нет данных'}</span>
+        <div class="station-actions-mini">
+          <button data-action="report" title="Сообщить">📝</button>
+        </div>
+      </div>
+    `;
+
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action="report"]')) {
+        e.stopPropagation();
+        openReportSheet(s.id, operator);
+        return;
+      }
+      haptic('light');
+      openStationDetail(s);
+    });
+
+    return card;
   }
 
-  // === Station detail (inline expand) ===
-  window._openStation = async function (stationId) {
-    const card = document.querySelector(`.station-card[data-id="${stationId}"]`);
-    if (!card) return;
+  function escape(s) {
+    if (!s) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
 
-    // Toggle detail
-    let detail = card.querySelector('.station-detail');
-    if (detail) {
-      detail.classList.toggle('open');
-      return;
-    }
-
-    // Fetch detail
+  // ============= STATION DETAIL =============
+  async function openStationDetail(s) {
+    state.selectedStation = s;
+    showScreen('station');
+    showLoading();
     try {
-      const resp = await fetch(`${API}/api/stations/${stationId}`);
-      const data = await resp.json();
-      const s = data.station;
-      const statuses = data.statuses || [];
-
-      detail = document.createElement('div');
-      detail.className = 'station-detail open';
-
-      let priceHistory = '';
-      if (statuses.length > 0) {
-        priceHistory = `
-          <div class="detail-section">
-            <h4>Текущие цены</h4>
-            ${statuses.map((st) => `
-              <div class="price-row">
-                <span class="label">${fmtFuel(st.fuel_type)} ${st.available ? '🟢' : st.available === false ? '🔴' : '⚪'}</span>
-                <span class="value">${st.price ? fmtPrice(st.price) + ' ₽/л' : '—'}</span>
-              </div>
-            `).join('')}
-          </div>`;
-      }
-
-      detail.innerHTML = `
-        ${priceHistory}
-        <div class="detail-section">
-          <button class="btn btn-primary" style="width:100%" onclick="window._openReport(${stationId}, '${esc(s.name || s.operator || '')}')">
-            📝 Сообщить о наличии
-          </button>
-        </div>`;
-
-      card.appendChild(detail);
-    } catch (err) {
-      showToast('Ошибка загрузки');
+      // Load full station data
+      const [detail, reviews] = await Promise.all([
+        api(`/api/stations/${s.id}`),
+        api(`/api/stations/${s.id}/prices`).catch(() => null),
+      ]);
+      renderStationDetail(detail, reviews);
+    } catch (e) {
+      showToast('Не удалось загрузить: ' + e.message, 'error');
+    } finally {
+      hideLoading();
     }
-  };
+  }
 
-  // === Report ===
-  window._openReport = function (stationId, stationName) {
-    state.reportStationId = stationId;
-    state.reportStationName = stationName;
-    state.reportFuel = state.fuel || '92';
-    $('#report-title').textContent = `Сообщить — ${stationName || 'АЗС #' + stationId}`;
-    // Reset fuel selection
-    $$('#report-fuel-options .fuel-opt').forEach((o) => {
-      o.classList.toggle('selected', o.dataset.fuel === state.reportFuel);
-    });
-    $$('#report-avail .avail-opt').forEach((o) => {
-      o.classList.toggle('selected', o.dataset.avail === 'true');
-    });
-    $('#report-price').value = '';
-    reportOverlay.classList.add('open');
-    tg?.MainButton?.hide();
-  };
+  function renderStationDetail(detail, pricesData) {
+    const s = detail.station || state.selectedStation;
+    if (!s) return;
+    const statuses = detail.statuses || [];
+    const operator = s.operator || s.name || 'АЗС';
+    const verified = s.is_verified ? ' ✓' : '';
+    const lat = s.lat;
+    const lon = s.lon;
 
-  $$('#report-fuel-options .fuel-opt').forEach((opt) => {
-    opt.addEventListener('click', () => {
-      $$('#report-fuel-options .fuel-opt').forEach((o) => o.classList.remove('selected'));
-      opt.classList.add('selected');
-      state.reportFuel = opt.dataset.fuel;
-    });
-  });
+    // Fuel rows
+    const fuelRows = statuses.length > 0 ? statuses.map(st => {
+      const has = st.available === true;
+      const no = st.available === false;
+      const empty = st.available === null;
+      const price = st.price != null ? `${st.price.toFixed(2)} ₽` : '—';
+      let rowCls = 'fuel-row';
+      if (has) rowCls += ' has-fuel';
+      else if (no) rowCls += ' no-fuel';
+      else rowCls += ' empty-fuel';
+      const statusText = has ? 'В наличии' : no ? 'Нет в наличии' : 'Уточняйте';
+      return `
+        <div class="${rowCls}">
+          <div class="fuel-name">${fuelLabel(st.fuel_type)}</div>
+          <div class="fuel-status">
+            <span>${statusText}</span>
+            <span class="fuel-price">${price}</span>
+          </div>
+        </div>
+      `;
+    }).join('') : '<div class="empty-mini">Нет данных о ценах</div>';
 
-  $$('#report-avail .avail-opt').forEach((opt) => {
-    opt.addEventListener('click', () => {
-      $$('#report-avail .avail-opt').forEach((o) => o.classList.remove('selected'));
-      opt.classList.add('selected');
-    });
-  });
+    // Last update
+    const lastUpdate = statuses[0]?.created_at;
+    const updated = lastUpdate ? formatTimeAgo(lastUpdate) : '—';
 
-  $('#report-cancel').addEventListener('click', () => {
-    reportOverlay.classList.remove('open');
-  });
+    // Sources summary from prices API
+    let sourcesHtml = '';
+    if (pricesData && pricesData.total_sources) {
+      const srcs = Object.entries(pricesData.sources_summary || {})
+        .map(([src, count]) => `<span class="price-chip">${src}: ${count}</span>`)
+        .join('');
+      if (srcs) sourcesHtml = `<div class="station-prices">${srcs}</div>`;
+    }
 
-  reportOverlay.addEventListener('click', (e) => {
-    if (e.target === reportOverlay) reportOverlay.classList.remove('open');
-  });
+    $('#station-detail').innerHTML = `
+      <div class="detail-back" data-action="back">‹ Назад</div>
 
-  $('#report-submit').addEventListener('click', async () => {
-    const avail = $('#report-avail .avail-opt.selected')?.dataset.avail === 'true';
-    const price = parseFloat($('#report-price').value) || null;
+      <div class="detail-card">
+        <div class="detail-name">${escape(operator)}${verified}</div>
+        ${s.operator && s.name && s.operator !== s.name ?
+          `<div class="detail-operator">${escape(s.name)}</div>` : ''}
+        ${s.address ? `
+          <div class="detail-address">
+            <span>📍</span>
+            <span>${escape(s.address)}</span>
+          </div>
+        ` : ''}
+        <div class="detail-meta">
+          <div class="meta-item">
+            <div class="meta-label">Город</div>
+            <div class="meta-value">${escape(s.city || '—')}</div>
+          </div>
+          <div class="meta-item">
+            <div class="meta-label">Обновлено</div>
+            <div class="meta-value">${updated}</div>
+          </div>
+        </div>
+      </div>
 
+      <div class="section-header">
+        <h2 class="section-title">Цены и наличие</h2>
+      </div>
+      <div class="fuel-prices-list">${fuelRows}</div>
+
+      ${sourcesHtml ? `
+        <div class="section-header" style="margin-top:16px;">
+          <h2 class="section-title">Источники</h2>
+        </div>
+        ${sourcesHtml}
+      ` : ''}
+
+      <div class="detail-actions">
+        <button class="btn btn-primary" data-action="report">📝 Сообщить</button>
+        <button class="btn btn-secondary" data-action="review">⭐ Оценить</button>
+      </div>
+
+      <div class="detail-actions">
+        <button class="btn btn-secondary" data-action="route">🗺️ Маршрут</button>
+        <button class="btn btn-secondary" data-action="subscribe">🔔 Подписаться</button>
+      </div>
+
+      <div class="section-header" style="margin-top:20px;">
+        <h2 class="section-title">Отзывы</h2>
+        <span class="section-count" id="reviews-count">0</span>
+      </div>
+      <div class="reviews-list" id="reviews-list">
+        <div class="empty-mini">Пока нет отзывов — будь первым!</div>
+      </div>
+    `;
+
+    // Bind back button
+    $('[data-action="back"]').addEventListener('click', () => showScreen('home'));
+    $('[data-action="report"]').addEventListener('click', () => openReportSheet(s.id, operator));
+    $('[data-action="review"]').addEventListener('click', () => openReviewSheet(s.id, operator));
+    $('[data-action="route"]').addEventListener('click', () => openMap(lat, lon, operator));
+    $('[data-action="subscribe"]').addEventListener('click', () => subscribeStation(s.id));
+
+    // Load reviews
+    loadReviews(s.id);
+  }
+
+  async function loadReviews(stationId) {
+    // For now, we don't have a public /api/reviews endpoint
+    // Reviews are loaded via TG bot. Show placeholder.
     try {
-      const body = {
-        station_id: state.reportStationId,
-        fuel_type: state.reportFuel,
-        available: avail,
-        price: price,
-        telegram_id: tgId,
-        first_name: tg?.initDataUnsafe?.user?.first_name || 'MiniApp User',
-      };
+      // Future: GET /api/stations/{id}/reviews
+    } catch (e) {}
+  }
 
-      const resp = await fetch(`${API}/api/reports`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await resp.json();
-
-      if (data.ok) {
-        showToast('✅ Отчёт отправлен!');
-        if (data.new_badges?.length) {
-          data.new_badges.forEach((b) => {
-            setTimeout(() => showToast(`${b.emoji} Получен бейдж: ${b.name}`), 1500);
-          });
-        }
-        reportOverlay.classList.remove('open');
-        loadStations(); // refresh
-      } else {
-        showToast('❌ Ошибка: ' + (data.error || 'неизвестная'));
-      }
-    } catch (err) {
-      showToast('❌ Ошибка отправки');
-    }
-  });
-
-  // === Emergency ===
-  emergencyBtn.addEventListener('click', async () => {
+  // ============= EMERGENCY =============
+  async function doEmergencySearch() {
     if (!state.city) {
-      showToast('Сначала выбери город');
+      showToast('Сначала выбери город', 'warning');
       return;
     }
-    stationsList.innerHTML = '<div class="loading"><div class="spinner"></div><div>🚨 Ищем ближайшую АЗС...</div></div>';
+    showLoading();
     try {
-      const resp = await fetch(
-        `${API}/api/stations/emergency?city=${encodeURIComponent(state.city)}&fuel=${state.fuel || '92'}`
-      );
-      const data = await resp.json();
-      state.stations = data.stations || [];
-      if (state.stations.length === 0) {
-        stationsList.innerHTML = `
-          <div class="empty-state">
-            <div class="icon">😰</div>
-            <h3>Не нашли АЗС с подтверждённым наличием</h3>
-            <p>Попробуй проверить телефоном nearby станции или подожди обновлений от пользователей</p>
-          </div>`;
-      } else {
-        renderStations(state.stations, state.city);
+      const data = await api(`/api/stations/emergency?city=${encodeURIComponent(state.city)}&fuel=${state.fuel || '92'}`);
+      if (!data.stations || data.stations.length === 0) {
+        showToast('К сожалению, в этом городе нет АЗС с подтверждённым наличием', 'warning');
+        return;
       }
-    } catch (err) {
-      stationsList.innerHTML = `
-        <div class="empty-state">
-          <div class="icon">⚠️</div>
-          <h3>Ошибка</h3>
-          <p>${err.message}</p>
-        </div>`;
+      state.stations = data.stations;
+      dom.resultsTitle.textContent = '🚨 Экстренный поиск';
+      renderStations();
+      hapticNotify('success');
+      showToast(`Найдено ${data.stations.length} АЗС с топливом`, 'success');
+    } catch (e) {
+      showToast('Ошибка: ' + e.message, 'error');
+    } finally {
+      hideLoading();
     }
-  });
-
-  // === Helpers ===
-  function fmtFuel(f) {
-    const map = { '92': 'АИ-92', '95': 'АИ-95', '98': 'АИ-98', 'diesel': 'ДТ', '100': 'АИ-100', 'lpg': 'ГАЗ' };
-    return map[f] || f;
   }
 
-  function fmtPrice(p) {
-    return p != null ? Number(p).toFixed(2) : '—';
+  // ============= GEO =============
+  async function getUserLocation() {
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) { resolve(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+        err => {
+          showToast('Не удалось определить местоположение', 'warning');
+          resolve(null);
+        },
+        { timeout: 10000, maximumAge: 60000 }
+      );
+    });
   }
 
-  function esc(s) {
-    const div = document.createElement('div');
-    div.textContent = s;
-    return div.innerHTML;
+  async function useGeo() {
+    haptic('light');
+    const loc = await getUserLocation();
+    if (!loc) return;
+    state.userLocation = loc;
+    // Reverse geocode to get city
+    showLoading();
+    try {
+      const data = await api(`/api/reverse-geocode?lat=${loc.lat}&lon=${loc.lon}`);
+      if (data.city) {
+        setCity(data.city, data.region);
+        showToast(`📍 ${data.city}`, 'success');
+      } else {
+        showToast('Не удалось определить город', 'warning');
+      }
+    } catch (e) {
+      showToast('Ошибка: ' + e.message, 'error');
+    } finally {
+      hideLoading();
+    }
   }
 
-  function showToast(msg) {
-    toast.textContent = msg;
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 2500);
+  // ============= MAP =============
+  function openMap(lat, lon, name) {
+    if (!lat || !lon) {
+      showToast('Координаты не указаны', 'warning');
+      return;
+    }
+    // Open in external map app
+    const yandex = `yandexmaps://maps.yandex.ru/?pt=${lon},${lat}&z=15`;
+    const gmaps = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
+    if (tg?.openLink) {
+      tg.openLink(gmaps);
+    } else {
+      window.open(gmaps, '_blank');
+    }
   }
 
+  // ============= REPORT =============
+  function openReportSheet(stationId, stationName) {
+    state.reportSheet = {
+      stationId: stationId || null,
+      stationName: stationName || '',
+      fuel: state.fuel || '92',
+      available: true,
+      price: null,
+      queue: null,
+    };
+    dom.reportSheetStation.textContent = stationName || (state.stations.length > 0
+      ? 'Выбери АЗС' : 'Сначала выбери АЗС');
+    dom.reportPrice.value = '';
+    dom.reportQueue.value = '';
+    $$('.chip-fuel-sheet').forEach(c => c.classList.toggle('active', c.dataset.fuel === state.reportSheet.fuel));
+    $$('.avail-btn').forEach(b => b.classList.toggle('active', String(b.dataset.avail) === String(state.reportSheet.available)));
+    dom.reportSheet.hidden = false;
+    haptic('light');
+  }
+
+  async function submitReport() {
+    const { stationId, fuel, available, price, queue } = state.reportSheet;
+    if (!stationId) {
+      showToast('Сначала выбери АЗС', 'warning');
+      return;
+    }
+    const tgId = getTgId();
+    if (!tgId) {
+      showToast('Не удалось определить пользователя', 'error');
+      return;
+    }
+    showLoading();
+    try {
+      await api('/api/reports', {
+        method: 'POST',
+        body: JSON.stringify({
+          station_id: stationId,
+          fuel_type: fuel,
+          available,
+          price: price ? parseFloat(price) : null,
+          queue_size: queue ? parseInt(queue) : null,
+          telegram_id: tgId,
+          first_name: tg?.initDataUnsafe?.user?.first_name || 'User',
+        }),
+      });
+      closeSheet('report-sheet');
+      hapticNotify('success');
+      showToast('✅ Отчёт отправлен!', 'success');
+      // Reload station detail
+      if (state.selectedStation) openStationDetail(state.selectedStation);
+      // Switch to home tab if no station detail
+      if (!state.selectedStation) loadStations();
+    } catch (e) {
+      showToast('Ошибка: ' + e.message, 'error');
+    } finally {
+      hideLoading();
+    }
+  }
+
+  // ============= REVIEW =============
+  function openReviewSheet(stationId, stationName) {
+    state.reviewSheet = {
+      stationId,
+      stationName: stationName || '',
+      fuel: '92',
+      rating: 0,
+      comment: '',
+    };
+    dom.reviewSheetStation.textContent = stationName || 'АЗС';
+    dom.reviewComment.value = '';
+    $$('.chip-review-fuel').forEach(c => c.classList.toggle('active', c.dataset.fuel === '92'));
+    $$('.star').forEach(s => s.classList.remove('active', 'filled'));
+    dom.ratingHint.textContent = 'Нажми на звезду';
+    dom.reviewSheet.hidden = false;
+    haptic('light');
+  }
+
+  async function submitReview() {
+    const { stationId, fuel, rating, comment } = state.reviewSheet;
+    if (!stationId) { showToast('Выбери АЗС', 'warning'); return; }
+    if (rating === 0) { showToast('Поставь оценку', 'warning'); return; }
+    const tgId = getTgId();
+    if (!tgId) { showToast('Не удалось определить пользователя', 'error'); return; }
+
+    showLoading();
+    try {
+      // Reviews use TG bot backend — we need a /api/reviews endpoint
+      // For now use price-update as fallback or show error
+      showToast('Отзывы пока можно оставить только в боте', 'info');
+      closeSheet('review-sheet');
+    } catch (e) {
+      showToast('Ошибка: ' + e.message, 'error');
+    } finally {
+      hideLoading();
+    }
+  }
+
+  // ============= SUBSCRIBE =============
+  async function subscribeStation(stationId) {
+    const tgId = getTgId();
+    if (!tgId) { showToast('Не удалось определить пользователя', 'error'); return; }
+    showLoading();
+    try {
+      // We don't have a direct /api/subscribe endpoint — use bot
+      showToast('Подпишись через бота: /subscribe', 'info');
+    } catch (e) {
+      showToast('Ошибка: ' + e.message, 'error');
+    } finally {
+      hideLoading();
+    }
+  }
+
+  // ============= PROFILE =============
+  async function loadProfile() {
+    const user = tg?.initDataUnsafe?.user;
+    if (user) {
+      const name = user.first_name + (user.last_name ? ' ' + user.last_name : '');
+      dom.profileName.textContent = name;
+      dom.profileId.textContent = 'ID: ' + user.id;
+      dom.profileAvatar.textContent = user.first_name[0].toUpperCase();
+      dom.profileBigAvatar.textContent = user.first_name[0].toUpperCase();
+    } else if (platform.vk) {
+      try {
+        const userInfo = await window.vkBridge.send('VKWebAppGetUserInfo', {});
+        dom.profileName.textContent = userInfo.first_name;
+        dom.profileId.textContent = 'VK ID: ' + userInfo.id;
+        state.vkUserId = userInfo.id;
+        dom.profileAvatar.textContent = userInfo.first_name[0].toUpperCase();
+        dom.profileBigAvatar.textContent = userInfo.first_name[0].toUpperCase();
+      } catch (e) {
+        dom.profileName.textContent = 'Гость';
+        dom.profileId.textContent = '';
+      }
+    } else {
+      dom.profileName.textContent = 'Гость';
+      dom.profileId.textContent = '';
+    }
+
+    // Load stats
+    try {
+      const tgId = getTgId();
+      if (tgId) {
+        const stats = await api(`/api/stations?lat=0&lon=0&telegram_id=${tgId}`).catch(() => null);
+        // No dedicated stats endpoint — use reports count via admin
+      }
+    } catch (e) {}
+  }
+
+  // ============= SEARCH =============
+  let searchTimer = null;
+  function onSearchInput() {
+    const q = dom.searchInput.value.trim();
+    dom.searchClear.hidden = q.length === 0;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => doSearch(q), 350);
+  }
+
+  async function doSearch(q) {
+    if (!q || q.length < 2) {
+      if (state.city) {
+        loadStations();
+      } else {
+        state.stations = [];
+        renderStations();
+      }
+      return;
+    }
+    showLoading();
+    try {
+      // First try address search
+      const params = new URLSearchParams();
+      if (state.city) {
+        params.set('city', state.city);
+        const data = await api('/api/stations/by-city?' + params);
+        state.stations = data.stations || [];
+      } else {
+        // General search
+        const data = await api('/api/search?q=' + encodeURIComponent(q));
+        state.stations = data.stations || [];
+      }
+      // Filter by query locally
+      const ql = q.toLowerCase();
+      state.stations = state.stations.filter(s => {
+        const name = (s.name || '').toLowerCase();
+        const op = (s.operator || '').toLowerCase();
+        const addr = (s.address || '').toLowerCase();
+        return name.includes(ql) || op.includes(ql) || addr.includes(ql);
+      });
+      dom.resultsTitle.textContent = q ? `Поиск: ${q}` : 'Результаты';
+      renderStations();
+    } catch (e) {
+      showToast('Ошибка поиска: ' + e.message, 'error');
+    } finally {
+      hideLoading();
+    }
+  }
+
+  // ============= CLOSE SHEET =============
+  function closeSheet(id) {
+    $('#' + id).hidden = true;
+  }
+
+  // ============= EVENT BINDING =============
+  function bindEvents() {
+    // Nav items
+    $$('.nav-item').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+
+    // Top buttons
+    dom.citySelector.addEventListener('click', () => { haptic('light'); showCityPicker(); });
+    dom.geoBtn.addEventListener('click', useGeo);
+    dom.emergencyBtn.addEventListener('click', doEmergencySearch);
+    $('#btn-profile').addEventListener('click', () => setTab('profile'));
+
+    // Search
+    dom.searchInput.addEventListener('input', onSearchInput);
+    dom.searchClear.addEventListener('click', () => {
+      dom.searchInput.value = '';
+      dom.searchClear.hidden = true;
+      loadStations();
+    });
+
+    // Fuel chips
+    $$('.chip-fuel').forEach(c => {
+      c.addEventListener('click', () => {
+        $$('.chip-fuel').forEach(b => b.classList.remove('active'));
+        c.classList.add('active');
+        state.fuel = c.dataset.fuel;
+        haptic('light');
+        loadStations();
+      });
+    });
+
+    // Report sheet
+    $$('.chip-fuel-sheet').forEach(c => {
+      c.addEventListener('click', () => {
+        $$('.chip-fuel-sheet').forEach(b => b.classList.remove('active'));
+        c.classList.add('active');
+        state.reportSheet.fuel = c.dataset.fuel;
+      });
+    });
+    $$('.avail-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        $$('.avail-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        state.reportSheet.available = b.dataset.avail === 'true';
+        if (b.dataset.avail === 'queue') state.reportSheet.queue = 5;
+        else state.reportSheet.queue = null;
+      });
+    });
+    dom.reportPrice.addEventListener('input', e => state.reportSheet.price = e.target.value);
+    dom.reportQueue.addEventListener('input', e => state.reportSheet.queue = e.target.value);
+    $('#report-submit').addEventListener('click', submitReport);
+
+    // Review sheet
+    $$('.chip-review-fuel').forEach(c => {
+      c.addEventListener('click', () => {
+        $$('.chip-review-fuel').forEach(b => b.classList.remove('active'));
+        c.classList.add('active');
+        state.reviewSheet.fuel = c.dataset.fuel;
+      });
+    });
+    $$('.star').forEach(s => {
+      s.addEventListener('click', () => {
+        const r = parseInt(s.dataset.rating);
+        state.reviewSheet.rating = r;
+        $$('.star').forEach(x => {
+          const xr = parseInt(x.dataset.rating);
+          x.classList.toggle('active', xr <= r);
+        });
+        const hints = ['', 'Ужасно', 'Плохо', 'Нормально', 'Хорошо', 'Отлично!'];
+        dom.ratingHint.textContent = hints[r] || '';
+        haptic('medium');
+      });
+    });
+    dom.reviewComment.addEventListener('input', e => state.reviewSheet.comment = e.target.value);
+    $('#review-submit').addEventListener('click', submitReview);
+
+    // Sheet close
+    $$('[data-action="close-sheet"]').forEach(el => {
+      el.addEventListener('click', () => {
+        closeSheet('report-sheet');
+        closeSheet('review-sheet');
+      });
+    });
+
+    // City picker
+    dom.citySearch.addEventListener('input', () => renderCities(dom.citySearch.value));
+
+    // Profile actions
+    $('#btn-share').addEventListener('click', () => {
+      haptic('light');
+      const url = 'https://t.me/benzyn_ryadom';
+      if (tg?.openTelegramLink) tg.openTelegramLink(url);
+      else if (navigator.share) navigator.share({ title: 'Бензин рядом', url });
+      else {
+        navigator.clipboard?.writeText(url);
+        showToast('Ссылка скопирована', 'success');
+      }
+    });
+    $('#btn-donate').addEventListener('click', () => {
+      haptic('light');
+      if (tg?.openTelegramLink) tg.openTelegramLink('https://t.me/benzyn_ryadom?start=donate');
+      else showToast('Перейди в бота: t.me/benzyn_ryadom', 'info');
+    });
+    $('#btn-help').addEventListener('click', () => {
+      showToast('Бот: @benzyn_ryadom\nVK: vk.com/benzyn_ryadom', 'info');
+    });
+    $('#btn-premium').addEventListener('click', () => {
+      haptic('medium');
+      showToast('Premium пока в боте', 'info');
+    });
+  }
+
+  // ============= INIT =============
+  async function init() {
+    bindEvents();
+
+    // Load saved city
+    try {
+      const savedCity = localStorage.getItem('benzin_city');
+      if (savedCity) {
+        state.city = savedCity;
+        state.cityRegion = localStorage.getItem('benzin_region') || '';
+        dom.currentCity.textContent = savedCity;
+      } else {
+        dom.currentCity.textContent = 'Выбери город';
+      }
+    } catch (e) {
+      dom.currentCity.textContent = 'Выбери город';
+    }
+
+    // Try to get user location for city auto-detect
+    if (!state.city) {
+      // Don't ask for location automatically; wait for user action
+    }
+
+    // Wait for VK bridge if VK
+    if (platform.tg || platform.vk) {
+      // Already detected
+    }
+
+    // Load stations
+    if (state.city) {
+      loadStations();
+    } else {
+      // Show welcome state
+      dom.stationsList.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">⛽</div>
+          <div class="empty-title">Добро пожаловать!</div>
+          <div class="empty-subtitle">Выбери город чтобы увидеть АЗС</div>
+        </div>
+      `;
+    }
+  }
+
+  // Boot
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();
