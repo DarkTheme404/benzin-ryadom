@@ -1585,9 +1585,11 @@ async def find_stations_by_name(query: str, limit: int = 5, priority_city: str |
             city_order = f"CASE WHEN LOWER(s.city) LIKE ${city_idx} THEN 0 ELSE 1 END,"
             params.append(f"%{priority_city.lower()}%")
 
-        # Релевантность
-        first_idx = len(params) + 1
-        limit_idx = len(params) + 2
+        # Релевантность — используем первое слово
+        params.append(words[0])  # для $first_idx
+        first_idx = len(params)
+        params.append(limit)     # для $limit_idx
+        limit_idx = len(params)
         async with _db.acquire() as conn:
             rows = await conn.fetch(
                 f"""
@@ -1605,7 +1607,7 @@ async def find_stations_by_name(query: str, limit: int = 5, priority_city: str |
                     s.name
                 LIMIT ${limit_idx}
                 """,
-                *params, limit,
+                *params,
             )
         return [dict(r) for r in rows]
 
