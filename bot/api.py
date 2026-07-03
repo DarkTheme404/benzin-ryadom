@@ -1375,9 +1375,12 @@ async def handle_parse_benzin(request):
         parser_logger = logging.getLogger("benzin_status_tech")
         parser_logger.addHandler(log_handler)
         parser_logger.setLevel(logging.INFO)
+        parser_logger.propagate = False  # чтобы не дублировать в root
 
         os.environ["_API_MODE"] = "1"
+        parser_logger.info("=== НАЧАЛО: handler count=%d ===", len(parser_logger.handlers))
         count = await parse_benzin_status_tech.run([city])
+        parser_logger.info("=== КОНЕЦ: saved=%d ===", count)
         logs = log_stream.getvalue()
         parser_logger.removeHandler(log_handler)
         return web.json_response({"ok": True, "city": city, "saved": count, "logs": logs})
