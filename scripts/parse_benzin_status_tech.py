@@ -314,7 +314,7 @@ async def parse_city(session, city: str) -> int:
     saved = 0
     processed = 0
     matched = 0
-    for st in stations[:50]:  # лимит 50 на город
+    for st in stations[:30]:  # лимит 30 на город
         lat_st = st.get("lat")
         lng_st = st.get("lng")
         if not lat_st or not lng_st:
@@ -334,7 +334,7 @@ async def parse_city(session, city: str) -> int:
             saved += count
         except Exception as e:
             logger.debug("  station %s: %s", st.get("id"), e)
-        await asyncio.sleep(0.3)  # rate limit
+        await asyncio.sleep(0.15)  # rate limit
 
     logger.info("  processed: %d, matched: %d, сохранено: %d", processed, matched, saved)
     return saved
