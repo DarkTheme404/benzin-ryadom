@@ -1512,24 +1512,45 @@ async def add_subscription(
 
 
 async def find_stations_by_name(query: str, limit: int = 5, priority_city: str | None = None) -> list:
-    """Ищет АЗС по имени, оператору, городу или адресу (для /find без геолокации).
-    
+    """Ищет АЗС по имени, оператору, городу или адресу.
+
+    Разбивает запрос на слова. Каждое слово должно совпасть хотя бы с одним полем
+    (name, operator, city, address). Все слова должны совпасть одновременно (AND).
+
     priority_city: город пользователя — АЗС из этого города показываются первыми.
     """
+    words = [w.strip() for w in query.split() if w.strip()]
+    if not words:
+        return []
+
     if USE_SQLITE:
-        # py_lower() корректно работает с кириллицей (в отличие от LOWER()).
+        # Каждое слово — условие AND. Внутри слова — OR по полям.
+        word_conditions = []
+        word_params = []
+        for w in words:
+            like = f"%{w.lower()}%"
+            word_conditions.append(
+                "(py_lower(s.name) LIKE ? OR py_lower(s.operator) LIKE ?"
+                " OR py_lower(s.city) LIKE ? OR py_lower(s.address) LIKE ?)"
+            )
+            word_params.extend([like, like, like, like])
+
+        where_words = " AND ".join(word_conditions)
+
         city_priority_expr = ""
         city_priority_params = []
         if priority_city:
             city_priority_expr = "CASE WHEN py_lower(s.city) LIKE ? THEN 0 ELSE 1 END,"
             city_priority_params = [f"%{priority_city.lower()}%"]
 
+        # Релевантность: точное совпадение имени > оператора > адреса
+        # Берём первое слово для оценки релевантности
+        first_like = f"%{words[0].lower()}%"
         sql = f"""
             SELECT s.id, s.name, s.operator, s.city, s.address, s.lat, s.lon, s.is_verified
             FROM stations s
             WHERE s.is_active = 1
-              AND (py_lower(s.name) LIKE ? OR py_lower(s.operator) LIKE ?
-                   OR py_lower(s.city) LIKE ? OR py_lower(s.address) LIKE ?)
+              AND {where_words}
             ORDER BY
                 {city_priority_expr}
                 CASE WHEN py_lower(s.name) LIKE ? THEN 0
@@ -1540,39 +1561,51 @@ async def find_stations_by_name(query: str, limit: int = 5, priority_city: str |
                 s.name
             LIMIT ?
         """
-        like = f"%{query.lower()}%"
-        params = city_priority_params + [like, like, like, like, like, like, like, limit]
+        params = city_priority_params + word_params + [first_like, first_like, first_like, limit]
         async with _db.execute(sql, params) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
     else:
-        city_order = ""
-        city_params = []
-        if priority_city:
-            city_order = f"CASE WHEN LOWER(s.city) LIKE ${len(city_params) + 1} THEN 0 ELSE 1 END,"
-            city_params = [f"%{priority_city.lower()}%"]
+        # PostgreSQL: каждое слово — AND, внутри — ILIKE по полям
+        word_clauses = []
+        params = []
+        for w in words:
+            idx = len(params) + 1
+            word_clauses.append(
+                f"(s.name ILIKE ${idx} OR s.operator ILIKE ${idx}"
+                f" OR s.city ILIKE ${idx} OR s.address ILIKE ${idx})"
+            )
+            params.append(f"%{w}%")
 
-        p1 = len(city_params) + 1
-        p2 = len(city_params) + 2
+        where_words = " AND ".join(word_clauses)
+
+        city_order = ""
+        if priority_city:
+            city_idx = len(params) + 1
+            city_order = f"CASE WHEN LOWER(s.city) LIKE ${city_idx} THEN 0 ELSE 1 END,"
+            params.append(f"%{priority_city.lower()}%")
+
+        # Релевантность
+        first_idx = len(params) + 1
+        limit_idx = len(params) + 2
         async with _db.acquire() as conn:
             rows = await conn.fetch(
                 f"""
                 SELECT s.id, s.name, s.operator, s.city, s.address, s.lat, s.lon, s.is_verified
                 FROM stations s
                 WHERE s.is_active = TRUE
-                  AND (s.name ILIKE ${p1} OR s.operator ILIKE ${p1}
-                       OR s.city ILIKE ${p1} OR s.address ILIKE ${p1})
+                  AND {where_words}
                 ORDER BY
                     {city_order}
-                    CASE WHEN s.name ILIKE ${p1} THEN 0
-                         WHEN s.operator ILIKE ${p1} THEN 1
-                         WHEN s.address ILIKE ${p1} THEN 2
+                    CASE WHEN s.name ILIKE ${first_idx} THEN 0
+                         WHEN s.operator ILIKE ${first_idx} THEN 1
+                         WHEN s.address ILIKE ${first_idx} THEN 2
                          ELSE 3 END,
                     s.operator NULLS LAST,
                     s.name
-                LIMIT ${p2}
+                LIMIT ${limit_idx}
                 """,
-                f"%{query}%", limit, *city_params,
+                *params, limit,
             )
         return [dict(r) for r in rows]
 
