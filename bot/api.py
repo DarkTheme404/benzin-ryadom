@@ -1332,7 +1332,7 @@ def create_app() -> web.Application:
             return response
         # Serve static files under /app/ prefix (avoids conflicts with /miniapp/ route)
         app.router.add_static("/app/", miniapp_dir, append_version=False)
-        # /miniapp/ → index.html (the Telegram WebApp URL)
-        app.router.add_get("/miniapp", serve_index)
-        app.router.add_get("/miniapp/", serve_index)
+        # Routes
+        for path in ("/miniapp", "/miniapp/", "/m", "/m/"):
+            app.router.add_get(path, serve_index)
     return app
