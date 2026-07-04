@@ -142,8 +142,12 @@ async def _vk_send(peer_id: int, text: str, keyboard: str | None = None) -> dict
 
 
 async def _vk_send_event_answer(event_id: str, user_id: int, peer_id: int,
-                                 text: str = "", toast: str = "") -> None:
-    """Отвечает на message_event (callback) — обязательно в течение 5 сек."""
+                                 text: str = "", toast: str = "") -> bool:
+    """Отвечает на message_event (callback) — обязательно в течение 5 сек.
+
+    Возвращает True если успешно, False при ошибке.
+    НЕ выбрасывает исключение — просто логирует.
+    """
     params = {
         "event_id": event_id,
         "user_id": user_id,
@@ -153,7 +157,11 @@ async def _vk_send_event_answer(event_id: str, user_id: int, peer_id: int,
         params["text"] = text
     if toast:
         params["toast"] = toast
-    await _vk_api_call("messages.sendMessageEventAnswer", params)
+    result = await _vk_api_call("messages.sendMessageEventAnswer", params)
+    if "error" in result:
+        logger.warning("VK sendMessageEventAnswer error: %s | event_id=%r", result.get("error"), event_id)
+        return False
+    return True
 
 
 async def _vk_edit_message(peer_id: int, conversation_message_id: int, text: str,
@@ -690,10 +698,12 @@ async def process_message_event(event: dict) -> None:
     await _ensure_user(peer_id)
 
     # Сразу отвечаем (event_answer обязателен в течение 5 сек)
-    await _vk_send_event_answer(
+    # Если ответ не пройдёт — не страшно, главное отправить сообщение
+    ack_ok = await _vk_send_event_answer(
         event_id, user_id, peer_id,
         toast="⏳",
     )
+    logger.info("[vk-cb-evt] peer=%d action=%r ack_ok=%s", peer_id, action, ack_ok)
 
     # === Роутер по action ===
     if action == "home":
