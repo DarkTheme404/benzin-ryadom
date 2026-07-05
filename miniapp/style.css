@@ -527,6 +527,116 @@ img { max-width: 100%; display: block; }
 .route-name {
   flex: 1;
 }
+
+/* Route Sheet — bottom sheet overlay */
+.route-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.route-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.route-sheet-content {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  background: #1a1a24;
+  border-radius: 24px 24px 0 0;
+  padding: 20px 20px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: none;
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.5);
+  animation: slideUp 0.3s ease-out;
+}
+.route-sheet-handle {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  margin: 0 auto 16px;
+}
+.route-sheet-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 4px;
+}
+.route-sheet-subtitle {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-bottom: 16px;
+}
+
+.route-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 8px;
+}
+.route-nav-btn:active {
+  transform: scale(0.98);
+  background: rgba(255, 255, 255, 0.06);
+}
+.route-nav-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+.route-nav-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+.route-nav-info {
+  flex: 1;
+  min-width: 0;
+}
+.route-nav-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.route-nav-desc {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+}
+.route-nav-arrow {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+.route-sheet-cancel {
+  width: 100%;
+  padding: 12px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  margin-top: 4px;
+}
+.route-sheet-cancel:active {
+  color: rgba(255, 255, 255, 0.7);
+}
   background: var(--bg-card);
   color: var(--text-secondary);
   font-size: 13px;

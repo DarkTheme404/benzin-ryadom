@@ -549,14 +549,14 @@
     try {
       // Load full station data
       const detail = await api(`/api/stations/${s.id}`).catch(e => {
-        logger.error('station detail failed:', e);
+        console.error('station detail failed:', e);
         return { station: s, statuses: s.statuses || [] };
       });
       // Prices is optional, don't fail if it errors
       const pricesData = await api(`/api/stations/${s.id}/prices`).catch(() => null);
       renderStationDetail(detail, pricesData);
     } catch (e) {
-      logger.error('openStationDetail error:', e);
+      console.error('openStationDetail error:', e);
       showToast('Не удалось загрузить: ' + e.message, 'error');
       // Still try to render with what we have
       renderStationDetail({ station: s, statuses: s.statuses || [] }, null);
@@ -760,43 +760,70 @@
     const existing = document.getElementById('route-sheet');
     if (existing) existing.remove();
 
-    const yandexUrl = `yandexmaps://maps.yandex.ru/?pt=${lon},${lat}&z=15`;
-    const yandexWeb = `https://yandex.ru/maps/?pt=${lon},${lat}&z=15`;
-    const gmapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
-    const gis2Url = `https://2gis.ru/geo/${lon}/${lat}`;
+    // Route URLs — строят маршрут от текущего местоположения
+    const yandexRoute = `https://yandex.ru/maps/?rtext=${lat},${lon}&rtt=auto`;
+    const gmapsRoute = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving`;
+    const gis2Route = `https://2gis.ru/geo/${lon}/${lat}`;
+    const appleRoute = `https://maps.apple.com/?daddr=${lat},${lon}&dirflg=d`;
 
     const sheet = document.createElement('div');
     sheet.id = 'route-sheet';
-    sheet.className = 'price-filter-sheet';
+    sheet.className = 'route-sheet-overlay';
     sheet.innerHTML = `
-      <div class="sheet-header">
-        <span class="sheet-title">🗺️ Построить маршрут</span>
-        <button class="sheet-close" id="route-close">✕</button>
-      </div>
-      <div class="route-options">
-        <button class="route-option" data-url="${yandexUrl}" data-web="${yandexWeb}">
-          <span class="route-icon">🟦</span>
-          <span class="route-name">Яндекс Карты</span>
+      <div class="route-sheet-backdrop"></div>
+      <div class="route-sheet-content">
+        <div class="route-sheet-handle"></div>
+        <div class="route-sheet-title">Построить маршрут</div>
+        <div class="route-sheet-subtitle">Маршрут от тебя до ${escape(name || 'АЗС')}</div>
+
+        <button class="route-nav-btn" data-url="${yandexRoute}">
+          <div class="route-nav-icon" style="background:rgba(255,204,0,0.15);color:#ffcc00;">🗺</div>
+          <div class="route-nav-info">
+            <div class="route-nav-name" style="color:#ffcc00;">Яндекс Карты</div>
+            <div class="route-nav-desc">Навигатор</div>
+          </div>
+          <div class="route-nav-arrow">›</div>
         </button>
-        <button class="route-option" data-url="${gmapsUrl}">
-          <span class="route-icon">🟥</span>
-          <span class="route-name">Google Карты</span>
+
+        <button class="route-nav-btn" data-url="${gmapsRoute}">
+          <div class="route-nav-icon" style="background:rgba(66,133,244,0.15);color:#4285f4;">🌍</div>
+          <div class="route-nav-info">
+            <div class="route-nav-name" style="color:#4285f4;">Google Maps</div>
+            <div class="route-nav-desc">Навигатор</div>
+          </div>
+          <div class="route-nav-arrow">›</div>
         </button>
-        <button class="route-option" data-url="${gis2Url}">
-          <span class="route-icon">🟩</span>
-          <span class="route-name">2ГИС</span>
+
+        <button class="route-nav-btn" data-url="${gis2Route}">
+          <div class="route-nav-icon" style="background:rgba(244,67,54,0.15);color:#f44336;">📍</div>
+          <div class="route-nav-info">
+            <div class="route-nav-name" style="color:#f44336;">2ГИС</div>
+            <div class="route-nav-desc">Карты и навигатор</div>
+          </div>
+          <div class="route-nav-arrow">›</div>
         </button>
+
+        <button class="route-nav-btn" data-url="${appleRoute}">
+          <div class="route-nav-icon" style="background:rgba(52,199,89,0.15);color:#34c759;">🍎</div>
+          <div class="route-nav-info">
+            <div class="route-nav-name" style="color:#34c759;">Apple Maps</div>
+            <div class="route-nav-desc">Карты iPhone</div>
+          </div>
+          <div class="route-nav-arrow">›</div>
+        </button>
+
+        <button class="route-sheet-cancel" id="route-close">Отмена</button>
       </div>
     `;
     document.querySelector('.screen-station').appendChild(sheet);
 
     sheet.querySelector('#route-close').addEventListener('click', () => sheet.remove());
-    sheet.querySelectorAll('.route-option').forEach(btn => {
+    sheet.querySelector('.route-sheet-backdrop').addEventListener('click', () => sheet.remove());
+    sheet.querySelectorAll('.route-nav-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const url = btn.dataset.url;
-        const web = btn.dataset.web;
         if (tg?.openLink) {
-          tg.openLink(url).catch(() => { if (web) tg.openLink(web); });
+          tg.openLink(url);
         } else {
           window.open(url, '_blank');
         }
