@@ -2226,6 +2226,7 @@ async def report_start(callback: CallbackQuery):
 
 # === Парсинг сообщений от ботов-конкурентов ===
 async def handle_bot_message(message: Message):
+    """Перехват сообщений от других ботов (в группах, где есть наш бот)."""
     if not message.text or len(message.text) < 10:
         return
     if message.from_user.is_bot is False:
@@ -2244,24 +2245,36 @@ async def handle_bot_message(message: Message):
         logger.info(f"bot_competitor: {bot_username} → {len(prices)} цен (network={network}, city={city})")
         await get_or_create_user(message)
         uid = await get_user_id_by_telegram_id(_tg_id(message))
-        station_name = f"Bot: @{bot_username} ({network or '?'}/{city or '?'})"
-        stations_cache: dict = {}
-        rows = await _fetch("SELECT id, name FROM stations")
-        for r in rows:
-            stations_cache[r["name"].lower()] = r["id"]
-        if station_name.lower() in stations_cache:
-            station_id = stations_cache[station_name.lower()]
-        else:
-            new_id = await _execute(
-                """INSERT INTO stations (name, lat, lon, city, region, operator, is_active, created_at)
-                   VALUES (?, 0, 0, ?, '', ?, TRUE, datetime('now'))""",
-                station_name, city or "", network or "",
-                returning=True,
+
+        # Ищем существующую АЗС по сети+городу
+        station_id = None
+        if network and city:
+            rows = await _fetch(
+                "SELECT id FROM stations WHERE LOWER(operator) LIKE ? AND LOWER(city) LIKE ? LIMIT 1",
+                f"%{network.lower()}%", f"%{city.lower()}%",
             )
-            if new_id:
-                station_id = new_id
+            if rows:
+                station_id = rows[0]["id"]
+
+        # Fallback: создаём запись-заглушку
+        if not station_id:
+            station_name = f"Bot: @{bot_username} ({network or '?'}/{city or '?'})"
+            rows = await _fetch("SELECT id FROM stations WHERE name = ? LIMIT 1", station_name)
+            if rows:
+                station_id = rows[0]["id"]
             else:
-                return
+                new_id = await _execute(
+                    """INSERT INTO stations (name, lat, lon, city, region, operator, is_active, created_at)
+                       VALUES (?, 0, 0, ?, '', ?, TRUE, datetime('now'))""",
+                    station_name, city or "", network or "",
+                    returning=True,
+                )
+                if new_id:
+                    station_id = new_id
+
+        if not station_id:
+            return
+
         for fuel, price in prices.items():
             await add_report(
                 station_id=station_id,
@@ -2274,6 +2287,76 @@ async def handle_bot_message(message: Message):
             )
     except Exception as e:
         logger.warning(f"handle_bot_message: {e}")
+
+
+# === Парсинг пересланных сообщений от ботов-конкурентов ===
+async def handle_forwarded_bot_message(message: Message):
+    """Перехват пересланных сообщений от других ботов (пользователи пересылают нам ответы)."""
+    if not message.text or len(message.text) < 10:
+        return
+    # Проверяем что сообщение переслано от бота
+    fwd = message.forward_origin
+    if fwd is None:
+        return
+    fwd_sender = getattr(fwd, "sender_user_name", None) or getattr(fwd, "sender_user_id", None)
+    if not fwd_sender:
+        return
+    # Проверяем что это бот (по username или контексту)
+    text = message.text
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+    try:
+        from price_parser import parse_prices, detect_network, detect_city, detect_availability
+        prices = parse_prices(text)
+        if not prices:
+            return
+        network = detect_network(text)
+        city = detect_city(text)
+        available = detect_availability(text)
+        logger.info(f"forwarded_bot: {fwd_sender} → {len(prices)} цен (network={network}, city={city})")
+        await get_or_create_user(message)
+        uid = await get_user_id_by_telegram_id(_tg_id(message))
+
+        # Ищем существующую АЗС по сети+городу
+        station_id = None
+        if network and city:
+            rows = await _fetch(
+                "SELECT id FROM stations WHERE LOWER(operator) LIKE ? AND LOWER(city) LIKE ? LIMIT 1",
+                f"%{network.lower()}%", f"%{city.lower()}%",
+            )
+            if rows:
+                station_id = rows[0]["id"]
+
+        if not station_id:
+            station_name = f"Forward: {fwd_sender} ({network or '?'}/{city or '?'})"
+            rows = await _fetch("SELECT id FROM stations WHERE name = ? LIMIT 1", station_name)
+            if rows:
+                station_id = rows[0]["id"]
+            else:
+                new_id = await _execute(
+                    """INSERT INTO stations (name, lat, lon, city, region, operator, is_active, created_at)
+                       VALUES (?, 0, 0, ?, '', ?, TRUE, datetime('now'))""",
+                    station_name, city or "", network or "",
+                    returning=True,
+                )
+                if new_id:
+                    station_id = new_id
+
+        if not station_id:
+            return
+
+        for fuel, price in prices.items():
+            await add_report(
+                station_id=station_id,
+                user_id=uid,
+                fuel_type=fuel,
+                available=available,
+                price=price,
+                source="bot_competitor_forwarded",
+                comment=f"forwarded from {fwd_sender}: {text[:100]}",
+            )
+    except Exception as e:
+        logger.warning(f"handle_forwarded_bot_message: {e}")
 
 
 async def report_fuel(callback: CallbackQuery):
@@ -2689,6 +2772,7 @@ def register_all_handlers(dp: Dispatcher):
 
     # Парсинг сообщений от ботов-конкурентов
     dp.message.register(handle_bot_message, F.from_user.is_bot)
+    dp.message.register(handle_forwarded_bot_message, F.forward_origin)
 
     # Mini App data
     dp.message.register(handle_web_app_data, F.web_app_data)
