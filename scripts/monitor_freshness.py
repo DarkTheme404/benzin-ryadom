@@ -50,8 +50,8 @@ async def check_source_freshness() -> list[dict]:
         SELECT source,
                COUNT(*) as total,
                MAX(created_at) as last_update,
-               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour') as h1,
-               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as h24
+               SUM(CASE WHEN created_at > NOW() - INTERVAL '1 hour' THEN 1 ELSE 0 END) as h1,
+               SUM(CASE WHEN created_at > NOW() - INTERVAL '24 hours' THEN 1 ELSE 0 END) as h24
         FROM reports
         GROUP BY source
     """)

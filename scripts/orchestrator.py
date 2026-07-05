@@ -58,6 +58,11 @@ parse_max = _safe_import("parse_max")
 parse_yandex_maps = _safe_import("parse_yandex_maps_playwright")
 parse_ishubenzin = _safe_import("parse_ishubenzin")
 enrich_addresses = _safe_import("enrich_addresses")
+parse_all_available = _safe_import("parse_all_available")
+parse_quick = _safe_import("parse_quick")
+parse_fuel_quality = _safe_import("parse_fuel_quality")
+parse_queue_data = _safe_import("parse_queue_data")
+parse_fuel_limits = _safe_import("parse_fuel_limits")
 
 
 # Топ-12 городов России по населению
@@ -132,7 +137,7 @@ async def parse_tg_runner():
         return {}
     if parse_tg_channels:
         try:
-            sys.argv = ["parse_tg_channels.py"]
+            sys.argv = ["parse_tg_channels.py", "--discover"]
             await parse_tg_channels.main()
         except SystemExit:
             pass
@@ -292,13 +297,43 @@ SOURCES = {
     "enrich": {
         "name": "Обогащение адресов (Photon)",
         "function": enrich_runner,
-        "interval_hours": 6,
+        "interval_hours": 24,
         "enabled": True,
     },
     "ishubenzin": {
-        "name": "ishubenzin.ru (народная карта, без ключа)",
+        "name": "ishubenzin.ru (народная карта топлива)",
         "function": parse_ishubenzin_runner,
-        "interval_hours": 4,
+        "interval_hours": 6,
+        "enabled": True,
+    },
+    "all_available": {
+        "name": "Все доступные источники (погода, новости, Drom, RIA)",
+        "function": lambda: parse_all_available.main() if parse_all_available else asyncio.sleep(0),
+        "interval_hours": 1,
+        "enabled": True,
+    },
+    "quick": {
+        "name": "Быстрый парсер (2GIS, Drom, weather, news)",
+        "function": lambda: parse_quick.main() if parse_quick else asyncio.sleep(0),
+        "interval_hours": 1,
+        "enabled": True,
+    },
+    "quality": {
+        "name": "Качество топлива (Ростехнадзор, Росстандарт)",
+        "function": lambda: parse_fuel_quality.main() if parse_fuel_quality else asyncio.sleep(0),
+        "interval_hours": 6,
+        "enabled": True,
+    },
+    "queues": {
+        "name": "Данные об очередях (прогнозы, тренды)",
+        "function": lambda: parse_queue_data.main() if parse_queue_data else asyncio.sleep(0),
+        "interval_hours": 1,
+        "enabled": True,
+    },
+    "limits": {
+        "name": "Данные о лимитах (Минэнерго, Роспотребнадзор)",
+        "function": lambda: parse_fuel_limits.main() if parse_fuel_limits else asyncio.sleep(0),
+        "interval_hours": 6,
         "enabled": True,
     },
 }

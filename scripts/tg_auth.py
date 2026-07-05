@@ -30,7 +30,7 @@ async def main():
         print("export TG_API_HASH='...'")
         return 1
 
-    session_path = "tg_session"
+    session_path = os.path.join(os.path.dirname(__file__), "..", "tg_session")
     print("=== Telegram авторизация ===")
     print(f"API ID: {api_id[:2]}***{api_id[-2:]}")
     print(f"API Hash: {api_hash[:4]}...{api_hash[-4:]}")

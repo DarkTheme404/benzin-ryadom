@@ -24,8 +24,8 @@ fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Starting TG parser..."
 
-# Run TG parser
-python scripts/parse_tg_channels.py 2>&1
+# Run TG parser with auto-discovery of private chats
+python scripts/parse_tg_channels.py --discover 2>&1
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') TG parser finished"
 

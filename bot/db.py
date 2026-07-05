@@ -120,6 +120,37 @@ async def _migrate_sqlite(db):
     if "next_delivery_at" not in cols:
         await db.execute("ALTER TABLE reports ADD COLUMN next_delivery_at TEXT")
 
+    # Миграция: расширенные поля reports
+    new_report_cols = [
+        ("octane_rating", "REAL"),
+        ("cetane_number", "REAL"),
+        ("additives", "TEXT"),
+        ("quality_score", "REAL"),
+        ("fuel_standard", "TEXT"),
+        ("certification", "TEXT"),
+        ("queue_wait_minutes", "INTEGER"),
+        ("queue_trend", "TEXT"),
+        ("limit_per_visit", "INTEGER"),
+        ("limit_daily", "INTEGER"),
+        ("limit_weekly", "INTEGER"),
+        ("review_text", "TEXT"),
+        ("rating", "REAL"),
+        ("photos_count", "INTEGER"),
+        ("has_car_wash", "INTEGER"),
+        ("has_shop", "INTEGER"),
+        ("has_restaurant", "INTEGER"),
+        ("has_atm", "INTEGER"),
+        ("has_parking", "INTEGER"),
+        ("has_ev_charging", "INTEGER"),
+        ("accessibility", "TEXT"),
+        ("opening_hours", "TEXT"),
+        ("phone", "TEXT"),
+        ("website", "TEXT"),
+    ]
+    for col_name, col_type in new_report_cols:
+        if col_name not in cols:
+            await db.execute(f"ALTER TABLE reports ADD COLUMN {col_name} {col_type}")
+
     # Миграция: owner_stations — платное размещение
     async with db.execute("PRAGMA table_info(owner_stations)") as cur:
         cols = {row[1] for row in await cur.fetchall()}
@@ -382,9 +413,14 @@ async def get_connection():
 
 # === Универсальные хелперы ===
 def _sqlite_sql(sql: str) -> str:
-    """Конвертирует PG-style $1, $2, ... → SQLite-style ? для совместимости."""
+    """Конвертирует PG-style → SQLite-style для совместимости."""
     import re
-    return re.sub(r"\$\d+", "?", sql)
+    sql = re.sub(r"\$\d+", "?", sql)
+    # NOW() → datetime('now')
+    sql = sql.replace("NOW()", "datetime('now')")
+    # INTERVAL 'N hours' → '-N hours'
+    sql = re.sub(r"INTERVAL\s+'(\d+)\s+(\w+)'", r"'-\1 \2'", sql)
+    return sql
 
 
 async def _fetch(sql: str, *args, one: bool = False):
@@ -1392,15 +1428,63 @@ async def add_report(
     comment: str | None = None,
     source: str = "user",
     next_delivery_at: datetime | None = None,
+    octane_rating: float | None = None,
+    cetane_number: float | None = None,
+    additives: str | None = None,
+    quality_score: float | None = None,
+    queue_wait_minutes: int | None = None,
+    queue_trend: str | None = None,
+    limit_per_visit: int | None = None,
+    limit_daily: int | None = None,
+    limit_weekly: int | None = None,
+    fuel_standard: str | None = None,
+    certification: str | None = None,
+    review_text: str | None = None,
+    rating: float | None = None,
+    photos_count: int | None = None,
+    has_car_wash: bool | None = None,
+    has_shop: bool | None = None,
+    has_restaurant: bool | None = None,
+    has_atm: bool | None = None,
+    has_parking: bool | None = None,
+    has_ev_charging: bool | None = None,
+    accessibility: str | None = None,
+    opening_hours: str | None = None,
+    phone: str | None = None,
+    website: str | None = None,
 ) -> int:
     """Добавляет отчёт о наличии топлива.
 
     available: True / False / None (None = "кончается").
     next_delivery_at: прогноз следующего завоза (если известен, None если нет).
+    octane_rating: октановое число (92, 95, 98, 100)
+    cetane_number: цетановое число для дизеля (40-60)
+    additives: добавки (метилтретбутиловый эфир и т.д.)
+    quality_score: оценка качества 0-10
+    queue_wait_minutes: время ожидания в очереди (минуты)
+    queue_trend: тренд очереди (growing/shrinking/stable)
+    limit_per_visit: лимит на одну заправку (литры)
+    limit_daily: дневной лимит (литры)
+    limit_weekly: недельный лимит (литры)
+    fuel_standard: стандарт топлива (ТУ, ГОСТ, Евро-5)
+    certification: сертификат качества
+    review_text: текст отзыва
+    rating: оценка 0-5
+    photos_count: количество фото
+    has_car_wash: автомойка
+    has_shop: магазин
+    has_restaurant: кафе/ресторан
+    has_atm: банкомат
+    has_parking: парковка
+    has_ev_charging: зарядка для ЭТС
+    accessibility: доступность (пандус, широкие проезды)
+    opening_hours: часы работы
+    phone: телефон
+    website: сайт
     В SQLite available NOT NULL, поэтому None хранится как 2.
     Также инкрементит users.total_reports и last_active_at.
     """
-    expires_at_dt = datetime.now() + timedelta(hours=2)
+    expires_at_dt = datetime.now() + timedelta(hours=1)
     if USE_SQLITE:
         expires_at = expires_at_dt.isoformat()
         next_delivery_iso = next_delivery_at.isoformat() if next_delivery_at else None
@@ -1421,10 +1505,24 @@ async def add_report(
         async with _db.execute(
             """INSERT INTO reports (
                 station_id, user_id, fuel_type, available, price,
-                queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_at,
+                octane_rating, cetane_number, additives, quality_score,
+                queue_wait_minutes, queue_trend,
+                limit_per_visit, limit_daily, limit_weekly,
+                fuel_standard, certification, review_text, rating, photos_count,
+                has_car_wash, has_shop, has_restaurant, has_atm, has_parking, has_ev_charging,
+                accessibility, opening_hours, phone, website
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (station_id, user_id, fuel_type, avail_int, price,
-             queue_size, has_limit_int, limit_liters, comment, source, expires_at, next_delivery_iso),
+             queue_size, has_limit_int, limit_liters, comment, source, expires_at, next_delivery_iso,
+             octane_rating, cetane_number, additives, quality_score,
+             queue_wait_minutes, queue_trend,
+             limit_per_visit, limit_daily, limit_weekly,
+             fuel_standard, certification, review_text, rating, photos_count,
+             has_car_wash, has_shop, has_restaurant, has_atm, has_parking, has_ev_charging,
+             accessibility, opening_hours, phone, website),
         ) as cur:
             report_id = cur.lastrowid
         if user_id:
@@ -1440,12 +1538,26 @@ async def add_report(
                 """
                 INSERT INTO reports (
                     station_id, user_id, fuel_type, available, price,
-                    queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_at,
+                    octane_rating, cetane_number, additives, quality_score,
+                    queue_wait_minutes, queue_trend,
+                    limit_per_visit, limit_daily, limit_weekly,
+                    fuel_standard, certification, review_text, rating, photos_count,
+                    has_car_wash, has_shop, has_restaurant, has_atm, has_parking, has_ev_charging,
+                    accessibility, opening_hours, phone, website
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                          $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
+                          $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
                 RETURNING id
                 """,
                 station_id, user_id, fuel_type, available, price,
                 queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_iso,
+                octane_rating, cetane_number, additives, quality_score,
+                queue_wait_minutes, queue_trend,
+                limit_per_visit, limit_daily, limit_weekly,
+                fuel_standard, certification, review_text, rating, photos_count,
+                has_car_wash, has_shop, has_restaurant, has_atm, has_parking, has_ev_charging,
+                accessibility, opening_hours, phone, website,
             )
             if user_id:
                 await conn.execute(
@@ -1455,7 +1567,7 @@ async def add_report(
             return row["id"]
 
 
-async def stale_old_reports(source: str, older_than_hours: int = 2) -> int:
+async def stale_old_reports(source: str, older_than_hours: int = 1) -> int:
     """Удаляет старые отчёты от конкретного источника.
     
     Вызывается перед началом нового цикла парсинга, чтобы станции,
@@ -1969,22 +2081,124 @@ async def log_event(user_id: int | None, event_type: str, payload: dict | None =
 # === Приоритизация источников ===
 # Чем выше priority, тем больше доверия к источнику.
 # При конфликте цен берётся источник с max(priority × confidence).
+# НОВОЕ: recency_bonus — доп. балл за свежесть (< 1ч = +0.15, < 4ч = +0.10, < 12ч = +0.05)
 SOURCE_PRIORITY = {
+    # === НАЛИЧИЕ (самые точные для наличия) ===
     "user":                1.00,  # отчёт водителя на АЗС — самый доверенный
     "owner":               1.00,  # владелец АЗС
-    "telegram":            0.85,  # Telegram-каналы с ценами (бензин_price и т.д.)
-    "benzin_status_tech":  0.85,  # benzin-status.tech Mini App API (crowdsourced)
-    "benzin_status_bot":   0.80,  # интерактивный бот @benzin_status_bot
-    "yandex":              0.80,  # Яндекс.Заправки (официальный API)
-    "lukoil":              0.75,  # сайт сети (точные цены своей сети)
+    "benzin_status_tech":  0.95,  # crowdsourced наличие (мини-аппа)
+    "benzin_status_bot":   0.90,  # интерактивный бот
+    "gdebenzru":           0.88,  # ГдеБЕНЗ карта наличия (27K+ АЗС)
+    "agdebenzinmlt":       0.85,  # А где бензин? (9.5K подписчиков)
+    "rusfuel":             0.82,  # АЗС России
+    # === РЕГИОНАЛЬНЫЕ ЧАТЫ НАЛИЧИЯ (очень точные!) ===
+    "gde_zalit":           0.87,  # Все "Где залить?" чаты (краудсорсинг)
+    "benzin_kholod":       0.84,  # Все "Бензин холодный" чаты
+    "benzin_est_chat":     0.86,  # Бензин есть чат
+    "toplivo_est_chat":    0.86,  # Топливо есть чат
+    "azs_status_chat":     0.85,  # Статус АЗС чат
+    "fuel_alert_chat":     0.84,  # Топливные оповещения чат
+    "benzin_check_chat":   0.83,  # Проверка бензина чат
+    "gde_benz_chat":       0.85,  # Где бензин чат
+    # === ТЕЛЕГРАМ (наличие + цены) ===
+    "tg":                  0.80,  # Telegram-каналы (общий)
+    # === ОБЩЕРОССИЙСКИЕ КАНАЛЫ ===
+    "benzin_price":        0.80,  # Ежедневные цены
+    "benzup_ru":           0.78,  # BenzUp.ru
+    "fuelprice_ru":        0.77,  # FuelPrice.ru
+    "azs_prices_omt_bot":  0.76,  # OMT (18K+ АЗС)
+    "benzoopt":            0.75,  # Биржевые цены
+    "Neftexpert":          0.74,  # Нефтяной рынок
+    # === ВНЕШНИЕ API ===
+    "benzin_status_tech":  0.95,  # benzin-status.tech
+    "yandex":              0.80,  # Яндекс.Заправки
+    # === ОФИЦИАЛЬНЫЕ СЕТИ АЗС ===
+    "toplivo_rosneft":     0.73,  # Роснефть
+    "toplivo_lukoil":      0.73,  # Лукойл
+    "toplivo_gpn":         0.73,  # Газпромнефть
+    "azstatneft":          0.72,  # Татнефть
+    "azs_bashneft":        0.72,  # Башнефть
+    "azs_surgut":          0.71,  # Сургутнефтегаз
+    "azs_taif":            0.71,  # ТАИФ
+    "azs_tneft":           0.71,  # Тнефтепродукт
+    "azs_neftmagistral":   0.70,  # Нефтьмагистраль
+    # === ОСТАЛЬНЫЕ ===
+    "okolo_AZS":           0.60,
+    "toplivo_gsm_ru":      0.60,
+    "toplivo_chat":        0.60,
+    "azsdiller":           0.60,
+    "azs_price":           0.60,
+    "russiabase_ru":       0.60,
+    "gde_benz_rf":         0.60,
+    "toplivo_rf":          0.60,
+    "toplivo_poisk":       0.60,
+    "pro_zapravki":        0.60,
+    "benzinmap":           0.60,
+    "mapfuel":             0.60,
+    "toplivo_online":      0.60,
+    "benzinru":            0.60,
+    "fuel_monitoring":     0.60,
+    "gas_station_prices":  0.60,
+    "shopot_nefti":        0.55,
+    "benzinstatus":        0.55,
+    "lukoil":              0.75,  # сайт сети
     "gazprom":             0.75,
     "rosneft":             0.75,
     "tatneft":             0.75,
     "bashneft":            0.75,
-    "2gis":                0.65,  # 2ГИС (если платный)
+    "2gis":                0.65,  # 2ГИС
     "osm":                 0.30,  # OSM (нет цен, только мета)
     "default":             0.50,
 }
+
+# Бонус за свежесть: чем свежее, тем выше приоритет
+RECENCY_BONUS = [
+    (1,   0.15),  # < 1 часа:  +0.15
+    (4,   0.10),  # < 4 часов: +0.10
+    (12,  0.05),  # < 12 часов: +0.05
+    (24,  0.00),  # < 24 часов: без бонуса
+    (999, -0.10), # > 24 часов: штраф -0.10
+]
+
+
+def get_source_priority(source: str) -> float:
+    return SOURCE_PRIORITY.get(source, SOURCE_PRIORITY["default"])
+
+
+def get_recency_bonus(age_hours: float) -> float:
+    """Бонус за свежесть данных: чем свежее, тем выше."""
+    for max_hours, bonus in RECENCY_BONUS:
+        if age_hours < max_hours:
+            return bonus
+    return -0.10
+
+
+# === Confidence модель ===
+# Чем больше подтверждений и свежее данные — тем выше уверенность.
+def calculate_confidence(
+    source: str,
+    age_hours: float,
+    agreement_count: int = 1,
+    base_confidence: float = 0.7,
+) -> float:
+    """Рассчитывает confidence (0..1) для отчёта.
+
+    source: источник данных
+    age_hours: сколько часов назад
+    agreement_count: сколько других источников согласны с этой ценой
+    base_confidence: базовая уверенность источника
+
+    Улучшено: добавлен recency_bonus за свежесть данных.
+    """
+    # Свежесть: экспоненциальный спад
+    freshness = max(0.1, 1.0 - (age_hours / 24.0) ** 0.5)
+    # Бонус за свежесть (отдельно от freshness decay)
+    recency = get_recency_bonus(age_hours)
+    # Согласие: +0.2 за каждый согласный источник
+    agreement = min(0.4, agreement_count * 0.2)
+    # Базовый confidence от источника
+    base = base_confidence * get_source_priority(source)
+    return min(1.0, base * freshness + agreement + recency)
 
 
 def get_source_priority(source: str) -> float:

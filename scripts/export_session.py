@@ -5,7 +5,7 @@ import sys
 
 TG_API_ID = os.getenv("TG_API_ID", "")
 TG_API_HASH = os.getenv("TG_API_HASH", "")
-SESSION_PATH = os.path.join(os.path.dirname(__file__), "session")
+SESSION_PATH = os.path.join(os.path.dirname(__file__), "..", "tg_session")
 
 
 def main():

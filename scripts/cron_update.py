@@ -1,11 +1,17 @@
 """
-Cron Job для Render — обновление цен каждые 6 часов.
+Cron Job для Render — обновление ВСЕХ данных каждые 6 часов.
 
 Использует все доступные парсеры:
 - fuelprice.ru (главный источник, 60+ городов)
-- 2ГИС (если есть ключ)
-- azsprice.ru (Москва + Подмосковье)
-- benzin-price.ru (если есть Playwright)
+- parse_availability.py (gdebenz.ru + fuelprice.ru + benzup.ru)
+- parse_tg_channels.py (304 TG каналов + приватные чаты)
+- parse_vk_groups.py (557 VK групп)
+- parse_all_sources.py (все источники: качество, очереди, лимиты)
+- parse_fuel_quality.py (качество топлива)
+- parse_queue_data.py (данные об очередях)
+- parse_fuel_limits.py (данные о лимитах)
+- parse_official_networks.py (18+ официальных сетей АЗС)
+- benzin-status.tech (если доступен)
 
 Шлёт в TG отчёт админу.
 
@@ -108,6 +114,292 @@ async def run_fuelprice_for_all_cities() -> dict:
     return results
 
 
+async def run_availability_parsers() -> dict:
+    """Запускает парсеры наличия (gdebenz.ru + fuelprice.ru + benzup.ru)."""
+    print(f"\n=== Availability Parsers ===")
+    results = {"gdebenz": 0, "fuelprice": 0, "benzup": 0, "errors": 0}
+
+    # Запускаем parse_availability.py
+    try:
+        import subprocess
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "parse_availability.py"),
+            "--all",
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        output = result.stdout + result.stderr
+        for line in output.split("\n"):
+            if "gdebenz" in line.lower() and "found" in line.lower():
+                try:
+                    num = int(line.split("found")[-1].strip().split()[0])
+                    results["gdebenz"] += num
+                except (ValueError, IndexError):
+                    pass
+            elif "fuelprice" in line.lower() and "found" in line.lower():
+                try:
+                    num = int(line.split("found")[-1].strip().split()[0])
+                    results["fuelprice"] += num
+                except (ValueError, IndexError):
+                    pass
+            elif "benzup" in line.lower() and "found" in line.lower():
+                try:
+                    num = int(line.split("found")[-1].strip().split()[0])
+                    results["benzup"] += num
+                except (ValueError, IndexError):
+                    pass
+            elif "error" in line.lower():
+                results["errors"] += 1
+    except subprocess.TimeoutExpired:
+        print("  ⏱ Availability parsers: timeout")
+        results["errors"] += 1
+    except Exception as e:
+        print(f"  ❌ Availability parsers: {e}")
+        results["errors"] += 1
+
+    return results
+
+
+async def run_tg_parser() -> dict:
+    """Запускает TG парсер каналов."""
+    print(f"\n=== TG Channels Parser ===")
+    results = {"saved": 0, "channels_found": 0, "errors": 0}
+
+    try:
+        import subprocess
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "parse_tg_channels.py"),
+            "--discover",
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        output = result.stdout + result.stderr
+        for line in output.split("\n"):
+            if "total tg reports saved" in line.lower():
+                try:
+                    num = int(line.split(":")[-1].strip())
+                    results["saved"] = num
+                except (ValueError, IndexError):
+                    pass
+            elif "scanning channel" in line.lower():
+                results["channels_found"] += 1
+            elif "error" in line.lower() or "cannot find channel" in line.lower():
+                results["errors"] += 1
+    except subprocess.TimeoutExpired:
+        print("  ⏱ TG parser: timeout")
+        results["errors"] += 1
+    except Exception as e:
+        print(f"  ❌ TG parser: {e}")
+        results["errors"] += 1
+
+    return results
+
+
+async def run_vk_parser() -> dict:
+    """Запускает VK парсер групп."""
+    print(f"\n=== VK Groups Parser ===")
+    results = {"saved": 0, "groups_found": 0, "errors": 0}
+
+    try:
+        import subprocess
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "parse_vk_groups.py"),
+            "--all",
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        output = result.stdout + result.stderr
+        for line in output.split("\n"):
+            if "vk:" in line.lower() and "saved" in line.lower():
+                try:
+                    num = int(line.split("saved")[-1].strip().split()[0])
+                    results["saved"] = num
+                except (ValueError, IndexError):
+                    pass
+            elif "vk city:" in line.lower():
+                results["groups_found"] += 1
+            elif "error" in line.lower():
+                results["errors"] += 1
+    except subprocess.TimeoutExpired:
+        print("  ⏱ VK parser: timeout")
+        results["errors"] += 1
+    except Exception as e:
+        print(f"  ❌ VK parser: {e}")
+        results["errors"] += 1
+
+    return results
+
+
+async def run_all_sources_parser() -> dict:
+    """Запускает парсер всех источников (качество, очереди, лимиты)."""
+    print(f"\n=== All Sources Parser ===")
+    results = {"quality": 0, "queues": 0, "limits": 0, "errors": 0}
+
+    try:
+        import subprocess
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "parse_all_sources.py"),
+            "--all-cities",
+            "--source", "everything",
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        output = result.stdout + result.stderr
+        for line in output.split("\n"):
+            if "total saved:" in line.lower():
+                try:
+                    num = int(line.split(":")[-1].strip())
+                    results["quality"] = num
+                    results["queues"] = num
+                    results["limits"] = num
+                except (ValueError, IndexError):
+                    pass
+            elif "error" in line.lower():
+                results["errors"] += 1
+    except subprocess.TimeoutExpired:
+        print("  ⏱ All sources parser: timeout")
+        results["errors"] += 1
+    except Exception as e:
+        print(f"  ❌ All sources parser: {e}")
+        results["errors"] += 1
+
+    return results
+
+
+async def run_fuel_quality_parser() -> dict:
+    """Запускает парсер качества топлива."""
+    print(f"\n=== Fuel Quality Parser ===")
+    results = {"saved": 0, "errors": 0}
+
+    try:
+        import subprocess
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "parse_fuel_quality.py"),
+            "--all-cities",
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        output = result.stdout + result.stderr
+        for line in output.split("\n"):
+            if "total quality reports saved:" in line.lower():
+                try:
+                    num = int(line.split(":")[-1].strip())
+                    results["saved"] = num
+                except (ValueError, IndexError):
+                    pass
+            elif "error" in line.lower():
+                results["errors"] += 1
+    except subprocess.TimeoutExpired:
+        print("  ⏱ Fuel quality parser: timeout")
+        results["errors"] += 1
+    except Exception as e:
+        print(f"  ❌ Fuel quality parser: {e}")
+        results["errors"] += 1
+
+    return results
+
+
+async def run_queue_parser() -> dict:
+    """Запускает парсер данных об очередях."""
+    print(f"\n=== Queue Data Parser ===")
+    results = {"saved": 0, "errors": 0}
+
+    try:
+        import subprocess
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "parse_queue_data.py"),
+            "--all-cities",
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        output = result.stdout + result.stderr
+        for line in output.split("\n"):
+            if "total queue reports saved:" in line.lower():
+                try:
+                    num = int(line.split(":")[-1].strip())
+                    results["saved"] = num
+                except (ValueError, IndexError):
+                    pass
+            elif "error" in line.lower():
+                results["errors"] += 1
+    except subprocess.TimeoutExpired:
+        print("  ⏱ Queue parser: timeout")
+        results["errors"] += 1
+    except Exception as e:
+        print(f"  ❌ Queue parser: {e}")
+        results["errors"] += 1
+
+    return results
+
+
+async def run_limits_parser() -> dict:
+    """Запускает парсер данных о лимитах."""
+    print(f"\n=== Fuel Limits Parser ===")
+    results = {"saved": 0, "errors": 0}
+
+    try:
+        import subprocess
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "parse_fuel_limits.py"),
+            "--all-cities",
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        output = result.stdout + result.stderr
+        for line in output.split("\n"):
+            if "total limit reports saved:" in line.lower():
+                try:
+                    num = int(line.split(":")[-1].strip())
+                    results["saved"] = num
+                except (ValueError, IndexError):
+                    pass
+            elif "error" in line.lower():
+                results["errors"] += 1
+    except subprocess.TimeoutExpired:
+        print("  ⏱ Limits parser: timeout")
+        results["errors"] += 1
+    except Exception as e:
+        print(f"  ❌ Limits parser: {e}")
+        results["errors"] += 1
+
+    return results
+
+
 async def main():
     start_time = time.time()
     print("=" * 60)
@@ -118,7 +410,14 @@ async def main():
     await db.init_db()
 
     # === Запуск парсеров ===
-    results = await run_fuelprice_for_all_cities()
+    fuelprice_results = await run_fuelprice_for_all_cities()
+    availability_results = await run_availability_parsers()
+    tg_results = await run_tg_parser()
+    vk_results = await run_vk_parser()
+    all_sources_results = await run_all_sources_parser()
+    quality_results = await run_fuel_quality_parser()
+    queue_results = await run_queue_parser()
+    limits_results = await run_limits_parser()
 
     elapsed = time.time() - start_time
 
@@ -129,7 +428,7 @@ async def main():
         WHERE created_at > NOW() - INTERVAL '24 hours'
         GROUP BY source
         ORDER BY cnt DESC
-    """, one=False)
+    """)
 
     total_recent = sum(s["cnt"] for s in stats)
 
@@ -137,18 +436,29 @@ async def main():
     report = (
         f"⛽ <b>Cron Update отчёт</b>\n\n"
         f"⏱ Время: {elapsed:.0f} сек\n"
-        f"📊 Обновлено за 24ч: <b>{total_recent}</b> цен\n\n"
-        f"<b>Источники:</b>\n"
+        f"📊 Обновлено за 24ч: <b>{total_recent}</b> отчётов\n\n"
+        f"<b>Источники (24ч):</b>\n"
     )
     for s in stats:
         report += f"  • {s['source']}: {s['cnt']}\n"
 
-    report += f"\n<b>Этот запуск (fuelprice.ru):</b>\n"
-    report += f"  ✓ Матчей: {results['matched']}\n"
-    report += f"  ✓ Новых АЗС: {results['created']}\n"
-    report += f"  ✓ Цен сохранено: {results['saved']}\n"
-    if results["errors"]:
-        report += f"  ⚠ Ошибок: {results['errors']}\n"
+    report += f"\n<b>Этот запуск:</b>\n"
+    report += f"  📈 fuelprice.ru: {fuelprice_results['saved']} цен\n"
+    report += f"  🗺 Availability: GdeBenz={availability_results['gdebenz']}, "
+    report += f"FuelPrice={availability_results['fuelprice']}, "
+    report += f"BenzUp={availability_results['benzup']}\n"
+    report += f"  📱 TG каналы: {tg_results['saved']} отчётов ({tg_results['channels_found']} каналов)\n"
+    report += f"  📱 VK группы: {vk_results['saved']} отчётов ({vk_results['groups_found']} групп)\n"
+    report += f"  🌐 Все источники: {all_sources_results['quality']} отчётов\n"
+    report += f"  ⛽ Качество топлива: {quality_results['saved']} отчётов\n"
+    report += f"  🕐 Очереди: {queue_results['saved']} отчётов\n"
+    report += f"  📏 Лимиты: {limits_results['saved']} отчётов\n"
+    total_errors = (fuelprice_results['errors'] + availability_results['errors'] +
+                   tg_results['errors'] + vk_results['errors'] +
+                   all_sources_results['errors'] + quality_results['errors'] +
+                   queue_results['errors'] + limits_results['errors'])
+    if total_errors:
+        report += f"  ⚠ Ошибок: {total_errors}\n"
 
     print("\n" + report.replace("<b>", "").replace("</b>", ""))
 

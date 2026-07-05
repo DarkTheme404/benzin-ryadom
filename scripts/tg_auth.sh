@@ -67,4 +67,4 @@ echo "После этого придёт SMS-код в Telegram"
 echo "Session сохранится в scripts/session.session"
 echo ""
 
-$PYTHON scripts/parse_tg_channels.py
+$PYTHON scripts/tg_auth.py
