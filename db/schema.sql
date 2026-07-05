@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS reports (
     limit_per_visit INTEGER,
     limit_daily INTEGER,
     limit_weekly INTEGER,
+    canister_ban BOOLEAN DEFAULT FALSE,           -- заправка в канистры запрещена
     -- Reviews
     review_text TEXT,
     rating REAL,

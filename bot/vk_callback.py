@@ -433,6 +433,8 @@ async def handle_text_search(
         has_low = False
         fuel_count = 0
         fuel_parts = []
+        best_price = None
+        best_price_fuel = None
         for st in statuses:
             ft = st.get("fuel_type", "")
             av = st.get("available")
@@ -441,6 +443,9 @@ async def handle_text_search(
                 has_any_fuel = True
                 fuel_count += 1
                 fuel_parts.append(ft)
+                if price is not None and (best_price is None or price < best_price):
+                    best_price = price
+                    best_price_fuel = ft
             elif av is None:  # "кончается"
                 has_low = True
                 fuel_parts.append(f"{ft}⚠")
@@ -460,6 +465,8 @@ async def handle_text_search(
         s["_score"] = score
         s["_fuel_parts"] = fuel_parts
         s["_statuses"] = statuses
+        s["_best_price"] = best_price
+        s["_best_price_fuel"] = best_price_fuel
         scored.append(s)
 
     scored.sort(key=lambda x: x["_score"], reverse=True)
@@ -504,13 +511,21 @@ async def handle_text_search(
             indicator = "❓"
 
         fuel_str = ", ".join(fuel_parts[:4]) if fuel_parts else "нет данных"
-        lines.append(f"\n{indicator} {idx}. <b>{op}</b>")
+        price_str = ""
+        price_short = ""
+        if s.get("_best_price") is not None:
+            pf = s.get("_best_price_fuel", "")
+            pf_label = f"АИ-{pf}" if pf not in ("diesel", "lpg", "all") else ("Дизель" if pf == "diesel" else pf)
+            price_str = f" · от <b>{s['_best_price']:.2f}₽</b> ({pf_label})"
+            price_short = f" от{s['_best_price']:.0f}₽"
+        lines.append(f"\n{indicator} {idx}. <b>{op}</b>{price_str}")
         if addr:
             lines.append(f"📍 {addr[:50]}")
         lines.append(f"⛽ {fuel_str}")
 
+        btn_label = f"{indicator} {idx}. {op[:22]}{price_short}"
         buttons.append([_callback_button(
-            f"{indicator} {idx}. {op[:22]}",
+            btn_label[:40],
             {"a": "station", "s": s.get("id")},
             "primary"
         )])
@@ -544,10 +559,19 @@ async def handle_text_search(
 async def show_station(peer_id: int, station: dict) -> None:
     """Показывает детали АЗС."""
     from utils import format_station_card
+    from db import get_station_rating
     sid = station.get("id")
     if not sid:
         return
     statuses = await get_station_current_status(sid)
+    # Обогащаем рейтингом (как в TG)
+    try:
+        rating_info = await get_station_rating(sid)
+        station["avg_rating"] = rating_info["avg_rating"]
+        station["total_reviews"] = rating_info["total_reviews"]
+    except Exception:
+        station["avg_rating"] = None
+        station["total_reviews"] = 0
     text = format_station_card(station, statuses)
     await _vk_send(peer_id, text[:4000], vk_station_actions(
         sid, lat=station.get("lat"), lon=station.get("lon"),
@@ -585,12 +609,14 @@ async def handle_report_fuel(peer_id: int, station_id: int, fuel: str) -> None:
 
 async def handle_report_status(peer_id: int, station_id: int, fuel: str, value: str) -> None:
     """Шаг: выбран статус → сохраняем отчёт."""
-    avail = {"yes": True, "low": None, "no": False}.get(value, None)
+    avail = {"yes": True, "low": None, "no": False, "queue": None}.get(value, None)
+    queue_size = 5 if value == "queue" else None  # "очередь" = примерно 5 машин
     try:
         await add_report(
             station_id=station_id,
             fuel_type=fuel,
             available=avail,
+            queue_size=queue_size,
             source="vk_user",
         )
     except Exception as e:
@@ -726,36 +752,33 @@ async def handle_geo(peer_id: int, geo: dict) -> None:
     if not lat or not lon:
         await _vk_send(peer_id, "⚠️ Не удалось получить координаты.", vk_main_menu())
         return
-    stations = await find_nearest_stations(lat=lat, lon=lon, radius_km=10, limit=5)
+    stations = await find_nearest_stations(lat=lat, lon=lon, radius_km=30, limit=10)
     if not stations:
         await _vk_send(peer_id, "😔 Рядом АЗС не найдено.", vk_main_menu())
         return
-    # Берём ближайшую
-    nearest = stations[0]
-    dist = nearest.get("distance_km", 0)
-    text = (
-        f"📍 <b>Ближайшая АЗС ({dist:.1f} км):</b>\n\n"
-    )
-    op = nearest.get("operator") or nearest.get("name") or "АЗС"
-    addr = nearest.get("address") or ""
-    text += f"⛽ <b>{op}</b>\n"
-    if addr:
-        text += f"📍 {addr}\n"
-    statuses = await get_station_current_status(nearest.get("id"))
-    if statuses:
-        text += "\n<b>Наличие:</b>\n"
-        for s in statuses[:5]:
-            ft = s.get("fuel_type")
-            av = s.get("available")
-            pr = s.get("price")
-            av_text = "✅" if av is True else "❌" if av is False else "⚠️"
-            pr_text = f" · {pr:.2f}₽" if pr else ""
-            text += f"  {av_text} {ft.upper()}{pr_text}\n"
-    await _vk_send(peer_id, text, vk_station_actions(
-        nearest.get("id"),
-        lat=nearest.get("lat"),
-        lon=nearest.get("lon"),
-    ))
+    # Показываем все станции с краткой информацией
+    from utils import get_main_status
+    lines = [f"📍 <b>Ближайшие АЗС ({len(stations)} шт):</b>\n"]
+    buttons = []
+    for i, s in enumerate(stations[:10]):
+        dist = s.get("distance_km", 0)
+        op = s.get("operator") or s.get("name") or "АЗС"
+        addr = (s.get("address") or "")[:30]
+        ms = get_main_status(s)
+        price_str = ""
+        if ms.get("price"):
+            price_str = f" · {ms['price']:.0f}₽"
+        lines.append(f"{ms['icon']} {i+1}. <b>{op}</b> · {dist:.1f}км{price_str}")
+        if addr:
+            lines.append(f"   📍 {addr}")
+        buttons.append([_callback_button(
+            f"{ms['icon']} {i+1}. {op[:22]}",
+            {"a": "station", "s": s.get("id")},
+            "primary"
+        )])
+    buttons.append([_callback_button("🏠 В начало", {"a": "home"})])
+    text = "\n".join(lines)
+    await _vk_send(peer_id, text, vk_keyboard(buttons))
 
 
 # === Message router ===

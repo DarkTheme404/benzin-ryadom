@@ -583,6 +583,13 @@
       else if (no) rowCls += ' no-fuel';
       else rowCls += ' empty-fuel';
       const statusText = has ? 'В наличии' : no ? 'Нет в наличии' : 'Уточняйте';
+      let limitHtml = '';
+      if (st.has_limit && st.limit_liters) {
+        limitHtml = `<span class="fuel-limit">🚫 лимит ${st.limit_liters}л</span>`;
+      }
+      if (st.canister_ban) {
+        limitHtml += `<span class="fuel-canister-ban">❌ канистры запрещены</span>`;
+      }
       return `
         <div class="${rowCls}">
           <div class="fuel-name">${fuelLabel(st.fuel_type)}</div>
@@ -590,9 +597,34 @@
             <span>${statusText}</span>
             <span class="fuel-price">${price}</span>
           </div>
+          ${limitHtml ? `<div class="fuel-limits">${limitHtml}</div>` : ''}
         </div>
       `;
     }).join('') : '<div class="empty-mini">Нет данных о ценах</div>';
+
+    // Глобальные лимиты и запреты на канистры (fuel_type=all)
+    const globalLimits = statuses.filter(st => st.fuel_type === 'all');
+    let globalLimitsHtml = '';
+    if (globalLimits.length > 0) {
+      const gl = globalLimits[globalLimits.length - 1];
+      const comment = (gl.comment || '').toUpperCase();
+      const hasLimit = gl.has_limit;
+      const limitLiters = gl.limit_liters;
+      const canisterBan = gl.canister_ban || comment.includes('ЗАПРЕТ') || comment.includes('КАНИСТР');
+      if (hasLimit || canisterBan) {
+        let limitText = '';
+        if (hasLimit && limitLiters) {
+          limitText = `🚫 <b>Лимит заправки:</b> до ${limitLiters}л`;
+          if (canisterBan) limitText += ' · ❌ заправка в канистры запрещена';
+        } else if (hasLimit) {
+          limitText = '🚫 <b>Ограничения на заправку</b>';
+          if (canisterBan) limitText += ' · ❌ заправка в канистры запрещена';
+        } else if (canisterBan) {
+          limitText = '🚫 <b>Запрет заправки в канистры</b>';
+        }
+        globalLimitsHtml = `<div class="global-limits">${limitText}</div>`;
+      }
+    }
 
     // Last update
     const lastUpdate = statuses[0]?.created_at;
@@ -636,6 +668,7 @@
         <h2 class="section-title">Цены и наличие</h2>
       </div>
       <div class="fuel-prices-list">${fuelRows}</div>
+      ${globalLimitsHtml}
 
       ${sourcesHtml ? `
         <div class="section-header" style="margin-top:16px;">

@@ -346,6 +346,9 @@ def vk_report_status_keyboard(station_id: int, fuel: str) -> str:
             _callback_button("✅ Есть", {"a": "report_status", "s": station_id, "f": fuel, "v": "yes"}, "positive"),
         ],
         [
+            _callback_button("🕐 Большая очередь", {"a": "report_status", "s": station_id, "f": fuel, "v": "queue"}, "secondary"),
+        ],
+        [
             _callback_button("⚠️ Кончается", {"a": "report_status", "s": station_id, "f": fuel, "v": "low"}, "secondary"),
         ],
         [

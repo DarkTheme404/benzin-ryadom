@@ -133,6 +133,7 @@ async def _migrate_sqlite(db):
         ("limit_per_visit", "INTEGER"),
         ("limit_daily", "INTEGER"),
         ("limit_weekly", "INTEGER"),
+        ("canister_ban", "INTEGER"),
         ("review_text", "TEXT"),
         ("rating", "REAL"),
         ("photos_count", "INTEGER"),
@@ -311,6 +312,7 @@ async def _create_schema_pg(pool):
             ("limit_per_visit", "INTEGER"),
             ("limit_daily", "INTEGER"),
             ("limit_weekly", "INTEGER"),
+            ("canister_ban", "BOOLEAN DEFAULT FALSE"),
             ("review_text", "TEXT"),
             ("rating", "REAL"),
             ("photos_count", "INTEGER DEFAULT 0"),
@@ -1471,6 +1473,7 @@ async def add_report(
     limit_per_visit: int | None = None,
     limit_daily: int | None = None,
     limit_weekly: int | None = None,
+    canister_ban: bool = False,
     fuel_standard: str | None = None,
     certification: str | None = None,
     review_text: str | None = None,
@@ -1535,6 +1538,7 @@ async def add_report(
         else:
             avail_int = 2
         has_limit_int = 1 if has_limit else 0
+        canister_ban_int = 1 if canister_ban else 0
 
         async with _db.execute(
             """INSERT INTO reports (
@@ -1542,18 +1546,18 @@ async def add_report(
                 queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_at,
                 octane_rating, cetane_number, additives, quality_score,
                 queue_wait_minutes, queue_trend,
-                limit_per_visit, limit_daily, limit_weekly,
+                limit_per_visit, limit_daily, limit_weekly, canister_ban,
                 fuel_standard, certification, review_text, rating, photos_count,
                 has_car_wash, has_shop, has_restaurant, has_atm, has_parking, has_ev_charging,
                 accessibility, opening_hours, phone, website
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (station_id, user_id, fuel_type, avail_int, price,
              queue_size, has_limit_int, limit_liters, comment, source, expires_at, next_delivery_iso,
              octane_rating, cetane_number, additives, quality_score,
              queue_wait_minutes, queue_trend,
-             limit_per_visit, limit_daily, limit_weekly,
+             limit_per_visit, limit_daily, limit_weekly, canister_ban_int,
              fuel_standard, certification, review_text, rating, photos_count,
              has_car_wash, has_shop, has_restaurant, has_atm, has_parking, has_ev_charging,
              accessibility, opening_hours, phone, website),
@@ -1575,20 +1579,20 @@ async def add_report(
                     queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_at,
                     octane_rating, cetane_number, additives, quality_score,
                     queue_wait_minutes, queue_trend,
-                    limit_per_visit, limit_daily, limit_weekly,
+                    limit_per_visit, limit_daily, limit_weekly, canister_ban,
                     fuel_standard, certification, review_text, rating, photos_count,
                     has_car_wash, has_shop, has_restaurant, has_atm, has_parking, has_ev_charging,
                     accessibility, opening_hours, phone, website
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                          $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                          $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
+                          $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27,
+                          $28, $29, $30, $31, $32, $33, $34, $35, $36, $37)
                 RETURNING id
                 """,
                 station_id, user_id, fuel_type, available, price,
                 queue_size, has_limit, limit_liters, comment, source, expires_at, next_delivery_iso,
                 octane_rating, cetane_number, additives, quality_score,
                 queue_wait_minutes, queue_trend,
-                limit_per_visit, limit_daily, limit_weekly,
+                limit_per_visit, limit_daily, limit_weekly, canister_ban,
                 fuel_standard, certification, review_text, rating, photos_count,
                 has_car_wash, has_shop, has_restaurant, has_atm, has_parking, has_ev_charging,
                 accessibility, opening_hours, phone, website,
@@ -1959,9 +1963,9 @@ async def get_station_current_status(station_id: int) -> list:
     """
     if USE_SQLITE:
         async with _db.execute(
-            """SELECT fuel_type, available, price, queue_size, has_limit, limit_liters, confidence, created_at, next_delivery_at, source
+            """SELECT fuel_type, available, price, queue_size, has_limit, limit_liters, canister_ban, confidence, created_at, next_delivery_at, source
                FROM reports
-               WHERE station_id = ? AND fuel_type != 'all'
+               WHERE station_id = ?
                  AND (
                    (source != 'user' AND created_at > datetime('now', '-2 hours'))
                    OR
@@ -1997,11 +2001,10 @@ async def get_station_current_status(station_id: int) -> list:
                 """
                 SELECT
                     fuel_type, available, price, queue_size, has_limit,
-                    limit_liters, confidence, created_at,
+                    limit_liters, canister_ban, confidence, created_at,
                     next_delivery_at, source
                 FROM reports
                 WHERE station_id = $1
-                  AND fuel_type != 'all'
                   AND (
                     (source != 'user' AND created_at > NOW() - INTERVAL '2 hours')
                     OR
@@ -2032,10 +2035,9 @@ async def get_stations_with_statuses(stations: list) -> list:
     if USE_SQLITE:
         async with _db.execute(
             f"""SELECT station_id, fuel_type, available, price, queue_size,
-                       has_limit, limit_liters, confidence, created_at, next_delivery_at, source
+                       has_limit, limit_liters, canister_ban, confidence, created_at, next_delivery_at, source
                 FROM reports
                 WHERE station_id IN ({placeholders})
-                  AND fuel_type != 'all'
                   AND (
                     (source != 'user' AND created_at > datetime('now', '-2 hours'))
                     OR
@@ -2051,11 +2053,10 @@ async def get_stations_with_statuses(stations: list) -> list:
         async with _db.acquire() as conn:
             rows = await conn.fetch(
                 f"""SELECT station_id, fuel_type, available, price, queue_size,
-                        has_limit, limit_liters, confidence,
+                        has_limit, limit_liters, canister_ban, confidence,
                         created_at, next_delivery_at, source
                     FROM reports
                     WHERE station_id = ANY($1)
-                      AND fuel_type != 'all'
                       AND (
                         (source != 'user' AND created_at > NOW() - INTERVAL '2 hours')
                         OR

@@ -1216,7 +1216,7 @@ function StationDetail({
           </div>
         ) : (
           <div className="space-y-2 mb-4">
-            {station.statuses.map((s, i) => {
+            {station.statuses.filter(s => s.fuel_type !== "all").map((s, i) => {
               const ageColor =
                 s.last_report_at && (Date.now() - new Date(s.last_report_at).getTime()) < 3_600_000
                   ? "text-success"
@@ -1255,6 +1255,33 @@ function StationDetail({
                 </div>
               );
             })}
+
+            {/* Глобальные лимиты и запреты на канистры */}
+            {(() => {
+              const globalLimits = station.statuses.filter(s => s.fuel_type === "all");
+              if (globalLimits.length === 0) return null;
+              const gl = globalLimits[globalLimits.length - 1];
+              const comment = (gl.comment || "").toUpperCase();
+              const hasLimit = gl.has_limit;
+              const limitLiters = gl.limit_liters;
+              const canisterBan = gl.canister_ban || comment.includes("ЗАПРЕТ") || comment.includes("КАНИСТР");
+              if (!hasLimit && !canisterBan) return null;
+              let limitText = "";
+              if (hasLimit && limitLiters) {
+                limitText = `Лимит заправки: до ${limitLiters}л`;
+                if (canisterBan) limitText += " · заправка в канистры запрещена";
+              } else if (hasLimit) {
+                limitText = "Ограничения на заправку";
+                if (canisterBan) limitText += " · заправка в канистры запрещена";
+              } else if (canisterBan) {
+                limitText = "Запрет заправки в канистры";
+              }
+              return (
+                <div className="p-3 rounded-xl border border-danger/20 bg-danger/5 text-danger text-sm">
+                  🚫 {limitText}
+                </div>
+              );
+            })()}
           </div>
         )}
 

@@ -246,10 +246,12 @@ def format_station_card(station: dict, statuses: list | None = None) -> str:
         # Группируем по fuel_type: {fuel_type: [status1, status2, ...]}
         from collections import defaultdict
         by_fuel: dict[str, list] = defaultdict(list)
+        global_limits = []
         for s in statuses:
             ft = s.get("fuel_type", "unknown")
             if ft == "all":
-                continue  # skip "all" - it's not a real fuel type
+                global_limits.append(s)
+                continue  # skip "all" — обработаем отдельно
             by_fuel[ft].append(s)
 
         # Сводка по наличию (лучший статус по каждому топливу)
@@ -275,6 +277,28 @@ def format_station_card(station: dict, statuses: list | None = None) -> str:
             summary_parts.append(f"❌ {missing_count}")
         if summary_parts:
             lines.append(f"\n<b>Наличие:</b> {'  '.join(summary_parts)}")
+
+        # Глобальные лимиты и запрет на канистры (из fuel_type="all")
+        if global_limits:
+            gl = global_limits[-1]  # берём последний (самый свежий)
+            has_limit = gl.get("has_limit")
+            limit_liters = gl.get("limit_liters")
+            canister_ban = False
+            comment = (gl.get("comment") or "").upper()
+            if "ЗАПРЕТ" in comment or "КАНИСТР" in comment:
+                canister_ban = True
+            if has_limit and limit_liters:
+                limit_line = f"🚫 <b>Лимит заправки:</b> до {limit_liters}л"
+                if canister_ban:
+                    limit_line += " · ❌ заправка в канистры запрещена"
+                lines.append(limit_line)
+            elif has_limit:
+                limit_line = "🚫 <b>Ограничения на заправку</b>"
+                if canister_ban:
+                    limit_line += " · ❌ заправка в канистры запрещена"
+                lines.append(limit_line)
+            elif canister_ban:
+                lines.append("🚫 <b>Запрет заправки в канистры</b>")
 
         # Ближайший завоз
         from datetime import datetime, timezone
@@ -363,6 +387,11 @@ def format_station_card(station: dict, statuses: list | None = None) -> str:
                     line += f"  •  лимит {limit_liters}л"
                 if queue is not None and queue > 0:
                     line += f"  •  очередь ~{queue}"
+            elif global_limits:
+                # Если у конкретного топлива нет данных о лимитах — показываем глобальный
+                gl = global_limits[-1]
+                if gl.get("has_limit") and gl.get("limit_liters"):
+                    line += f"  •  лимит {gl['limit_liters']}л"
 
             # Время следующего завоза
             for s in fuel_statuses:

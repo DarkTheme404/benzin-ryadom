@@ -1510,6 +1510,45 @@ img { max-width: 100%; display: block; }
 .fuel-row.no-fuel { border-color: rgba(239, 68, 68, 0.3); }
 .fuel-row.empty-fuel { border-color: rgba(245, 158, 11, 0.3); }
 
+/* Fuel limits and canister ban */
+.fuel-limits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.fuel-limit {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+.fuel-canister-ban {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+/* Global limits block */
+.global-limits {
+  margin-top: 8px;
+  padding: 12px 14px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: #f87171;
+  line-height: 1.4;
+}
+.global-limits b { color: #fca5a5; }
+
 .fuel-name {
   font-size: 15px;
   font-weight: 700;

@@ -147,6 +147,8 @@ def _serialize_status(s: dict) -> dict:
         out["available"] = bool(out["available"]) if out["available"] is not None else None
     if "has_limit" in out:
         out["has_limit"] = bool(out["has_limit"])
+    if "canister_ban" in out:
+        out["canister_ban"] = bool(out["canister_ban"])
     # datetime → ISO string, Decimal → float
     for k, v in list(out.items()):
         if isinstance(v, (datetime, date)):
@@ -773,7 +775,7 @@ async def _bulk_get_statuses(station_ids: list[int]) -> dict[int, list]:
     if USE_SQLITE:
         rows = await _fetch(
             f"""SELECT station_id, fuel_type, available, price, queue_size, has_limit,
-                      limit_liters, confidence, created_at
+                      limit_liters, canister_ban, confidence, created_at
                FROM (
                    SELECT *, ROW_NUMBER() OVER (
                        PARTITION BY station_id, fuel_type
@@ -791,7 +793,7 @@ async def _bulk_get_statuses(station_ids: list[int]) -> dict[int, list]:
         rows = await _fetch(
             f"""SELECT DISTINCT ON (station_id, fuel_type)
                     station_id, fuel_type, available, price, queue_size,
-                    has_limit, limit_liters, confidence, created_at
+                    has_limit, limit_liters, canister_ban, confidence, created_at
                 FROM reports
                 WHERE station_id = ANY($1)
                   AND created_at > NOW() - INTERVAL '24 hours'

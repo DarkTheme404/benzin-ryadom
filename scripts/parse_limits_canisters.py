@@ -387,12 +387,13 @@ async def save_limit_to_db(station_id: int, fuel_type: str, has_limit: bool,
 
         await db._execute(
             """INSERT INTO reports (station_id, fuel_type, available, has_limit, limit_liters,
-                                    source, created_at, comment)
-               VALUES (?, ?, 1, ?, ?, ?, datetime('now'), ?)""",
+                                    canister_ban, source, created_at, comment)
+               VALUES (?, ?, 1, ?, ?, ?, ?, datetime('now'), ?)""",
             station_id,
             fuel_type,
             has_limit,
             limit_liters,
+            1 if canister_ban else 0,
             source,
             full_comment[:500],
         )
