@@ -400,6 +400,80 @@ async def run_limits_parser() -> dict:
     return results
 
 
+async def run_gdebenz_parser() -> dict:
+    """Запускает gdebenz.ru парсер."""
+    print(f"\n=== GdeBenz Parser ===")
+    results = {"saved": 0, "errors": 0}
+
+    try:
+        import subprocess
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "parse_gdebenz.py"),
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        output = result.stdout + result.stderr
+        for line in output.split("\n"):
+            if "total gdebenz reports saved" in line.lower():
+                try:
+                    num = int(line.split(":")[-1].strip())
+                    results["saved"] = num
+                except (ValueError, IndexError):
+                    pass
+            elif "error" in line.lower():
+                results["errors"] += 1
+    except subprocess.TimeoutExpired:
+        print("  ⏱ GdeBenz parser: timeout")
+        results["errors"] += 1
+    except Exception as e:
+        print(f"  ❌ GdeBenz parser: {e}")
+        results["errors"] += 1
+
+    return results
+
+
+async def run_quick_parser() -> dict:
+    """Запускает быстрый парсер (2GIS, weather, news)."""
+    print(f"\n=== Quick Parser ===")
+    results = {"saved": 0, "errors": 0}
+
+    try:
+        import subprocess
+        cmd = [
+            sys.executable,
+            os.path.join(os.path.dirname(__file__), "parse_quick.py"),
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        output = result.stdout + result.stderr
+        for line in output.split("\n"):
+            if "отчётов в бд:" in line.lower():
+                try:
+                    num = int(line.split(":")[-1].strip())
+                    results["saved"] = num
+                except (ValueError, IndexError):
+                    pass
+            elif "error" in line.lower():
+                results["errors"] += 1
+    except subprocess.TimeoutExpired:
+        print("  ⏱ Quick parser: timeout")
+        results["errors"] += 1
+    except Exception as e:
+        print(f"  ❌ Quick parser: {e}")
+        results["errors"] += 1
+
+    return results
+
+
 async def main():
     start_time = time.time()
     print("=" * 60)
@@ -409,15 +483,11 @@ async def main():
     # === Инициализация БД ===
     await db.init_db()
 
-    # === Запуск парсеров ===
+    # === Запуск рабочих парсеров ===
     fuelprice_results = await run_fuelprice_for_all_cities()
-    availability_results = await run_availability_parsers()
+    gdebenz_results = await run_gdebenz_parser()
     tg_results = await run_tg_parser()
-    vk_results = await run_vk_parser()
-    all_sources_results = await run_all_sources_parser()
-    quality_results = await run_fuel_quality_parser()
-    queue_results = await run_queue_parser()
-    limits_results = await run_limits_parser()
+    quick_results = await run_quick_parser()
 
     elapsed = time.time() - start_time
 
@@ -444,19 +514,11 @@ async def main():
 
     report += f"\n<b>Этот запуск:</b>\n"
     report += f"  📈 fuelprice.ru: {fuelprice_results['saved']} цен\n"
-    report += f"  🗺 Availability: GdeBenz={availability_results['gdebenz']}, "
-    report += f"FuelPrice={availability_results['fuelprice']}, "
-    report += f"BenzUp={availability_results['benzup']}\n"
+    report += f"  🗺 GdeBenz: {gdebenz_results['saved']} отчётов\n"
     report += f"  📱 TG каналы: {tg_results['saved']} отчётов ({tg_results['channels_found']} каналов)\n"
-    report += f"  📱 VK группы: {vk_results['saved']} отчётов ({vk_results['groups_found']} групп)\n"
-    report += f"  🌐 Все источники: {all_sources_results['quality']} отчётов\n"
-    report += f"  ⛽ Качество топлива: {quality_results['saved']} отчётов\n"
-    report += f"  🕐 Очереди: {queue_results['saved']} отчётов\n"
-    report += f"  📏 Лимиты: {limits_results['saved']} отчётов\n"
-    total_errors = (fuelprice_results['errors'] + availability_results['errors'] +
-                   tg_results['errors'] + vk_results['errors'] +
-                   all_sources_results['errors'] + quality_results['errors'] +
-                   queue_results['errors'] + limits_results['errors'])
+    report += f"  ⚡ Быстрый: {quick_results['saved']} отчётов\n"
+    total_errors = (fuelprice_results['errors'] + gdebenz_results['errors'] +
+                   tg_results['errors'] + quick_results['errors'])
     if total_errors:
         report += f"  ⚠ Ошибок: {total_errors}\n"
 
