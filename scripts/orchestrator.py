@@ -62,10 +62,10 @@ parse_all_available = _safe_import("parse_all_available")
 parse_quick = _safe_import("parse_quick")
 parse_fuel_quality = _safe_import("parse_fuel_quality")
 parse_queue_data = _safe_import("parse_queue_data")
-parse_fuel_limits = _safe_import("parse_fuel_limits")
+parse_limits_canisters = _safe_import("parse_limits_canisters")
 
 
-# Топ-12 городов России по населению
+# Топ городов России по населению (включая Крым, ЛНР, ДНР)
 TOP_CITIES = [
     "moskva",
     "sankt-peterburg",
@@ -79,6 +79,52 @@ TOP_CITIES = [
     "rostov-na-donu",
     "ufa",
     "krasnoyarsk",
+    # Крым
+    "simferopol",
+    "sevastopol",
+    "kerch",
+    "yalta",
+    "evpatoriya",
+    "feodosiya",
+    "alushta",
+    "bahchisaray",
+    # ЛНР/ДНР
+    "donetsk",
+    "lugansk",
+    "mariupol",
+    "gorlovka",
+    "kramatogorsk",
+    "slavyansk",
+    "alchevsk",
+    "lisichansk",
+    "severodonetsk",
+    # Дополнительные крупные города
+    "orenburg",
+    "penza",
+    "voronezh",
+    "belgorod",
+    "izhevsk",
+    "cheboksary",
+    "perm",
+    "kirov",
+    "tyumen",
+    "surgut",
+    "irkutsk",
+    "habarovsk",
+    "nahodka",
+    "vladivostok",
+    "yakutsk",
+    "stavropol",
+    "pyatigorsk",
+    "nalchik",
+    "vladikavkaz",
+    "grozny",
+    "mahachkala",
+    "barnaul",
+    "kemerovo",
+    "novokuznetsk",
+    "tomsk",
+    "omsk",
 ]
 
 
@@ -331,8 +377,8 @@ SOURCES = {
         "enabled": True,
     },
     "limits": {
-        "name": "Данные о лимитах (Минэнерго, Роспотребнадзор)",
-        "function": lambda: parse_fuel_limits.main() if parse_fuel_limits else asyncio.sleep(0),
+        "name": "Лимиты и запреты на канистры (Минэнерго, новости, сети АЗС)",
+        "function": lambda: parse_limits_canisters.main() if parse_limits_canisters else asyncio.sleep(0),
         "interval_hours": 6,
         "enabled": True,
     },

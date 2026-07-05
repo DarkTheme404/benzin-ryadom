@@ -116,6 +116,9 @@ def filters_keyboard(city: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(text="📋 Все АЗС", callback_data=f"all:{city}"),
+            ],
+            [
                 InlineKeyboardButton(text="⛽ АИ-92", callback_data=f"fuel:{city}:92"),
                 InlineKeyboardButton(text="⛽ АИ-95", callback_data=f"fuel:{city}:95"),
             ],

@@ -1047,6 +1047,7 @@ function StationDetail({
   const [reportPrice, setReportPrice] = useState<string>("");
   const [reportQueue, setReportQueue] = useState<string>("");
   const [showPriceInput, setShowPriceInput] = useState(false);
+  const [showNavigatorPicker, setShowNavigatorPicker] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1072,12 +1073,31 @@ function StationDetail({
     };
   }, [station.id]);
 
-  const openRoute = (provider: "yandex" | "2gis") => {
+  const openRoute = (provider: string) => {
     const { lat, lon } = station;
-    const url =
-      provider === "yandex"
-        ? `https://yandex.ru/maps/?rtext=~${lat},${lon}&rtt=auto`
-        : `https://2gis.ru/directions?point=current&point=${lat},${lon}`;
+    let url = "";
+    switch (provider) {
+      case "yandex":
+        url = `https://yandex.ru/maps/?rtext=${lat},${lon}&rtt=auto`;
+        break;
+      case "google":
+        url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving`;
+        break;
+      case "apple":
+        url = `https://maps.apple.com/?daddr=${lat},${lon}&dirflg=d`;
+        break;
+      case "2gis":
+        url = `https://2gis.ru/directions?point=current&point=${lat},${lon}`;
+        break;
+      case "citymaps":
+        url = `https://citymaps.app/directions/${lat},${lon}`;
+        break;
+      case "osmand":
+        url = `osmand.net://navigate?lat=${lat}&lon=${lon}&zoom=16`;
+        break;
+      default:
+        url = `https://yandex.ru/maps/?rtext=${lat},${lon}&rtt=auto`;
+    }
     try {
       WebApp.openLink(url);
     } catch {
@@ -1143,12 +1163,45 @@ function StationDetail({
         </div>
 
         {/* Маршрут */}
-        <div className="grid grid-cols-2 gap-2 mb-4">
-          <button onClick={() => openRoute("yandex")} className="btn bg-card hover:bg-white/10 text-sm">
-            🗺 Яндекс.Карты
-          </button>
-          <button onClick={() => openRoute("2gis")} className="btn bg-card hover:bg-white/10 text-sm">
-            🗺 2ГИС
+        <div className="mb-4">
+          <div className="text-xs uppercase tracking-wider text-white/40 mb-2 font-semibold">
+            Построить маршрут
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => openRoute("yandex")} className="navigator-btn">
+              <div className="navigator-icon yandex-icon">🗺</div>
+              <div className="navigator-info">
+                <div className="navigator-name">Яндекс.Карты</div>
+                <div className="navigator-desc">Навигатор</div>
+              </div>
+            </button>
+            <button onClick={() => openRoute("2gis")} className="navigator-btn">
+              <div className="navigator-icon gis-icon">📍</div>
+              <div className="navigator-info">
+                <div className="navigator-name">2ГИС</div>
+                <div className="navigator-desc">Навигатор</div>
+              </div>
+            </button>
+            <button onClick={() => openRoute("google")} className="navigator-btn">
+              <div className="navigator-icon google-icon">🌍</div>
+              <div className="navigator-info">
+                <div className="navigator-name">Google Maps</div>
+                <div className="navigator-desc">Навигатор</div>
+              </div>
+            </button>
+            <button onClick={() => openRoute("apple")} className="navigator-btn">
+              <div className="navigator-icon apple-icon">🍎</div>
+              <div className="navigator-info">
+                <div className="navigator-name">Apple Maps</div>
+                <div className="navigator-desc">Навигатор</div>
+              </div>
+            </button>
+          </div>
+          <button
+            onClick={() => setShowNavigatorPicker(true)}
+            className="w-full mt-2 btn bg-card hover:bg-white/10 text-xs text-white/50"
+          >
+            ▾ Ещё навигаторы
           </button>
         </div>
 
@@ -1381,6 +1434,142 @@ function StationDetail({
             🗺 Уточнить адрес на Яндекс.Картах
           </button>
         )}
+
+        {/* NavigatorPicker bottom sheet */}
+        {showNavigatorPicker && (
+          <NavigatorPicker
+            lat={station.lat}
+            lon={station.lon}
+            onSelect={(provider) => {
+              openRoute(provider);
+              setShowNavigatorPicker(false);
+            }}
+            onClose={() => setShowNavigatorPicker(false)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// === NavigatorPicker — bottom sheet с выбором навигатора ===
+function NavigatorPicker({
+  lat,
+  lon,
+  onSelect,
+  onClose,
+}: {
+  lat: number;
+  lon: number;
+  onSelect: (provider: string) => void;
+  onClose: () => void;
+}) {
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+  const navigators = [
+    {
+      id: "yandex",
+      name: "Яндекс.Карты",
+      desc: "Популярный навигатор в России",
+      icon: "🗺",
+      color: "#ffcc00",
+      bg: "rgba(255, 204, 0, 0.15)",
+      border: "rgba(255, 204, 0, 0.3)",
+    },
+    {
+      id: "2gis",
+      name: "2ГИС",
+      desc: "Подробные карты с 3D-зданиями",
+      icon: "📍",
+      color: "#f44336",
+      bg: "rgba(244, 67, 54, 0.15)",
+      border: "rgba(244, 67, 54, 0.3)",
+    },
+    {
+      id: "google",
+      name: "Google Maps",
+      desc: "Глобальные карты и навигатор",
+      icon: "🌍",
+      color: "#4285f4",
+      bg: "rgba(66, 133, 244, 0.15)",
+      border: "rgba(66, 133, 244, 0.3)",
+    },
+    ...(isIOS
+      ? [
+          {
+            id: "apple",
+            name: "Apple Maps",
+            desc: "Встроенные карты iPhone",
+            icon: "🍎",
+            color: "#34c759",
+            bg: "rgba(52, 199, 89, 0.15)",
+            border: "rgba(52, 199, 89, 0.3)",
+          },
+        ]
+      : []),
+    {
+      id: "citymaps",
+      name: "Citymaps",
+      desc: "Альтернативные карты",
+      icon: "🏙",
+      color: "#9c27b0",
+      bg: "rgba(156, 39, 176, 0.15)",
+      border: "rgba(156, 39, 176, 0.3)",
+    },
+  ];
+
+  return (
+    <div className="navigator-overlay" onClick={onClose}>
+      <div
+        className="navigator-sheet"
+        onClick={(e) => e.stopPropagation()}
+        style={{ animation: "slideUp 0.3s ease-out" }}
+      >
+        <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto mb-4" />
+
+        <div className="text-lg font-bold mb-1">Выбери навигатор</div>
+        <div className="text-xs text-white/50 mb-4">
+          Маршрут от твоего местоположения до АЗС
+        </div>
+
+        <div className="space-y-2">
+          {navigators.map((n) => (
+            <button
+              key={n.id}
+              onClick={() => onSelect(n.id)}
+              className="navigator-item"
+              style={{
+                background: n.bg,
+                borderColor: n.border,
+              }}
+            >
+              <div
+                className="navigator-item-icon"
+                style={{ background: n.color + "22", color: n.color }}
+              >
+                {n.icon}
+              </div>
+              <div className="flex-1 text-left">
+                <div className="font-semibold text-sm" style={{ color: n.color }}>
+                  {n.name}
+                </div>
+                <div className="text-[11px] text-white/50">{n.desc}</div>
+              </div>
+              <div className="text-white/30">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full mt-4 py-3 text-sm text-white/50 hover:text-white/80 transition-colors"
+        >
+          Отмена
+        </button>
       </div>
     </div>
   );

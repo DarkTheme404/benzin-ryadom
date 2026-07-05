@@ -3,8 +3,10 @@
 
 Flow: /start → выбор города → фильтры → АЗС → действия
 """
+import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -1333,17 +1335,24 @@ async def show_city_results(msg, city: str, fuel: str = None, max_price: float =
         buttons = []
         for s in stations_with_status[:10]:
             statuses = s.get("statuses", [])
-            operator = (s.get("operator") or "")[:14]
-            address = (s.get("address") or "")[:18]
-            # Сеть → адрес → статус
-            if operator and address:
-                short = f"{operator} — {address}"
+            operator = (s.get("operator") or s.get("name") or "")[:16]
+            address = (s.get("address") or "")[:24]
+            city_part = (s.get("city") or "")[:12]
+            # Формируем строку: Название · Адрес, Город
+            if operator and address and city_part:
+                short = f"{operator} · {address}, {city_part}"
+            elif operator and address:
+                short = f"{operator} · {address}"
+            elif operator and city_part:
+                short = f"{operator} · {city_part}"
+            elif address and city_part:
+                short = f"{address}, {city_part}"
             elif operator:
                 short = operator
             elif address:
                 short = address
             else:
-                name = (s.get("name") or "АЗС")[:22]
+                name = (s.get("name") or "АЗС")[:24]
                 short = name
             best_price = None
             best_fuel = None
@@ -1533,6 +1542,21 @@ async def fuel_callback(callback: CallbackQuery):
         return
     _, city, fuel = parts[0], parts[1], parts[2]
     await show_city_results(callback.message, city, fuel=fuel)
+
+
+# === all:* — показать все АЗС без фильтров ===
+async def all_stations_callback(callback: CallbackQuery):
+    if not await _require_subscription_callback(callback):
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
+    await callback.answer()
+    data = callback.data or ""
+    city = data.split(":", 1)[1] if ":" in data else ""
+    if city:
+        await show_city_results(callback.message, city)
 
 
 # === price_menu:* ===
@@ -1725,6 +1749,121 @@ async def cmd_set_ad(message: Message):
         f"Текст: {text}\n"
         f"Ссылка: {url}\n\n"
         f"Будет показан в главном меню."
+    )
+
+
+# === Admin: рассылка рекламы сервиса ===
+PROMO_TEXT = """⛽ <b>«Бензин рядом» — сервис, которого больше нигде нет.</b>
+
+Единственный бот, который собирает данные сразу из 50+ источников и показывает реальную картину на АЗС.
+
+<b>Чем он лучше остальных:</b>
+
+1️⃣ <b>Самая полная база.</b> 27 000 АЗС по всей стране. Ни один другой бот или канал не покрывает такую территорию.
+
+2️⃣ <b>Пять источников данных одновременно.</b> Fuelprice.ru, 2ГИС, 28 региональных TG-каналов, официальные данные сетей и отчёты реальных водителей. Если данные есть где-то — мы их собрали.
+
+3️⃣ <b>Обновление каждый час.</b> Не раз в день, не когда кто-то вспомнил. Каждый час парсеры проверяют все источники и обновляют статусы.
+
+4️⃣ <b>Наличие, а не только адреса.</b> Яндекс.Карты покажут где АЗС. Мы покажем есть ли там бензин.
+
+5️⃣ <b>Данные от водителей.</b> Любой может сообщить о ситуации на АЗС. Пользовательские отчёты живут 7 дней и приоритетнее парсеров.
+
+6️⃣ <b>Работает в обоих мессенджерах.</b> Telegram заблокирован — есть VK. VK недоступен — есть Telegram. Сервис доступен всегда.
+
+7️⃣ <b>Полностью бесплатно.</b>
+
+<b>Как пользоваться:</b>
+1. Открой бота в Telegram или VK
+2. Отправь геолокацию
+3. Получи список ближайших АЗС с ценами и статусами
+
+📱 <b>Telegram:</b> <a href="https://t.me/benzyn_ryadom_bot">@benzyn_ryadom_bot</a>
+📱 <b>VK:</b> <a href="https://vk.com/benzyn_ryadom">vk.com/benzyn_ryadom</a>
+
+⏱ Время экономится на каждом выезде — проверяй перед дорогой и не стой в очередях впустую."""
+
+
+async def cmd_promote(message: Message):
+    """Рассылка рекламного текста сервиса по чатам."""
+    if not settings.is_admin(user_id=message.from_user.id, username=message.from_user.username):
+        await message.answer("⛔ Только для администраторов.")
+        return
+
+    import aiohttp as _aiohttp
+
+    bot = message.bot
+    bot_token = (await bot.get_token()) if hasattr(bot, 'get_token') else os.getenv("BOT_TOKEN", "")
+
+    # Получаем список чатов из getUpdates
+    chats = {}
+    url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+    params = {"limit": 100, "allowed_updates": '["message", "channel_post", "my_chat_member"]'}
+
+    async with _aiohttp.ClientSession() as session:
+        async with session.get(url, params=params) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                for update in data.get("result", []):
+                    for key in ("message", "channel_post", "my_chat_member"):
+                        if key in update:
+                            chat = update[key].get("chat", {})
+                            if chat.get("id"):
+                                chats[chat["id"]] = {
+                                    "id": chat["id"],
+                                    "title": chat.get("title", chat.get("first_name", "Unknown")),
+                                    "type": chat.get("type", "unknown"),
+                                }
+
+    if not chats:
+        await message.answer(
+            "📢 <b>Рассылка рекламы</b>\n\n"
+            "Бот не состоит ни в одном чате (кроме этого).\n"
+            "Добавьте бота в нужные чаты и отправьте там любое сообщение.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    # Показываем список чатов
+    chat_list = "\n".join(f"• {c['title']} ({c['type']})" for c in chats.values())
+    await message.answer(
+        f"📢 <b>Рассылка рекламы</b>\n\n"
+        f"Найдено чатов: <b>{len(chats)}</b>\n\n"
+        f"{chat_list}\n\n"
+        f"Отправляю...",
+        reply_markup=main_menu_keyboard(),
+    )
+
+    # Рассылка
+    sent = 0
+    failed = 0
+    for chat_id, chat_info in chats.items():
+        try:
+            async with _aiohttp.ClientSession() as session:
+                payload = {
+                    "chat_id": chat_id,
+                    "text": PROMO_TEXT,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                }
+                async with session.post(
+                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                    json=payload,
+                ) as resp:
+                    data = await resp.json()
+                    if resp.status == 200 and data.get("ok"):
+                        sent += 1
+                    else:
+                        failed += 1
+            await asyncio.sleep(1)  # Лимит Telegram: 30 сообщений/сек в группах
+        except Exception:
+            failed += 1
+
+    await message.answer(
+        f"📢 <b>Рассылка завершена!</b>\n\n"
+        f"✅ Отправлено: {sent}\n"
+        f"❌ Ошибок: {failed}",
+        reply_markup=main_menu_keyboard(),
     )
 
 
@@ -2529,6 +2668,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(cmd_stats, Command("stats"))
     dp.message.register(cmd_moderate, Command("moderate"))
     dp.message.register(cmd_set_ad, Command("set_ad"))
+    dp.message.register(cmd_promote, Command("promote"))
     dp.message.register(cmd_my_id, Command("my_id"))
     dp.message.register(cmd_find_raw, Command("find_raw"))
 
@@ -2618,6 +2758,7 @@ def register_all_handlers(dp: Dispatcher):
     # Фильтры по городу
     dp.callback_query.register(city_callback, F.data.startswith("city:"))
     dp.callback_query.register(fuel_callback, F.data.startswith("fuel:"))
+    dp.callback_query.register(all_stations_callback, F.data.startswith("all:"))
     dp.callback_query.register(price_menu_callback, F.data.startswith("price_menu:"))
     dp.callback_query.register(price_callback, F.data.startswith("price:"))
     dp.callback_query.register(net_menu_callback, F.data.startswith("net_menu:"))

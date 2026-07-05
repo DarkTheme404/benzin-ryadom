@@ -31,11 +31,36 @@ import db  # noqa: E402
 from parse_fuelprice import main as parse_fuelprice_main
 
 
-# Топ-12 городов
+# Топ-12 городов (для fuelprice)
 TOP_CITIES = [
     "moskva", "sankt-peterburg", "novosibirsk", "ekaterinburg",
     "kazan", "krasnodar", "chelyabinsk", "nizhniy-novgorod",
     "samara", "rostov-na-donu", "ufa", "krasnoyarsk",
+    # Крым, ЛНР, ДНР
+    "simferopol", "sevastopol", "kerch", "yalta",
+    "evpatoriya", "feodosiya", "alushta", "bahchisaray",
+    "saki", "dzhankoy",
+    # Дополнительные крупные города
+    "orenburg", "penza", "ryazan", "smolensk", "tula",
+    "voronezh", "lipetsk", "kursk", "belgorod",
+    "izhevsk", "cheboksary", "perm", "kirov",
+    "tobolsk", "tyumen", "surgut", "nizhnevartovsk",
+    "irkutsk", "bratsk", "angarsk",
+    "habarovsk", "nahodka", "ussuriysk",
+    "blagoveshchensk", "chita",
+    "yuzhno-sahalinsk", "petropavlovsk-kamchatskiy",
+    "yakutsk", "magadan",
+    "stavropol", "pyatigorsk", "kislovodsk",
+    "nalchik", "vladikavkaz", "grozny",
+    "mahachkala", "derbent",
+    "elenburg", "orsk", "novotroitsk",
+    "sterlitamak", "salavat",
+    "naberezhnye-chelny", "nizhnekamsk", "almetevsk",
+    "berdnik", "berdsk", "ob",
+    "kemerovo", "novokuznetsk", "prokopevsk",
+    "barnaul", "biysk", "rubtsovsk",
+    "omsk", "tomsk", "seversk",
+    "abakan", "kyzyl",
 ]
 
 
@@ -363,29 +388,28 @@ async def run_queue_parser() -> dict:
 
 
 async def run_limits_parser() -> dict:
-    """Запускает парсер данных о лимитах."""
-    print(f"\n=== Fuel Limits Parser ===")
+    """Запускает парсер лимитов и запретов на канистры."""
+    print(f"\n=== Limits & Canisters Parser ===")
     results = {"saved": 0, "errors": 0}
 
     try:
         import subprocess
         cmd = [
             sys.executable,
-            os.path.join(os.path.dirname(__file__), "parse_fuel_limits.py"),
-            "--all-cities",
+            os.path.join(os.path.dirname(__file__), "parse_limits_canisters.py"),
         ]
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=300,
         )
         output = result.stdout + result.stderr
         for line in output.split("\n"):
-            if "total limit reports saved:" in line.lower():
+            if "лимитов сохранено:" in line.lower():
                 try:
                     num = int(line.split(":")[-1].strip())
-                    results["saved"] = num
+                    results["saved"] += num
                 except (ValueError, IndexError):
                     pass
             elif "error" in line.lower():
@@ -401,8 +425,8 @@ async def run_limits_parser() -> dict:
 
 
 async def run_gdebenz_parser() -> dict:
-    """Запускает gdebenz.ru парсер."""
-    print(f"\n=== GdeBenz Parser ===")
+    """Запускает gdebenz.ru парсер (110+ городов)."""
+    print(f"\n=== GdeBenz Parser (110+ городов) ===")
     results = {"saved": 0, "errors": 0}
 
     try:
@@ -415,20 +439,20 @@ async def run_gdebenz_parser() -> dict:
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=600,  # 10 минут на 110+ городов
         )
         output = result.stdout + result.stderr
         for line in output.split("\n"):
-            if "total gdebenz reports saved" in line.lower():
+            if "отчётов сохранено:" in line.lower() or "total gdebenz reports saved" in line.lower():
                 try:
                     num = int(line.split(":")[-1].strip())
-                    results["saved"] = num
+                    results["saved"] += num
                 except (ValueError, IndexError):
                     pass
             elif "error" in line.lower():
                 results["errors"] += 1
     except subprocess.TimeoutExpired:
-        print("  ⏱ GdeBenz parser: timeout")
+        print("  ⏱ GdeBenz parser: timeout (600s)")
         results["errors"] += 1
     except Exception as e:
         print(f"  ❌ GdeBenz parser: {e}")
@@ -534,6 +558,7 @@ async def main():
     # === Запуск рабочих парсеров ===
     fuelprice_results = await run_fuelprice_for_all_cities()
     gdebenz_results = await run_gdebenz_parser()
+    limits_results = await run_limits_parser()  # Лимиты и запреты на канистры
     tg_results = await run_tg_parser()
     vk_results = await run_vk_search_parser()
     quick_results = await run_quick_parser()
@@ -562,13 +587,14 @@ async def main():
         report += f"  • {s['source']}: {s['cnt']}\n"
 
     report += f"\n<b>Этот запуск:</b>\n"
-    report += f"  📈 fuelprice.ru: {fuelprice_results['saved']} цен\n"
-    report += f"  🗺 GdeBenz: {gdebenz_results['saved']} отчётов\n"
+    report += f"  📈 fuelprice.ru: {fuelprice_results['saved']} цен ({len(TOP_CITIES)} городов)\n"
+    report += f"  🗺 GdeBenz: {gdebenz_results['saved']} отчётов (110+ городов)\n"
+    report += f"  ⛽ Лимиты/канистры: {limits_results['saved']} отчётов\n"
     report += f"  📱 TG каналы: {tg_results['saved']} отчётов ({tg_results['channels_found']} каналов)\n"
     report += f"  🔗 VK поиск: {vk_results['saved']} отчётов\n"
     report += f"  ⚡ Быстрый: {quick_results['saved']} отчётов\n"
     total_errors = (fuelprice_results['errors'] + gdebenz_results['errors'] +
-                   tg_results['errors'] + vk_results['errors'] + quick_results['errors'])
+                   limits_results['errors'] + tg_results['errors'] + vk_results['errors'] + quick_results['errors'])
     if total_errors:
         report += f"  ⚠ Ошибок: {total_errors}\n"
 

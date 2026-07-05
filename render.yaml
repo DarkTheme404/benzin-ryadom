@@ -87,3 +87,20 @@ services:
         value: "false"
       # ADMIN_CHAT_ID — chat_id админа для alert'ов (задать вручную)
       # BOT_TOKEN — от @BotFather (наследуется)
+
+  # === Cron Job: авто-рассылка рекламы по пикам активности ===
+  # Пн-Пт: утро (7-9), вечер (17-19); Сб: утро (9-11); Вс: вечер (16-18)
+  - type: cron
+    name: benzin-auto-promote
+    runtime: python
+    plan: free
+    region: frankfurt
+    branch: main
+    rootDir: .
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: cd scripts && python auto_promote.py --force
+    schedule: "*/5 7-19 * * *"  # каждые 5 мин с 7 до 19 (MSK-3 = UTC)
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      # BOT_TOKEN — наследуется от web service

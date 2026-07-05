@@ -212,6 +212,7 @@ async def main():
     parser.add_argument("--limit", type=int, default=0, help="Лимит станций на город (0 = без лимита)")
     parser.add_argument("--dry-run", action="store_true", help="Не сохранять в БД")
     parser.add_argument("--create-new", action="store_true", help="Создавать новые АЗС в БД (если не найдены)")
+    parser.add_argument("--all", action="store_true", help="Парсить ВСЕ города (включая Крым, ЛНР, ДНР)")
     args = parser.parse_args()
 
     print(f"=== Парсер fuelprice.ru ===")
@@ -225,7 +226,17 @@ async def main():
         if args.city:
             cities = [args.city]
             print(f"Город: {args.city}")
+        elif args.all:
+            # Парсим ВСЕ города с главной страницы
+            print("Загружаю список ВСЕХ городов...")
+            html = await fetch(session, BASE_URL)
+            if not html:
+                print("❌ Не удалось загрузить главную")
+                return 1
+            cities = parse_cities(html)
+            print(f"Найдено городов: {len(cities)}")
         else:
+            # По умолчанию — все города
             print("Загружаю список городов...")
             html = await fetch(session, BASE_URL)
             if not html:
@@ -239,6 +250,8 @@ async def main():
         total_matched = 0
         total_created = 0
         total_saved = 0
+        cities_with_data = 0
+        cities_no_data = 0
 
         # Загружаем кеш АЗС один раз
         if not args.dry_run:
@@ -247,18 +260,21 @@ async def main():
             stations_cache = {}
 
         for city_slug in cities:
-            print(f"\n[{city_slug}]")
             url = f"{BASE_URL}/{city_slug}"
             html = await fetch(session, url)
             if not html:
-                print(f"  ❌ Не удалось загрузить")
+                cities_no_data += 1
                 continue
 
             stations = parse_stations_json(html)
             if args.limit > 0:
                 stations = stations[:args.limit]
 
-            print(f"  Найдено АЗС с ценами: {len(stations)}")
+            if not stations:
+                cities_no_data += 1
+                continue
+
+            cities_with_data += 1
             total_stations += len(stations)
 
             for st in stations:
@@ -302,11 +318,11 @@ async def main():
                         if total_saved < 3:
                             print(f"    ⚠ add_report {fuel}/{price}: {e}")
 
-            await asyncio.sleep(0.5)  # Уважение к серверу
+            await asyncio.sleep(0.3)  # Уважение к серверу
 
     print()
     print(f"=== Итого ===")
-    print(f"  Городов: {len(cities)}")
+    print(f"  Городов: {len(cities)} (с данными: {cities_with_data}, без: {cities_no_data})")
     print(f"  АЗС с ценами: {total_stations}")
     print(f"  Цен найдено: {total_prices}")
     if not args.dry_run:
