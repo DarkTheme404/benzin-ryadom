@@ -70,6 +70,7 @@ parse_benzin_status_tech = _safe_import("parse_benzin_status_tech")
 parse_benzin_price = _safe_import("parse_benzin_price")
 parse_yandex_fuel = _safe_import("parse_yandex_fuel")
 parse_benzinmap = _safe_import("parse_benzinmap")
+parse_azslive = _safe_import("parse_azslive")
 
 
 # Топ городов России по населению (включая Крым, ЛНР, ДНР)
@@ -541,6 +542,22 @@ async def parse_benzinmap_runner():
     return {}
 
 
+async def parse_azslive_runner():
+    """Запускает azslive.ru парсер (26K АЗС, наличие топлива)."""
+    if not parse_azslive:
+        print("  ⏭ parse_azslive не импортирован")
+        return {}
+    print(f"\n[azslive.ru] 26K АЗС, наличие топлива")
+    try:
+        sys.argv = ["parse_azslive.py"]
+        await parse_azslive.main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ azslive: {e}")
+    return {}
+
+
 SOURCES = {
     "gdebenz": {
         "name": "gdebenz.ru (2700+ городов, краудсорсинг наличия)",
@@ -660,6 +677,12 @@ SOURCES = {
         "name": "benzinmap.ru (62 региона, лимиты/канистры)",
         "function": parse_benzinmap_runner,
         "interval_hours": 6,
+        "enabled": True,
+    },
+    "azslive": {
+        "name": "azslive.ru (26K АЗС, наличие топлива)",
+        "function": parse_azslive_runner,
+        "interval_hours": 2,
         "enabled": True,
     },
 }
