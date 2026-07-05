@@ -64,6 +64,11 @@ parse_fuel_quality = _safe_import("parse_fuel_quality")
 parse_queue_data = _safe_import("parse_queue_data")
 parse_limits_canisters = _safe_import("parse_limits_canisters")
 parse_gdebenz = _safe_import("parse_gdebenz")
+parse_vk_groups = _safe_import("parse_vk_groups")
+parse_networks = _safe_import("parse_networks")
+parse_benzin_status_tech = _safe_import("parse_benzin_status_tech")
+parse_benzin_price = _safe_import("parse_benzin_price")
+parse_yandex_fuel = _safe_import("parse_yandex_fuel")
 
 
 # Топ городов России по населению (включая Крым, ЛНР, ДНР)
@@ -320,6 +325,106 @@ async def parse_ishubenzin_runner():
     return {}
 
 
+async def parse_vk_groups_runner():
+    """Запускает VK Groups парсер (557 VK-групп, без API ключа)."""
+    if not parse_vk_groups:
+        print("  ⏭ parse_vk_groups не импортирован")
+        return {}
+    print(f"\n[vk_groups] 557 VK-групп по городам РФ")
+    try:
+        from parse_vk_groups import run_vk_parser, VK_FUEL_GROUPS
+        cities = list(set(VK_FUEL_GROUPS.values()))
+        await run_vk_parser(cities, limit_per_group=30)
+    except Exception as e:
+        print(f"  ⚠ vk_groups: {e}")
+    return {}
+
+
+async def parse_networks_runner():
+    """Запускает парсер сетей АЗС (Лукойл, Газпромнефть, Роснефть, Татнефть)."""
+    if not parse_networks:
+        print("  ⏭ parse_networks не импортирован")
+        return {}
+    print(f"\n[networks] Официальные сайты сетей АЗС")
+    try:
+        sys.argv = ["parse_networks.py", "--network", "all"]
+        await parse_networks.main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ networks: {e}")
+    return {}
+
+
+async def parse_benzin_status_tech_runner():
+    """Запускает benzin-status.tech парсер (Mini App API, 685+ АЗС Москвы)."""
+    if not parse_benzin_status_tech:
+        print("  ⏭ parse_benzin_status_tech не импортирован")
+        return {}
+    print(f"\n[benzin-status.tech] Mini App API, crowd-sourced")
+    try:
+        sys.argv = ["parse_benzin_status_tech.py"]
+        await parse_benzin_status_tech.main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ benzin-status.tech: {e}")
+    return {}
+
+
+async def parse_benzin_price_runner():
+    """Запускает benzin-price.ru парсер (28K АЗС, агрегатор цен)."""
+    if not parse_benzin_price:
+        print("  ⏭ parse_benzin_price не импортирован")
+        return {}
+    print(f"\n[benzin-price.ru] 28K АЗС, агрегатор цен")
+    try:
+        sys.argv = ["parse_benzin_price.py", "--region", "all", "--limit", "30"]
+        await parse_benzin_price.main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ benzin-price.ru: {e}")
+    return {}
+
+
+async def parse_yandex_fuel_runner():
+    """Запускает Яндекс.Заправки (нужен YANDEX_GEOCODER_API_KEY)."""
+    if not parse_yandex_fuel:
+        print("  ⏭ parse_yandex_fuel не импортирован")
+        return {}
+    api_key = os.getenv("YANDEX_GEOCODER_API_KEY", "")
+    if not api_key:
+        print(f"  ⏭ Яндекс.Заправки: YANDEX_GEOCODER_API_KEY не задан, пропускаю")
+        return {}
+    # Крупные города с координатами
+    cities_coords = [
+        ("Москва", 55.7558, 37.6173),
+        ("СПб", 59.9343, 30.3351),
+        ("Новосибирск", 55.0084, 82.9357),
+        ("Екатеринбург", 56.8389, 60.6057),
+        ("Казань", 55.8304, 49.0661),
+        ("Краснодар", 45.0355, 38.9753),
+        ("Челябинск", 55.1644, 61.4368),
+        ("Самара", 53.1959, 50.1002),
+        ("Уфа", 54.7388, 55.9721),
+        ("Воронеж", 51.6615, 39.2003),
+    ]
+    print(f"\n[yandex_fuel] {len(cities_coords)} городов, Яндекс.Заправки API")
+    try:
+        sys.argv = ["parse_yandex_fuel.py"]
+        for city_name, lat, lon in cities_coords:
+            sys.argv = ["parse_yandex_fuel.py", "--lat", str(lat), "--lon", str(lon), "--radius", "15"]
+            print(f"  [{city_name}]")
+            await parse_yandex_fuel.main()
+            await asyncio.sleep(1)
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ yandex_fuel: {e}")
+    return {}
+
+
 SOURCES = {
     "gdebenz": {
         "name": "gdebenz.ru (2700+ городов, краудсорсинг наличия)",
@@ -403,6 +508,36 @@ SOURCES = {
         "name": "Лимиты и запреты на канистры (Минэнерго, новости, сети АЗС)",
         "function": lambda: parse_limits_canisters.main() if parse_limits_canisters else asyncio.sleep(0),
         "interval_hours": 6,
+        "enabled": True,
+    },
+    "vk_groups": {
+        "name": "VK группы (557 сообществ, цены/наличия)",
+        "function": parse_vk_groups_runner,
+        "interval_hours": 6,
+        "enabled": True,
+    },
+    "networks": {
+        "name": "Сети АЗС (Лукойл, Газпромнефть, Роснефть, Татнефть, Башнефть)",
+        "function": parse_networks_runner,
+        "interval_hours": 12,
+        "enabled": True,
+    },
+    "benzin_status_tech": {
+        "name": "benzin-status.tech (Mini App API, 685+ АЗС)",
+        "function": parse_benzin_status_tech_runner,
+        "interval_hours": 2,
+        "enabled": True,
+    },
+    "benzin_price": {
+        "name": "benzin-price.ru (28K АЗС, агрегатор цен)",
+        "function": parse_benzin_price_runner,
+        "interval_hours": 24,
+        "enabled": True,
+    },
+    "yandex_fuel": {
+        "name": "Яндекс.Заправки (API, нужен ключ)",
+        "function": parse_yandex_fuel_runner,
+        "interval_hours": 12,
         "enabled": True,
     },
 }

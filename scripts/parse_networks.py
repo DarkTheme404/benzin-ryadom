@@ -100,6 +100,30 @@ async def fetch_network_page(session: aiohttp.ClientSession, network: str) -> st
     return None
 
 
+async def find_network_stations(network: str) -> list[dict]:
+    """Ищет АЗС сети в БД по operator_keywords."""
+    cfg = NETWORKS[network]
+    keywords = cfg["operator_keywords"]
+    stations = []
+    for kw in keywords:
+        if db.USE_SQLITE:
+            rows = await db._fetch(
+                "SELECT id, name, city, operator FROM stations WHERE LOWER(operator) LIKE ? OR LOWER(name) LIKE ? LIMIT 50",
+                f"%{kw}%", f"%{kw}%",
+            )
+        else:
+            async with db._db.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id, name, city, operator FROM stations WHERE LOWER(operator) LIKE $1 OR LOWER(name) LIKE $2 LIMIT 50",
+                    f"%{kw}%", f"%{kw}%",
+                )
+        for r in rows:
+            r = dict(r) if not isinstance(r, dict) else r
+            if r["id"] not in [s["id"] for s in stations]:
+                stations.append(r)
+    return stations
+
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -119,6 +143,7 @@ async def main():
 
     await db.init_db()
     found = 0
+    saved = 0
 
     async with aiohttp.ClientSession() as session:
         for net in networks:
@@ -134,12 +159,31 @@ async def main():
                 for f, p in prices.items():
                     print(f"    АИ-{f}: {p}₽")
                 found += len(prices)
+
+                if not args.dry_run:
+                    stations = await find_network_stations(net)
+                    print(f"  АЗС в БД: {len(stations)}")
+                    for st in stations:
+                        for fuel, price in prices.items():
+                            try:
+                                await db.add_report(
+                                    station_id=st["id"],
+                                    fuel_type=fuel,
+                                    available=True,
+                                    price=price,
+                                    source="network_official",
+                                    comment=f"{cfg['name']} официальный сайт",
+                                )
+                                saved += 1
+                            except Exception as e:
+                                print(f"  ⚠ Save: {e}")
             else:
                 print(f"  ⚠ Цены не найдены на странице (сайт мог измениться)")
 
     print()
     print(f"=== Итого ===")
     print(f"  Цен найдено: {found}")
+    print(f"  Сохранено в БД: {saved}")
     print()
     print("💡 Сайты сетей часто меняют структуру — парсер нужно обновлять.")
     print("💡 Лучше использовать официальные API или Telegram-каналы с ценами.")
