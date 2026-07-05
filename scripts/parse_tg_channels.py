@@ -62,6 +62,24 @@ DEFAULT_CHANNELS = [
     "toplivo_poisk",       # Поиск топлива
     "pro_zapravki",        # Скидки на заправках
     "benzinmap",           # Карта дефицита бензина РФ
+    # === НОВЫЕ каналы ===
+    "mapfuel",             # Карта топлива (бот + канал)
+    "toplivo_online",      # Онлайн цены на топливо
+    "benzinru",            # Бензин РФ
+    "fuel_monitoring",     # Мониторинг топлива
+    "gas_station_prices",  # Цены АЗС
+    "shopot_nefti",        # Шепот нефти (аналитика рынка)
+    "benzinstatus",        # Бензин статус
+    "azs_prices_omt_bot",  # OMT цены АЗС (18K+ станций)
+    "toplivo_voronezh",    # Воронеж топливо
+    "toplivo_saratov",     # Саратов топливо
+    "toplivo_samara",      # Самара топливо
+    "toplivo_ekb",         # Екатеринбург топливо
+    "toplivo_nsk",         # Новосибирск топливо
+    "toplivo_krd",         # Краснодар топливо
+    "toplivo_rosneft",     # Роснефть офиц.
+    "toplivo_lukoil",      # Лукойл офиц.
+    "toplivo_gpn",         # Газпромнефть офиц.
     # === Региональные ===
     "toplivoufo",          # ЮФО (Краснодар, Ростов, Волгоград)
     "magistral116",        # Казань / Татарстан (М7)
@@ -72,6 +90,14 @@ DEFAULT_CHANNELS = [
     "nizhny01",            # Нижний Новгород (новости + цены)
     "Neftexpert",          # Нефтяной рынок
     "toplivo_live",        # Чаты водителей (Воронеж и др.)
+    "toplivo_msk",         # Москва топливо
+    "toplivo_spb",         # Санкт-Петербург топливо
+    "toplivo_ufa",         # Уфа топливо
+    "toplivo_cheboksary",  # Чебоксары топливо
+    "toplivo_perm",        # Пермь топливо
+    "toplivo_krasnoyarsk", # Красноярск топливо
+    "toplivo_omsk",        # Омск топливо
+    "toplivo_volgograd",   # Волгоград топливо
 ]
 
 CHANNELS = [c.strip() for c in os.getenv("TG_CHANNELS", "").split(",") if c.strip()]
@@ -97,6 +123,24 @@ CHANNEL_CITY_HINTS: dict[str, str] = {
     "toplivo_poisk": None,
     "pro_zapravki": None,
     "Neftexpert": None,
+    # === НОВЫЕ каналы ===
+    "mapfuel": None,
+    "toplivo_online": None,
+    "benzinru": None,
+    "fuel_monitoring": None,
+    "gas_station_prices": None,
+    "shopot_nefti": None,
+    "benzinstatus": None,
+    "azs_prices_omt_bot": None,
+    "toplivo_voronezh": "Воронеж",
+    "toplivo_saratov": "Саратов",
+    "toplivo_samara": "Самара",
+    "toplivo_ekb": "Екатеринбург",
+    "toplivo_nsk": "Новосибирск",
+    "toplivo_krd": "Краснодар",
+    "toplivo_rosneft": None,
+    "toplivo_lukoil": None,
+    "toplivo_gpn": None,
     # === Региональные ===
     "toplivoufo": None,           # ЮФО
     "magistral116": "Казань",
@@ -107,6 +151,14 @@ CHANNEL_CITY_HINTS: dict[str, str] = {
     "toplivo_live": None,         # Воронеж и др.
     "tvernewsru": "Тверь",
     "nizhny01": "Нижний Новгород",
+    "toplivo_msk": "Москва",
+    "toplivo_spb": "Санкт-Петербург",
+    "toplivo_ufa": "Уфа",
+    "toplivo_cheboksary": "Чебоксары",
+    "toplivo_perm": "Пермь",
+    "toplivo_krasnoyarsk": "Красноярск",
+    "toplivo_omsk": "Омск",
+    "toplivo_volgograd": "Волгоград",
 }
 
 logging.basicConfig(

@@ -109,11 +109,33 @@ async def fetch_channel_messages(client, channel: str, limit: int = 50) -> list[
 
 
 async def save_price(station_name: str, fuel: str, price: float,
-                    source_msg: str, source_url: str = "") -> bool:
-    """Сохраняет цену в БД (через stations + reports)."""
-    # TODO: нужен геокодинг для station_name → lat/lon
-    # Пока сохраняем только имя, цена привяжется к station через geocoding
-    return False
+                    source_msg: str, source_url: str = "",
+                    city: str = "", network: str = "") -> bool:
+    """Сохраняет цену в БД (через reports)."""
+    try:
+        # Ищем станцию по имени/сети
+        stations = await db.find_stations_by_name(station_name, limit=1)
+        if not stations and city:
+            stations = await db.find_stations_by_city(city=city, limit=3)
+        if not stations:
+            return False
+
+        station = stations[0]
+        station_id = station.get("id")
+        if not station_id:
+            return False
+
+        # Создаём отчёт с ценой
+        await db.add_report(
+            station_id=station_id,
+            fuel_type=fuel,
+            available=True,
+            price=price,
+            source="tg_parser",
+        )
+        return True
+    except Exception as e:
+        return False
 
 
 async def main():
@@ -169,6 +191,7 @@ async def main():
             print(f"[{channel}]")
             messages = await fetch_channel_messages(client, channel, args.limit)
             total_msgs += len(messages)
+            saved = 0
             for msg in messages:
                 if not msg.text:
                     continue
@@ -176,8 +199,18 @@ async def main():
                 if not prices:
                     continue
                 print(f"  [{msg.date:%Y-%m-%d %H:%M}] {prices}")
-                # Здесь будет сохранение в БД (после geocoding)
+                # Сохраняем каждую цену
+                for fuel, price in prices:
+                    ok = await save_price(
+                        station_name=channel,
+                        fuel=fuel,
+                        price=price,
+                        source_msg=msg.text[:200],
+                    )
+                    if ok:
+                        saved += 1
                 total_prices += len(prices)
+            print(f"  Saved: {saved}/{len(prices) if prices else 0}")
 
     print()
     print(f"=== Итого ===")
