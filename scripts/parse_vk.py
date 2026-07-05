@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bot"))
 import db  # noqa: E402
 
 BASE_URL = "https://m.vk.com"
-API_URL = "https://api.vk.com/api/v1"
+API_URL = "https://api.vk.com/method"
 API_VERSION = "5.199"
 SOURCE_NAME = "vk"
 
@@ -323,6 +323,45 @@ async def search_api_groups(
     return all_posts
 
 
+async def search_api_global(
+    session: aiohttp.ClientSession,
+    query: str,
+    limit: int,
+    token: str,
+    days_back: int = 7,
+) -> list[dict]:
+    """Глобальный поиск постов через VK newsfeed.search."""
+    all_posts = []
+    offset = 0
+    while len(all_posts) < limit:
+        data = await fetch_api(
+            session, "newsfeed.search",
+            {"q": query, "count": min(50, limit - len(all_posts)), "offset": offset},
+            token,
+        )
+        if not data:
+            break
+        items = data.get("items", [])
+        if not items:
+            break
+        for p in items:
+            text = p.get("text", "")
+            if not text or len(text) < 20:
+                continue
+            source_id = p.get("source_id", 0)
+            all_posts.append({
+                "text": text,
+                "source": f"api:vk.com/search",
+                "date": p.get("date"),
+                "post_url": f"https://vk.com/wall{source_id}_{p.get('post_id', p.get('id', ''))}",
+            })
+        offset += len(items)
+        if offset >= 200:
+            break
+        await asyncio.sleep(0.3)
+    return all_posts[:limit]
+
+
 async def save_posts(posts: list[dict], dry_run: bool) -> tuple[int, int]:
     """Сохраняет распарсенные посты в БД. Возвращает (цены, отчёты)."""
     if dry_run:
@@ -411,7 +450,8 @@ async def save_posts(posts: list[dict], dry_run: bool) -> tuple[int, int]:
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--api", action="store_true", help="Использовать VK API вместо web-скрапинга")
-    parser.add_argument("--query", default="АИ-95 цена", help="Поисковый запрос (для web-режима)")
+    parser.add_argument("--search", action="store_true", help="Глобальный поиск через newsfeed.search (нужен --api)")
+    parser.add_argument("--query", default="АИ-95 цена руб", help="Поисковый запрос")
     parser.add_argument("--groups", help="Группы через запятую (для API-режима), например: avto_benzin,fuel_price")
     parser.add_argument("--limit", type=int, default=20, help="Лимит постов")
     parser.add_argument("--days-back", type=int, default=7, help="Глубина поиска (дней)")
@@ -426,19 +466,17 @@ async def main():
         return 1
 
     print(f"=== Парсер ВКонтакте ===")
-    print(f"Режим: {'VK API' if args.api else 'Web-скрапинг'}")
-    if args.api:
-        groups = [g.strip() for g in (args.groups or "").split(",") if g.strip()]
-        print(f"Группы: {groups}")
-    else:
-        print(f"Запрос: {args.query}")
+    print(f"Режим: {'VK API search' if args.search else 'VK API groups' if args.api else 'Web-скрапинг'}")
+    print(f"Запрос: {args.query}")
     print(f"Лимит: {args.limit} постов")
 
     if not args.dry_run:
         await db.init_db()
 
     async with aiohttp.ClientSession() as session:
-        if args.api:
+        if args.api and args.search:
+            posts = await search_api_global(session, args.query, args.limit, token, args.days_back)
+        elif args.api:
             groups = [g.strip() for g in (args.groups or "").split(",") if g.strip()]
             if not groups:
                 print("❌ --groups не указаны")
