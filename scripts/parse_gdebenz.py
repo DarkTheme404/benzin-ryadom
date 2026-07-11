@@ -487,15 +487,18 @@ async def save_reports(stations_data: list, area_name: str):
                     station_id
                 )
             if not existing:
-                await db._execute(
-                    f"""INSERT INTO reports (station_id, fuel_type, available, source, created_at, comment)
-                       VALUES (?, ?, ?, ?, {'datetime(\"now\")' if db.USE_SQLITE else 'NOW()'}, ?)""",
-                    station_id,
-                    "all",
-                    available,
-                    "gdebenz",
-                    message[:500],
-                )
+                if db.USE_SQLITE:
+                    await db._execute(
+                        """INSERT INTO reports (station_id, fuel_type, available, source, created_at, expires_at, comment)
+                           VALUES (?, ?, ?, ?, datetime('now'), datetime('now', '+2 hours'), ?)""",
+                        station_id, "all", available, "gdebenz", message[:500],
+                    )
+                else:
+                    await db._execute(
+                        """INSERT INTO reports (station_id, fuel_type, available, source, created_at, expires_at, comment)
+                           VALUES (?, ?, ?, ?, NOW(), NOW() + INTERVAL '2 hours', ?)""",
+                        station_id, "all", available, "gdebenz", message[:500],
+                    )
                 saved += 1
             continue
 
@@ -541,15 +544,18 @@ async def save_reports(stations_data: list, area_name: str):
                 elif status == "low":
                     comment = f"[gdebenz.ru] {area_name}: МАЛО топлива ({fuel_type})"
 
-            await db._execute(
-                f"""INSERT INTO reports (station_id, fuel_type, available, source, created_at, comment)
-                   VALUES (?, ?, ?, ?, {'datetime(\"now\")' if db.USE_SQLITE else 'NOW()'}, ?)""",
-                station_id,
-                normalized_fuel,
-                available,
-                "gdebenz",
-                comment,
-            )
+            if db.USE_SQLITE:
+                await db._execute(
+                    """INSERT INTO reports (station_id, fuel_type, available, source, created_at, expires_at, comment)
+                       VALUES (?, ?, ?, ?, datetime('now'), datetime('now', '+2 hours'), ?)""",
+                    station_id, normalized_fuel, available, "gdebenz", comment,
+                )
+            else:
+                await db._execute(
+                    """INSERT INTO reports (station_id, fuel_type, available, source, created_at, expires_at, comment)
+                       VALUES (?, ?, ?, ?, NOW(), NOW() + INTERVAL '2 hours', ?)""",
+                    station_id, normalized_fuel, available, "gdebenz", comment,
+                )
             saved += 1
 
     return saved
@@ -579,7 +585,7 @@ async def main():
                 logger.debug(f"[{i+1}/{len(SEARCH_AREAS)}] {area['name']}: no data")
             # Задержка чтобы не получить 502 от rate limiter
             if i < len(SEARCH_AREAS) - 1:
-                await asyncio.sleep(2)
+                await asyncio.sleep(0.5)
 
     logger.info(f"\n=== GDEBENZ ИТОГО ===")
     logger.info(f"  Областей: {len(SEARCH_AREAS)} (с данными: {areas_with_data}, без: {areas_no_data})")
