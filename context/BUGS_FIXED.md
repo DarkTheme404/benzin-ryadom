@@ -1,5 +1,44 @@
 # Исправленные баги
 
+## 12.07.2026 — 13 багов + Render cron + unified reporting
+
+### КРИТИЧНЫЕ
+- **`utils.py` — добавлен `get_main_status()`** (vk_callback.py крашился без него)
+- **`vk_callback.py` — добавлен `import db`** (NameError на `db.USE_SQLITE`)
+- **`handlers.py:2573` — Mini App отчёты**: `get_or_create_user` возвращает user_id (не telegram_id). Был перепутан → user_id=None
+- **`handlers.py:2874,2891,2902` — analytics**: использовал `owner_stations.id` вместо `station_id` → аналитика владельцев сломана
+
+### ВЫСОКИЕ
+- **`api.py:1447` — handle_parse_benzin**: `db.API_MODE = True` не сбрасывался. Добавлен `finally: db.API_MODE = False`. Также traceback утекал клиенту — убрано
+- **`api.py:1410,1674` — `_parsers_running`**: мог застрять навсегда при exception. Добавлен `try/finally` в `_run_parsers` и `_run_import`
+- **`api.py:1113` — rate limit**: было hardcoded `30`, заменено на `RATE_LIMIT_POST` (10)
+- **`db.py:2207-2272` — дубликаты `get_source_priority`/`calculate_confidence`**: второй overwrote первый (recency_bonus). Удалён дубликат
+- **`db.py:_execute` — `returning=True` без `RETURNING id`**: для PG `fetchrow` возвращал None. Добавлен авто-appending `RETURNING id`
+- **`handlers.py:1726` — `/set_ad off`**: был недостижим (raw без `|` ловился раньше). Проверка `off` вынесена вперёд
+- **`miniapp/app.js:430` — `state.region`**: переменная не существует, должно быть `state.cityRegion`
+- **`db.py:init_db/close_db` — не уважали `API_MODE`**: парсеры из API закрывали общий пул. Теперь `init_db` идемпотентна, `close_db` не закрывает при `API_MODE=True`
+
+### GitHub Actions cron
+- **`f394009`** — создан `.github/workflows/cron-parsers.yml` (каждый час)
+- **`3eaef30`** — улучшен с retry и 60s timeout (Render Free спит)
+- **`ec33fdb`** — fix: "already running" treated as success
+- **`bc633de`** — fix: regex `\s*` для JSON `"ok": true` (с пробелом)
+
+## Unified Reporting (commit 69919d7)
+- `POST /api/reports` расширен: price, queue_size, has_limit, limit_liters, limit_per_visit, limit_daily, limit_weekly, canister_ban, comment, fuel_type=all
+- `POST /api/reviews` — новый endpoint для отзывов с комментарием
+- **TG бот**: новые кнопки «Указать цену/лимит/канистры/очередь» после выбора статуса. FSM `ReportExtrasStates`
+- **VK бот**: `vk_report_extras_keyboard` + handlers `handle_report_extra/save/price_only/extras_text`
+- **Mini App (vanilla)**: новые поля лимита, канистр, комментарий. submitReport отправляет все поля
+- **Mini App (React)**: расширен `postReport`, новый `postReview`
+- `handle_web_app_data` (TG) расширен: принимает все поля + `type=review`
+
+## Парсеры (commit 6ae4f3d, 952549a, 4735c81, 47c3504)
+- `gdebenz_areas_all.py` регенерирован из БД: **4,233 города** (было 2,735)
+- `parse_azslive.py`: сохраняет `queue_size=5` при статусе "queue"
+- `parse_benzinmap.py` + `parse_azslive.py` добавлены в API `/api/parse`
+- Результат: 533 города с live данными (было 117), 398 отчётов с лимитом/канистрами (было 45), 595 отчётов с очередями (было 0)
+
 ## 03.07.2026 — Глубокий аудит кодовой базы
 
 ### КРИТИЧНЫЕ
