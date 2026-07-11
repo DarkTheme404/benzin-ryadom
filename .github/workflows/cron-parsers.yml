@@ -1,0 +1,25 @@
+name: Hourly Parsers
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # каждый час
+  workflow_dispatch:  # ручной запуск
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wake up API + trigger parsers
+        run: |
+          API="https://benzin-ryadom.onrender.com"
+          KEY="${{ secrets.PARSE_API_KEY }}"
+
+          echo "=== Health check ==="
+          curl -sf "$API/api/health" || { echo "API down!"; exit 1; }
+
+          echo "=== Trigger parsers ==="
+          RESPONSE=$(curl -sf "$API/api/parse?key=$KEY")
+          echo "$RESPONSE"
+
+          echo "$RESPONSE" | grep -q '"ok":true' && echo "OK" || { echo "FAILED"; exit 1; }
