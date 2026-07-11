@@ -45,8 +45,11 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 # === Инициализация ===
 async def init_db():
-    """Инициализирует БД."""
+    """Инициализирует БД. Идемпотентна — если уже инициализирована, ничего не делает."""
     global _db
+    if _db is not None:
+        # Уже инициализирована (например, API держит пул)
+        return
     if USE_SQLITE:
         _db = await aiosqlite.connect(str(DB_PATH))
         _db.row_factory = aiosqlite.Row
@@ -78,8 +81,11 @@ async def init_db():
 
 
 async def close_db():
-    """Закрывает БД."""
+    """Закрывает БД. Не закрывает, если API_MODE=True (вызвано из API сервера)."""
     global _db
+    if API_MODE:
+        # API держит пул, не закрываем
+        return
     if _db:
         await _db.close()
         _db = None
