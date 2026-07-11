@@ -419,11 +419,14 @@ async def find_or_create_station(station_data: dict, area_name: str) -> Optional
         brand = name
 
     # Определяем тип топлива по умолчанию
-    default_fuel = json.dumps(["92", "95", "diesel"])
+    if db.USE_SQLITE:
+        default_fuel = json.dumps(["92", "95", "diesel"])
+    else:
+        default_fuel = ["92", "95", "diesel"]  # PG ARRAY
 
     cursor = await db._execute(
-        """INSERT INTO stations (name, operator, brand, city, lat, lon, address, fuel_types, is_active, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))""",
+        f"""INSERT INTO stations (name, operator, brand, city, lat, lon, address, fuel_types, is_active, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, {1 if db.USE_SQLITE else True}, {'datetime(\"now\")' if db.USE_SQLITE else 'NOW()'})""",
         name, brand, brand, city, lat, lon, station_data.get("addr", ""), default_fuel,
         returning=True
     )
@@ -485,8 +488,8 @@ async def save_reports(stations_data: list, area_name: str):
                 )
             if not existing:
                 await db._execute(
-                    """INSERT INTO reports (station_id, fuel_type, available, source, created_at, comment)
-                       VALUES (?, ?, ?, ?, datetime('now'), ?)""",
+                    f"""INSERT INTO reports (station_id, fuel_type, available, source, created_at, comment)
+                       VALUES (?, ?, ?, ?, {'datetime(\"now\")' if db.USE_SQLITE else 'NOW()'}, ?)""",
                     station_id,
                     "all",
                     available,
@@ -539,8 +542,8 @@ async def save_reports(stations_data: list, area_name: str):
                     comment = f"[gdebenz.ru] {area_name}: МАЛО топлива ({fuel_type})"
 
             await db._execute(
-                """INSERT INTO reports (station_id, fuel_type, available, source, created_at, comment)
-                   VALUES (?, ?, ?, ?, datetime('now'), ?)""",
+                f"""INSERT INTO reports (station_id, fuel_type, available, source, created_at, comment)
+                   VALUES (?, ?, ?, ?, {'datetime(\"now\")' if db.USE_SQLITE else 'NOW()'}, ?)""",
                 station_id,
                 normalized_fuel,
                 available,
