@@ -33,14 +33,16 @@ jobs:
           fi
 
           echo "=== Trigger parsers ==="
-          RESPONSE=$(curl -s --max-time 120 "$API/api/parse?key=$KEY")
+          HTTP_CODE=$(curl -s -o /tmp/parse_resp.json -w "%{http_code}" --max-time 120 "$API/api/parse?key=$KEY")
+          RESPONSE=$(cat /tmp/parse_resp.json)
+          echo "HTTP: $HTTP_CODE"
           echo "Response: $RESPONSE"
 
-          if echo "$RESPONSE" | grep -q '"ok":true'; then
+          if [ "$HTTP_CODE" = "200" ] && echo "$RESPONSE" | grep -Eq '"ok"\s*:\s*true'; then
             echo "Parsers started successfully"
-          elif echo "$RESPONSE" | grep -q '"already running"'; then
-            echo "Parsers already running — OK (skipped, lock active)"
+          elif echo "$RESPONSE" | grep -q 'already running'; then
+            echo "Parsers already running — OK (lock active, will retry next hour)"
           else
-            echo "Parsers failed to start"
+            echo "Parsers failed"
             exit 1
           fi
