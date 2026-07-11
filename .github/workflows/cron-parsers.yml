@@ -38,6 +38,8 @@ jobs:
 
           if echo "$RESPONSE" | grep -q '"ok":true'; then
             echo "Parsers started successfully"
+          elif echo "$RESPONSE" | grep -q '"already running"'; then
+            echo "Parsers already running — OK (skipped, lock active)"
           else
             echo "Parsers failed to start"
             exit 1
