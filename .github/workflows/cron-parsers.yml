@@ -15,11 +15,30 @@ jobs:
           API="https://benzin-ryadom.onrender.com"
           KEY="${{ secrets.PARSE_API_KEY }}"
 
-          echo "=== Health check ==="
-          curl -sf "$API/api/health" || { echo "API down!"; exit 1; }
+          echo "=== Health check (may take 30s to wake up) ==="
+          for i in 1 2 3 4 5 6; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$API/api/health" || echo "000")
+            echo "  Attempt $i: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "  API is up!"
+              break
+            fi
+            echo "  Waiting 10s..."
+            sleep 10
+          done
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "API did not respond after 6 attempts"
+            exit 1
+          fi
 
           echo "=== Trigger parsers ==="
-          RESPONSE=$(curl -sf "$API/api/parse?key=$KEY")
-          echo "$RESPONSE"
+          RESPONSE=$(curl -s --max-time 120 "$API/api/parse?key=$KEY")
+          echo "Response: $RESPONSE"
 
-          echo "$RESPONSE" | grep -q '"ok":true' && echo "OK" || { echo "FAILED"; exit 1; }
+          if echo "$RESPONSE" | grep -q '"ok":true'; then
+            echo "Parsers started successfully"
+          else
+            echo "Parsers failed to start"
+            exit 1
+          fi
