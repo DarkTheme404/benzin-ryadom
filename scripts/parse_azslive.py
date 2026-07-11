@@ -171,11 +171,15 @@ async def save_azslive_data(stations):
         fuel_map = {"ai92": "92", "ai95": "95", "ai98": "98", "dt": "dt", "gas": "gas"}
         fuel_type = fuel_map.get(fuels[0], "all") if fuels else "all"
 
+        # Если статус "queue" — это и есть информация об очереди
+        queue_size = 5 if azs_status == "queue" else None
+
         try:
             await db.add_report(
                 station_id=matching["id"],
                 fuel_type=fuel_type,
                 available=available,
+                queue_size=queue_size,
                 comment=" | ".join(comment_parts)[:500],
                 source="azslive",
             )
