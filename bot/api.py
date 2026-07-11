@@ -1489,6 +1489,32 @@ async def handle_parse(request):
                 results["benzin_status_tech"] = "timeout (240s)"
             except Exception as e:
                 results["benzin_status_tech"] = str(e)
+
+            # benzinmap.ru — лимиты/канистры (62 региона)
+            try:
+                import parse_benzinmap
+                await asyncio.wait_for(
+                    parse_benzinmap.main(),
+                    timeout=120.0,
+                )
+                results["benzinmap"] = "ok"
+            except asyncio.TimeoutError:
+                results["benzinmap"] = "timeout (120s)"
+            except Exception as e:
+                results["benzinmap"] = str(e)
+
+            # azslive.ru — наличие топлива (15 bbox по всей РФ)
+            try:
+                import parse_azslive
+                await asyncio.wait_for(
+                    parse_azslive.main(),
+                    timeout=300.0,
+                )
+                results["azslive"] = "ok"
+            except asyncio.TimeoutError:
+                results["azslive"] = "timeout (300s)"
+            except Exception as e:
+                results["azslive"] = str(e)
         finally:
             _db_module.API_MODE = False
             logger.info("Background parsers finished: %s", results)
