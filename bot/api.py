@@ -1543,6 +1543,19 @@ async def handle_parse(request):
                 except Exception as e:
                     return str(e)
 
+            async def _run_news():
+                try:
+                    import parse_news
+                    await asyncio.wait_for(
+                        parse_news.main(),
+                        timeout=120.0,
+                    )
+                    return "ok"
+                except asyncio.TimeoutError:
+                    return "timeout (120s)"
+                except Exception as e:
+                    return str(e)
+
             async def _run_yandex_fuel():
                 try:
                     import parse_yandex_fuel
@@ -1580,31 +1593,34 @@ async def handle_parse(request):
                 except Exception as e:
                     return str(e)
 
-            # Запускаем все 4 долгих парсера ПАРАЛЛЕЛЬНО
+            # Запускаем все 5 долгих парсеров ПАРАЛЛЕЛЬНО
             gdebenz_task = asyncio.create_task(_run_gdebenz())
             azslive_task = asyncio.create_task(_run_azslive())
             vk_groups_task = asyncio.create_task(_run_vk_groups())
             yandex_fuel_task = asyncio.create_task(_run_yandex_fuel())
+            news_task = asyncio.create_task(_run_news())
 
             # Собираем результаты с таймаутом
             try:
-                gdebenz_result, azslive_result, vk_groups_result, yandex_fuel_result = await asyncio.wait_for(
-                    asyncio.gather(gdebenz_task, azslive_task, vk_groups_task, yandex_fuel_task, return_exceptions=True),
+                gdebenz_result, azslive_result, vk_groups_result, yandex_fuel_result, news_result = await asyncio.wait_for(
+                    asyncio.gather(gdebenz_task, azslive_task, vk_groups_task, yandex_fuel_task, news_task, return_exceptions=True),
                     timeout=5400.0,  # 90 минут max
                 )
                 results["gdebenz"] = gdebenz_result if not isinstance(gdebenz_result, Exception) else str(gdebenz_result)
                 results["azslive"] = azslive_result if not isinstance(azslive_result, Exception) else str(azslive_result)
                 results["vk_groups"] = vk_groups_result if not isinstance(vk_groups_result, Exception) else str(vk_groups_result)
                 results["yandex_fuel"] = yandex_fuel_result if not isinstance(yandex_fuel_result, Exception) else str(yandex_fuel_result)
+                results["news"] = news_result if not isinstance(news_result, Exception) else str(news_result)
             except asyncio.TimeoutError:
                 # Если что-то не успело — отменяем и пишем
-                for t in (gdebenz_task, azslive_task, vk_groups_task, yandex_fuel_task):
+                for t in (gdebenz_task, azslive_task, vk_groups_task, yandex_fuel_task, news_task):
                     if not t.done():
                         t.cancel()
                 results["gdebenz"] = "timeout (5400s)"
                 results["azslive"] = results.get("azslive", "timeout")
                 results["vk_groups"] = results.get("vk_groups", "timeout")
                 results["yandex_fuel"] = results.get("yandex_fuel", "timeout")
+                results["news"] = results.get("news", "timeout")
         finally:
             _db_module.API_MODE = False
             logger.info("Background parsers finished: %s", results)
