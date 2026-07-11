@@ -350,6 +350,34 @@
       <input type="number" class="field-input" id="report-queue" placeholder="0" min="0" max="100" inputmode="numeric">
     </div>
 
+    <div class="field">
+      <label class="field-label">
+        <input type="checkbox" id="report-has-limit"> 🚫 Есть лимит на заправку
+      </label>
+    </div>
+
+    <div class="field" id="report-limit-fields" hidden>
+      <div class="limit-row">
+        <input type="number" class="field-input" id="report-limit-liters" placeholder="Общий, л" min="1" max="1000" inputmode="numeric">
+        <input type="number" class="field-input" id="report-limit-per-visit" placeholder="За раз, л" min="1" max="500" inputmode="numeric">
+      </div>
+      <div class="limit-row">
+        <input type="number" class="field-input" id="report-limit-daily" placeholder="В день, л" min="1" max="2000" inputmode="numeric">
+        <input type="number" class="field-input" id="report-limit-weekly" placeholder="В неделю, л" min="1" max="5000" inputmode="numeric">
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="field-label">
+        <input type="checkbox" id="report-canister-ban"> ❌ Заправка в канистры запрещена
+      </label>
+    </div>
+
+    <div class="field">
+      <label class="field-label">Комментарий (необязательно)</label>
+      <input type="text" class="field-input" id="report-comment" placeholder="Например: только наличные" maxlength="500">
+    </div>
+
     <div class="btn-row">
       <button class="btn btn-secondary" data-action="close-sheet">Отмена</button>
       <button class="btn btn-primary" id="report-submit">Отправить</button>

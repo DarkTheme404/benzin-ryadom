@@ -170,6 +170,60 @@ export async function postPriceUpdate(p: PriceUpdate): Promise<{ ok: boolean }> 
 
 
 /**
+ * Отправляет отзыв о качестве топлива на АЗС.
+ *  - В Telegram Mini App: WebApp.sendData (бот примет через web_app_data handler).
+ *  - В браузере (PWA / fallback): POST на /api/reviews.
+ */
+export async function postReview(
+  stationId: number,
+  fuelType: string,
+  rating: number,
+  comment?: string,
+): Promise<{ ok: boolean; source: "telegram" | "api" }> {
+  const payload = {
+    type: "review",
+    station_id: stationId,
+    fuel_type: fuelType,
+    rating,
+    comment,
+    timestamp: Date.now(),
+  };
+
+  // 1) Пробуем Telegram Mini App
+  try {
+    const { default: WebApp } = await import("@twa-dev/sdk");
+    if (WebApp?.sendData) {
+      WebApp.sendData(JSON.stringify(payload));
+      return { ok: true, source: "telegram" };
+    }
+  } catch {
+    // нет TMA SDK
+  }
+
+  // 2) Fallback: HTTP POST
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const res = await fetch(buildUrl("/api/reviews", {}), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        station_id: stationId,
+        fuel_type: fuelType,
+        rating,
+        comment,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return { ok: true, source: "api" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
+/**
  * Отправляет отчёт о наличии.
  *  - В Telegram Mini App: WebApp.sendData (бот примет через web_app_data handler).
  *  - В браузере (PWA / fallback): POST на /api/reports.
@@ -178,7 +232,17 @@ export async function postReport(
   stationId: number,
   fuelType: string,
   available: boolean | null,
-  extras?: { price?: number; queue_size?: number },
+  extras?: {
+    price?: number;
+    queue_size?: number;
+    has_limit?: boolean;
+    limit_liters?: number;
+    limit_per_visit?: number;
+    limit_daily?: number;
+    limit_weekly?: number;
+    canister_ban?: boolean;
+    comment?: string;
+  },
 ): Promise<{ ok: boolean; source: "telegram" | "api" }> {
   const payload = {
     type: "report",
@@ -187,6 +251,13 @@ export async function postReport(
     available: available,
     price: extras?.price,
     queue_size: extras?.queue_size,
+    has_limit: extras?.has_limit,
+    limit_liters: extras?.limit_liters,
+    limit_per_visit: extras?.limit_per_visit,
+    limit_daily: extras?.limit_daily,
+    limit_weekly: extras?.limit_weekly,
+    canister_ban: extras?.canister_ban,
+    comment: extras?.comment,
     timestamp: Date.now(),
   };
 
@@ -215,6 +286,13 @@ export async function postReport(
           available: available,
           price: extras?.price,
           queue_size: extras?.queue_size,
+          has_limit: extras?.has_limit,
+          limit_liters: extras?.limit_liters,
+          limit_per_visit: extras?.limit_per_visit,
+          limit_daily: extras?.limit_daily,
+          limit_weekly: extras?.limit_weekly,
+          canister_ban: extras?.canister_ban,
+          comment: extras?.comment,
         }),
         signal: controller.signal,
       });

@@ -1235,11 +1235,34 @@
       available: true,
       price: null,
       queue: null,
+      hasLimit: false,
+      limitLiters: null,
+      limitPerVisit: null,
+      limitDaily: null,
+      limitWeekly: null,
+      canisterBan: false,
+      comment: '',
     };
     dom.reportSheetStation.textContent = stationName || (state.stations.length > 0
       ? 'Выбери АЗС' : 'Сначала выбери АЗС');
     dom.reportPrice.value = '';
     dom.reportQueue.value = '';
+    const hasLimitEl = $('#report-has-limit');
+    if (hasLimitEl) hasLimitEl.checked = false;
+    const limitFields = $('#report-limit-fields');
+    if (limitFields) limitFields.hidden = true;
+    const limitLitersEl = $('#report-limit-liters');
+    if (limitLitersEl) limitLitersEl.value = '';
+    const limitPVEl = $('#report-limit-per-visit');
+    if (limitPVEl) limitPVEl.value = '';
+    const limitDE = $('#report-limit-daily');
+    if (limitDE) limitDE.value = '';
+    const limitWE = $('#report-limit-weekly');
+    if (limitWE) limitWE.value = '';
+    const canisterEl = $('#report-canister-ban');
+    if (canisterEl) canisterEl.checked = false;
+    const commentEl = $('#report-comment');
+    if (commentEl) commentEl.value = '';
     $$('.chip-fuel-sheet').forEach(c => c.classList.toggle('active', c.dataset.fuel === state.reportSheet.fuel));
     $$('.avail-btn').forEach(b => b.classList.toggle('active', String(b.dataset.avail) === String(state.reportSheet.available)));
     dom.reportSheet.hidden = false;
@@ -1247,7 +1270,7 @@
   }
 
   async function submitReport() {
-    const { stationId, fuel, available, price, queue } = state.reportSheet;
+    const { stationId, fuel, available, price, queue, hasLimit, limitLiters, limitPerVisit, limitDaily, limitWeekly, canisterBan, comment } = state.reportSheet;
     if (!stationId) {
       showToast('Сначала выбери АЗС', 'warning');
       return;
@@ -1259,17 +1282,27 @@
     }
     showLoading();
     try {
+      const body = {
+        station_id: stationId,
+        fuel_type: fuel,
+        available,
+        telegram_id: tgId,
+        first_name: tg?.initDataUnsafe?.user?.first_name || 'User',
+      };
+      if (price) body.price = parseFloat(price);
+      if (queue !== undefined && queue !== null && queue !== '') body.queue_size = parseInt(queue);
+      if (hasLimit) {
+        body.has_limit = true;
+        if (limitLiters) body.limit_liters = parseInt(limitLiters);
+        if (limitPerVisit) body.limit_per_visit = parseInt(limitPerVisit);
+        if (limitDaily) body.limit_daily = parseInt(limitDaily);
+        if (limitWeekly) body.limit_weekly = parseInt(limitWeekly);
+      }
+      if (canisterBan) body.canister_ban = true;
+      if (comment && comment.trim()) body.comment = comment.trim();
       await api('/api/reports', {
         method: 'POST',
-        body: JSON.stringify({
-          station_id: stationId,
-          fuel_type: fuel,
-          available,
-          price: price ? parseFloat(price) : null,
-          queue_size: queue ? parseInt(queue) : null,
-          telegram_id: tgId,
-          first_name: tg?.initDataUnsafe?.user?.first_name || 'User',
-        }),
+        body: JSON.stringify(body),
       });
       closeSheet('report-sheet');
       hapticNotify('success');
@@ -1312,10 +1345,22 @@
 
     showLoading();
     try {
-      // Reviews use TG bot backend — we need a /api/reviews endpoint
-      // For now use price-update as fallback or show error
-      showToast('Отзывы пока можно оставить только в боте', 'info');
+      const body = {
+        station_id: stationId,
+        fuel_type: fuel,
+        rating: rating,
+        telegram_id: tgId,
+        first_name: tg?.initDataUnsafe?.user?.first_name || 'User',
+      };
+      if (comment && comment.trim()) body.comment = comment.trim();
+      await api('/api/reviews', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
       closeSheet('review-sheet');
+      hapticNotify('success');
+      showToast('✅ Спасибо за отзыв!', 'success');
+      if (state.selectedStation) openStationDetail(state.selectedStation);
     } catch (e) {
       showToast('Ошибка: ' + e.message, 'error');
     } finally {
@@ -1526,6 +1571,26 @@
     });
     dom.reportPrice.addEventListener('input', e => state.reportSheet.price = e.target.value);
     dom.reportQueue.addEventListener('input', e => state.reportSheet.queue = e.target.value);
+    const hasLimitEl = $('#report-has-limit');
+    if (hasLimitEl) {
+      hasLimitEl.addEventListener('change', e => {
+        state.reportSheet.hasLimit = e.target.checked;
+        const limitFields = $('#report-limit-fields');
+        if (limitFields) limitFields.hidden = !e.target.checked;
+      });
+    }
+    const limitLitersEl = $('#report-limit-liters');
+    if (limitLitersEl) limitLitersEl.addEventListener('input', e => state.reportSheet.limitLiters = e.target.value);
+    const limitPVEl = $('#report-limit-per-visit');
+    if (limitPVEl) limitPVEl.addEventListener('input', e => state.reportSheet.limitPerVisit = e.target.value);
+    const limitDE = $('#report-limit-daily');
+    if (limitDE) limitDE.addEventListener('input', e => state.reportSheet.limitDaily = e.target.value);
+    const limitWE = $('#report-limit-weekly');
+    if (limitWE) limitWE.addEventListener('input', e => state.reportSheet.limitWeekly = e.target.value);
+    const canisterEl = $('#report-canister-ban');
+    if (canisterEl) canisterEl.addEventListener('change', e => state.reportSheet.canisterBan = e.target.checked);
+    const commentEl = $('#report-comment');
+    if (commentEl) commentEl.addEventListener('input', e => state.reportSheet.comment = e.target.value);
     $('#report-submit').addEventListener('click', submitReport);
 
     // Review sheet

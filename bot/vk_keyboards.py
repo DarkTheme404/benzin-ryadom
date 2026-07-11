@@ -355,7 +355,31 @@ def vk_report_status_keyboard(station_id: int, fuel: str) -> str:
             _callback_button("❌ Нет", {"a": "report_status", "s": station_id, "f": fuel, "v": "no"}, "negative"),
         ],
         [
+            _callback_button("💰 Только цена", {"a": "report_price", "s": station_id, "f": fuel}, "primary"),
+        ],
+        [
             _callback_button("◀️ Назад", {"a": "report", "s": station_id}, "secondary"),
+        ],
+    ])
+
+
+def vk_report_extras_keyboard(station_id: int, fuel: str, status: str) -> str:
+    """Доп. данные: цена, лимиты, канистры, очередь."""
+    return vk_keyboard([
+        [
+            _callback_button("💰 Указать цену", {"a": "report_extra", "e": "price", "s": station_id, "f": fuel, "st": status}, "primary"),
+        ],
+        [
+            _callback_button("🚫 Указать лимит", {"a": "report_extra", "e": "limit", "s": station_id, "f": fuel, "st": status}, "negative"),
+        ],
+        [
+            _callback_button("❌ Канистры запрещены", {"a": "report_extra", "e": "canister", "s": station_id, "f": fuel, "st": status}, "negative"),
+        ],
+        [
+            _callback_button("🚗 Уточнить очередь", {"a": "report_extra", "e": "queue", "s": station_id, "f": fuel, "st": status}, "secondary"),
+        ],
+        [
+            _callback_button("✅ Готово (сохранить)", {"a": "report_save", "s": station_id, "f": fuel, "st": status}, "positive"),
         ],
     ])
 

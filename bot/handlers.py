@@ -64,6 +64,7 @@ from keyboards import (
     main_menu_keyboard,
     main_inline_keyboard,
     report_status_keyboard,
+    report_extras_keyboard,
     station_actions_keyboard,
     with_home_inline,
     city_keyboard,
@@ -176,6 +177,13 @@ class IdeaStates(StatesGroup):
 # === FSM: поиск АЗС по адресу ===
 class ReportAddressStates(StatesGroup):
     waiting_query = State()
+
+
+# === FSM: расширенный отчёт (цена/лимит/канистры/очередь) ===
+class ReportExtrasStates(StatesGroup):
+    waiting_price = State()
+    waiting_limit = State()
+    waiting_queue = State()
 
 
 # === FSM: отзыв о качестве бензина ===
@@ -2377,7 +2385,7 @@ async def report_fuel(callback: CallbackQuery):
     await callback.answer()
 
 
-async def report_submit(callback: CallbackQuery):
+async def report_submit(callback: CallbackQuery, state: FSMContext = None):
     parts = callback.data.split(":")
     station_id = int(parts[1])
     fuel = parts[2]
@@ -2390,8 +2398,96 @@ async def report_submit(callback: CallbackQuery):
         await callback.answer("Неизвестный статус", show_alert=True)
         return
 
+    # После выбора статуса — спрашиваем доп. данные (цена/лимит/канистры/очередь)
+    if state is not None:
+        await state.update_data(
+            report_station_id=station_id,
+            report_fuel=fuel,
+            report_status=status,
+        )
+    status_text = {
+        "yes": "✅ Есть",
+        "queue": "🕐 Большая очередь",
+        "low": "⚠️ Кончается",
+        "no": "❌ Нет",
+    }[status]
+    await callback.message.answer(
+        f"Принято: <b>{status_text}</b>\n\n"
+        f"Можешь добавить подробности (или сразу сохранить):",
+        reply_markup=report_extras_keyboard(station_id, fuel, status),
+    )
+    await callback.answer()
+
+
+async def report_extra_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработка кнопки 'Указать цену/лимит/канистры/очередь'."""
+    parts = callback.data.split(":")
+    # report_extra:price:station:fuel:status
+    extra_type = parts[1]
+    station_id = int(parts[2])
+    fuel = parts[3]
+    status = parts[4]
+
+    if state is None:
+        await callback.answer("Сессия истекла, начни заново", show_alert=True)
+        return
+
+    if extra_type == "price":
+        await state.set_state(ReportExtrasStates.waiting_price)
+        await callback.message.answer(
+            f"💰 <b>Введи цену за литр АИ-{fuel} в рублях:</b>\n"
+            f"Например: <code>55.40</code> или <code>55</code>\n\n"
+            f"Или нажми /cancel для отмены.",
+        )
+    elif extra_type == "limit":
+        await state.set_state(ReportExtrasStates.waiting_limit)
+        await callback.message.answer(
+            f"🚫 <b>Какой лимит на заправку?</b>\n"
+            f"Введи число литров (например: <code>30</code>)\n\n"
+            f"Или /cancel для отмены.",
+        )
+    elif extra_type == "canister":
+        # Сразу ставим canister_ban=True и возвращаемся к экстрам
+        await state.update_data(report_canister_ban=True)
+        await callback.message.answer(
+            f"✅ Запрет канистр зафиксирован.\n\n"
+            f"Что ещё добавить?",
+            reply_markup=report_extras_keyboard(station_id, fuel, status),
+        )
+    elif extra_type == "queue":
+        await state.set_state(ReportExtrasStates.waiting_queue)
+        await callback.message.answer(
+            f"🚗 <b>Сколько машин в очереди?</b>\n"
+            f"Введи число от 1 до 50 (например: <code>3</code>)\n\n"
+            f"Или /cancel для отмены.",
+        )
+    await callback.answer()
+
+
+async def report_save_with_extras(callback: CallbackQuery, state: FSMContext = None):
+    """Сохраняет отчёт со всеми собранными данными (цена/лимит/канистры/очередь)."""
+    if state is None:
+        await callback.answer("Сессия истекла", show_alert=True)
+        return
+
+    data = await state.get_data()
+    station_id = data.get("report_station_id")
+    fuel = data.get("report_fuel")
+    status = data.get("report_status")
+
+    if not (station_id and fuel and status):
+        await callback.answer("Нет данных для сохранения", show_alert=True)
+        return
+
+    available_map = {"yes": True, "queue": True, "low": None, "no": False}
+    base_queue = {"yes": None, "queue": 5, "low": None, "no": None}
+
     available = available_map[status]
-    queue_size = queue_map[status]
+    queue_size = data.get("report_queue") or base_queue[status]
+    has_limit = bool(data.get("report_limit"))
+    limit_liters = data.get("report_limit")
+    canister_ban = bool(data.get("report_canister_ban"))
+    price = data.get("report_price")
 
     uid = await _ensure_callback_user(callback)
 
@@ -2401,6 +2497,10 @@ async def report_submit(callback: CallbackQuery):
         fuel_type=fuel,
         available=available,
         queue_size=queue_size,
+        price=price,
+        has_limit=has_limit,
+        limit_liters=limit_liters,
+        canister_ban=canister_ban,
         source="user",
     )
 
@@ -2412,11 +2512,127 @@ async def report_submit(callback: CallbackQuery):
         "no": "❌ Нет",
     }[status]
 
+    extras = []
+    if price is not None:
+        extras.append(f"💰 Цена: {price:.2f}₽")
+    if has_limit and limit_liters:
+        extras.append(f"🚫 Лимит: {limit_liters}л")
+    if canister_ban:
+        extras.append("❌ Канистры запрещены")
+    if queue_size and status != "queue":
+        extras.append(f"🚗 Очередь: {queue_size} машин")
+
+    extras_text = ("\n" + " · ".join(extras)) if extras else ""
     await callback.message.answer(
         f"✅ <b>Спасибо! Отчёт записан.</b>\n\n"
-        f"АЗС #{station_id}, АИ-{fuel}: {status_text}\n\n"
+        f"АЗС #{station_id}, АИ-{fuel}: {status_text}{extras_text}\n\n"
         f"Твой отчёт увидят другие водители.{celebration}",
     )
+    await state.clear()
+    await callback.answer()
+
+
+async def report_price_callback(callback: CallbackQuery, state: FSMContext = None):
+    """Обработка кнопки 'Только цена' — спрашиваем цену и сохраняем сразу."""
+    parts = callback.data.split(":")
+    station_id = int(parts[1])
+    fuel = parts[2]
+    if state is not None:
+        await state.set_state(ReportExtrasStates.waiting_price)
+        await state.update_data(
+            report_station_id=station_id,
+            report_fuel=fuel,
+            report_status="yes",
+            report_price_only=True,
+        )
+        await callback.message.answer(
+            f"💰 <b>Введи цену за литр АИ-{fuel}:</b>\n"
+            f"Например: <code>55.40</code>\n\n"
+            f"Или /cancel для отмены.",
+        )
+    await callback.answer()
+
+
+async def handle_report_extras_input(message: Message, state: FSMContext):
+    """Обрабатывает текстовый ввод цены/лимита/очереди."""
+    if state is None:
+        return
+    current = await state.get_state()
+    text = (message.text or "").strip()
+
+    if current == ReportExtrasStates.waiting_price.state:
+        try:
+            price = float(text.replace(",", ".").replace("₽", "").replace("р", "").strip())
+            if price < 0 or price > 500:
+                raise ValueError
+        except ValueError:
+            await message.answer("❌ Неверная цена. Введи число от 0 до 500, например <code>55.40</code>")
+            return
+        await state.update_data(report_price=price)
+        data = await state.get_data()
+        station_id = data.get("report_station_id")
+        fuel = data.get("report_fuel")
+        status = data.get("report_status", "yes")
+        if data.get("report_price_only"):
+            # Сразу сохраняем
+            uid = await _ensure_message_user(message)
+            await add_report(
+                station_id=station_id,
+                user_id=uid,
+                fuel_type=fuel,
+                available=True,
+                price=price,
+                source="user",
+            )
+            await message.answer(
+                f"✅ Цена {price:.2f}₽ записана для АЗС #{station_id}, АИ-{fuel}.",
+            )
+            await state.clear()
+        else:
+            await state.set_state(None)
+            await message.answer(
+                f"✅ Цена: {price:.2f}₽\n\n"
+                f"Что ещё добавить?",
+                reply_markup=report_extras_keyboard(station_id, fuel, status),
+            )
+    elif current == ReportExtrasStates.waiting_limit.state:
+        try:
+            limit = int(text.replace("л", "").strip())
+            if limit < 1 or limit > 1000:
+                raise ValueError
+        except ValueError:
+            await message.answer("❌ Неверный лимит. Введи число от 1 до 1000, например <code>30</code>")
+            return
+        await state.update_data(report_limit=limit)
+        data = await state.get_data()
+        station_id = data.get("report_station_id")
+        fuel = data.get("report_fuel")
+        status = data.get("report_status", "yes")
+        await state.set_state(None)
+        await message.answer(
+            f"✅ Лимит: {limit}л\n\n"
+            f"Что ещё добавить?",
+            reply_markup=report_extras_keyboard(station_id, fuel, status),
+        )
+    elif current == ReportExtrasStates.waiting_queue.state:
+        try:
+            queue = int(text.replace("машин", "").strip())
+            if queue < 1 or queue > 50:
+                raise ValueError
+        except ValueError:
+            await message.answer("❌ Неверное число. Введи от 1 до 50, например <code>3</code>")
+            return
+        await state.update_data(report_queue=queue)
+        data = await state.get_data()
+        station_id = data.get("report_station_id")
+        fuel = data.get("report_fuel")
+        status = data.get("report_status", "yes")
+        await state.set_state(None)
+        await message.answer(
+            f"✅ Очередь: {queue} машин\n\n"
+            f"Что ещё добавить?",
+            reply_markup=report_extras_keyboard(station_id, fuel, status),
+        )
     await callback.answer()
 
 
@@ -2570,25 +2786,106 @@ async def handle_web_app_data(message: Message):
             available = None
         elif isinstance(available_raw, bool):
             available = available_raw
+        elif available_raw == "queue":
+            # "queue" из Mini App → есть, но с очередью
+            available = True
         else:
-            available = bool(int(available_raw))
+            try:
+                available = bool(int(available_raw))
+            except (ValueError, TypeError):
+                available = True
 
-        if not station_id or fuel_type not in ("92", "95", "98", "diesel", "100", "lpg"):
+        if not station_id or fuel_type not in ("92", "95", "98", "diesel", "100", "lpg", "all"):
             await message.answer("⚠️ Не удалось обработать отчёт. Попробуй ещё раз.")
             return
 
+        # Доп. поля из Mini App
+        price = data.get("price")
+        queue_size = data.get("queue_size")
+        if queue_size is not None:
+            try:
+                queue_size = int(queue_size)
+            except (ValueError, TypeError):
+                queue_size = 5 if available_raw == "queue" else None
+        elif available_raw == "queue":
+            queue_size = 5
+        has_limit = bool(data.get("has_limit", False))
+        limit_liters = data.get("limit_liters")
+        if limit_liters is not None:
+            try:
+                limit_liters = int(limit_liters)
+            except (ValueError, TypeError):
+                limit_liters = None
+        limit_per_visit = data.get("limit_per_visit")
+        if limit_per_visit is not None:
+            try:
+                limit_per_visit = int(limit_per_visit)
+            except (ValueError, TypeError):
+                limit_per_visit = None
+        limit_daily = data.get("limit_daily")
+        if limit_daily is not None:
+            try:
+                limit_daily = int(limit_daily)
+            except (ValueError, TypeError):
+                limit_daily = None
+        limit_weekly = data.get("limit_weekly")
+        if limit_weekly is not None:
+            try:
+                limit_weekly = int(limit_weekly)
+            except (ValueError, TypeError):
+                limit_weekly = None
+        canister_ban = bool(data.get("canister_ban", False))
+        comment = data.get("comment")
+
         uid = await get_or_create_user(message)
+        try:
+            price_f = float(price) if price is not None else None
+        except (ValueError, TypeError):
+            price_f = None
+
         await add_report(
             station_id=int(station_id),
             user_id=uid,
             fuel_type=fuel_type,
             available=available,
+            queue_size=queue_size,
+            price=price_f,
+            has_limit=has_limit,
+            limit_liters=limit_liters,
+            limit_per_visit=limit_per_visit,
+            limit_daily=limit_daily,
+            limit_weekly=limit_weekly,
+            canister_ban=canister_ban,
+            comment=str(comment)[:500] if comment else None,
             source="miniapp",
         )
         celebration = await _check_and_celebrate_badges(uid)
+        fuel_label = "АИ-" + fuel_type if fuel_type not in ("diesel", "lpg") else ("Дизель" if fuel_type == "diesel" else "Газ")
         await message.answer(
             f"✅ <b>Спасибо! Отчёт с карты записан.</b>\n\n"
-            f"АЗС #{station_id}, АИ-{fuel_type}{celebration}",
+            f"АЗС #{station_id}, {fuel_label}{celebration}",
+        )
+    elif data_type == "review":
+        station_id = data.get("station_id")
+        fuel_type = str(data.get("fuel_type", "92"))
+        rating = data.get("rating")
+        comment = data.get("comment")
+        if not station_id or rating is None or rating < 0 or rating > 5:
+            await message.answer("⚠️ Не удалось обработать отзыв.")
+            return
+        uid = await get_or_create_user(message)
+        await add_review(
+            station_id=int(station_id),
+            user_id=uid,
+            fuel_type=fuel_type,
+            rating=int(rating),
+            comment=str(comment)[:1000] if comment else None,
+        )
+        celebration = await _check_and_celebrate_badges(uid)
+        fuel_label = "АИ-" + fuel_type if fuel_type not in ("diesel", "lpg") else ("Дизель" if fuel_type == "diesel" else "Газ")
+        await message.answer(
+            f"✅ <b>Спасибо за отзыв!</b>\n\n"
+            f"АЗС #{station_id}, {fuel_label}: {'⭐' * int(rating)}{celebration}",
         )
     else:
         logger.info("Unknown web_app_data type: %s", data_type)
@@ -2785,6 +3082,9 @@ def register_all_handlers(dp: Dispatcher):
 
     # Текстовые кнопки главного меню (catch-all — ПОСЛЕ FSM!)
     dp.message.register(report_address_search, ReportAddressStates.waiting_query, F.text)
+    dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_price, F.text)
+    dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_limit, F.text)
+    dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_queue, F.text)
     dp.message.register(handle_main_button, F.text)
 
     # Callback (кнопки)
@@ -2799,6 +3099,9 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(report_start, F.data.regexp(r"^report:\d+$"))
     dp.callback_query.register(report_fuel, F.data.startswith("report_fuel:"))
     dp.callback_query.register(report_submit, F.data.startswith("report_status:"))
+    dp.callback_query.register(report_extra_callback, F.data.startswith("report_extra:"))
+    dp.callback_query.register(report_save_with_extras, F.data.startswith("report_save:"))
+    dp.callback_query.register(report_price_callback, F.data.startswith("report_price:"))
     dp.callback_query.register(subscribe_station, F.data.startswith("sub_station:"))
     dp.callback_query.register(handle_cancel, F.data == "cancel")
     dp.callback_query.register(handle_back_to_list, F.data == "back_to_list")

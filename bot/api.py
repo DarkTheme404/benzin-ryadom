@@ -17,6 +17,7 @@ from aiohttp import web
 from db import (
     USE_SQLITE,
     add_report,
+    add_review,
     find_nearest_stations,
     find_stations_by_city,
     find_stations_by_name,
@@ -1052,10 +1053,16 @@ async def handle_create_report(request):
     queue_size = data.get("queue_size")
     has_limit = data.get("has_limit", False)
     limit_liters = data.get("limit_liters")
+    limit_per_visit = data.get("limit_per_visit")
+    limit_daily = data.get("limit_daily")
+    limit_weekly = data.get("limit_weekly")
+    canister_ban = data.get("canister_ban", False)
+    comment = data.get("comment")
+    source = data.get("source", "miniapp")
 
     if not station_id or not isinstance(station_id, int):
         return web.json_response({"error": "station_id (int) is required"}, status=400)
-    if not fuel_type or fuel_type not in ("92", "95", "98", "diesel", "100", "lpg"):
+    if not fuel_type or fuel_type not in ("92", "95", "98", "diesel", "100", "lpg", "all"):
         return web.json_response({"error": f"invalid fuel_type: {fuel_type}"}, status=400)
     if available is not None and not isinstance(available, bool):
         return web.json_response(
@@ -1068,6 +1075,16 @@ async def handle_create_report(request):
         return web.json_response({"error": "price must be 0..500"}, status=400)
     if queue_size is not None and (not isinstance(queue_size, int) or queue_size < 0 or queue_size > 100):
         return web.json_response({"error": "queue_size must be 0..100"}, status=400)
+    if limit_liters is not None and (not isinstance(limit_liters, int) or limit_liters < 0 or limit_liters > 1000):
+        return web.json_response({"error": "limit_liters must be 0..1000"}, status=400)
+    if limit_per_visit is not None and (not isinstance(limit_per_visit, int) or limit_per_visit < 0 or limit_per_visit > 500):
+        return web.json_response({"error": "limit_per_visit must be 0..500"}, status=400)
+    if limit_daily is not None and (not isinstance(limit_daily, int) or limit_daily < 0 or limit_daily > 2000):
+        return web.json_response({"error": "limit_daily must be 0..2000"}, status=400)
+    if limit_weekly is not None and (not isinstance(limit_weekly, int) or limit_weekly < 0 or limit_weekly > 5000):
+        return web.json_response({"error": "limit_weekly must be 0..5000"}, status=400)
+    if comment is not None and (not isinstance(comment, str) or len(comment) > 500):
+        return web.json_response({"error": "comment must be string ≤ 500 chars"}, status=400)
 
     user_id = None
     if telegram_id:
@@ -1083,7 +1100,12 @@ async def handle_create_report(request):
         queue_size=int(queue_size) if queue_size is not None else None,
         has_limit=bool(has_limit),
         limit_liters=int(limit_liters) if limit_liters is not None else None,
-        source="miniapp",
+        limit_per_visit=int(limit_per_visit) if limit_per_visit is not None else None,
+        limit_daily=int(limit_daily) if limit_daily is not None else None,
+        limit_weekly=int(limit_weekly) if limit_weekly is not None else None,
+        canister_ban=bool(canister_ban),
+        comment=str(comment)[:500] if comment else None,
+        source=source,
     )
 
     new_badges = await check_and_award_badges(user_id) if user_id else []
@@ -1323,6 +1345,75 @@ async def handle_import_prices(request):
         "stations_new": new_stations,
         "stations_existing": existing_stations,
     })
+
+
+async def handle_create_review(request):
+    """POST /api/reviews — создание отзыва о качестве топлива на АЗС.
+
+    Тело: { station_id, fuel_type, rating (0-5), comment?, telegram_id?, first_name? }
+    Используется из Mini App и ботов.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return web.json_response({"error": "rate limit exceeded"}, status=429)
+
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+
+    if not isinstance(data, dict):
+        return web.json_response({"error": "expected json object"}, status=400)
+
+    station_id = data.get("station_id")
+    fuel_type = data.get("fuel_type")
+    rating = data.get("rating")
+    comment = data.get("comment")
+    telegram_id = data.get("telegram_id")
+    first_name = str(data.get("first_name", "MiniApp User"))[:64]
+
+    if not station_id or not isinstance(station_id, int):
+        return web.json_response({"error": "station_id (int) is required"}, status=400)
+    if not fuel_type or fuel_type not in ("92", "95", "98", "diesel", "100", "lpg", "all"):
+        return web.json_response({"error": f"invalid fuel_type: {fuel_type}"}, status=400)
+    if rating is None or not isinstance(rating, int) or rating < 0 or rating > 5:
+        return web.json_response({"error": "rating (0-5 int) is required"}, status=400)
+    if comment is not None and (not isinstance(comment, str) or len(comment) > 1000):
+        return web.json_response({"error": "comment must be string ≤ 1000 chars"}, status=400)
+    if telegram_id is not None and not isinstance(telegram_id, int):
+        return web.json_response({"error": "telegram_id must be int"}, status=400)
+
+    user_id = None
+    if telegram_id:
+        await upsert_user(telegram_id=telegram_id, first_name=first_name)
+        user_id = await get_user_id_by_telegram_id(telegram_id)
+
+    if not user_id:
+        return web.json_response({"error": "telegram_id is required for reviews"}, status=400)
+
+    review_id = await add_review(
+        station_id=station_id,
+        user_id=user_id,
+        fuel_type=fuel_type,
+        rating=rating,
+        comment=str(comment)[:1000] if comment else None,
+    )
+
+    new_badges = await check_and_award_badges(user_id) if user_id else []
+    return web.json_response(
+        {
+            "ok": True,
+            "review_id": review_id,
+            "new_badges": [
+                {
+                    "code": b,
+                    "name": BADGE_CATALOG.get(b, {}).get("name"),
+                    "emoji": BADGE_CATALOG.get(b, {}).get("emoji"),
+                    "desc": BADGE_CATALOG.get(b, {}).get("desc"),
+                }
+                for b in new_badges
+            ],
+        }
+    )
 
 
 async def handle_parse(request):
@@ -1737,6 +1828,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/stations/{id}/prices", handle_station_prices)
     app.router.add_get("/api/premium-status", handle_premium_status)
     app.router.add_post("/api/reports", handle_create_report)
+    app.router.add_post("/api/reviews", handle_create_review)
     app.router.add_post("/api/price-update", handle_price_update)
     app.router.add_post("/api/import_prices", handle_import_prices)
     app.router.add_post("/api/parse", handle_parse)

@@ -302,8 +302,58 @@ def report_status_keyboard(station_id: int, fuel: str) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="💰 Только цена",
+                    callback_data=f"report_price:{station_id}:{fuel}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="◀️ Назад",
                     callback_data=f"report:{station_id}",
+                ),
+            ],
+        ],
+    ))
+
+
+def report_extras_keyboard(station_id: int, fuel: str, status: str) -> InlineKeyboardMarkup:
+    """Доп. данные: цена, лимиты, канистры, очередь."""
+    return with_home_inline(InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💰 Указать цену",
+                    callback_data=f"report_extra:price:{station_id}:{fuel}:{status}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚫 Указать лимит",
+                    callback_data=f"report_extra:limit:{station_id}:{fuel}:{status}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Канистры запрещены",
+                    callback_data=f"report_extra:canister:{station_id}:{fuel}:{status}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚗 Уточнить очередь",
+                    callback_data=f"report_extra:queue:{station_id}:{fuel}:{status}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Готово (сохранить)",
+                    callback_data=f"report_save:{station_id}:{fuel}:{status}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⏭ Пропустить всё",
+                    callback_data=f"report_save:{station_id}:{fuel}:{status}",
                 ),
             ],
         ],

@@ -609,9 +609,80 @@ async def handle_report_fuel(peer_id: int, station_id: int, fuel: str) -> None:
 
 
 async def handle_report_status(peer_id: int, station_id: int, fuel: str, value: str) -> None:
-    """Шаг: выбран статус → сохраняем отчёт."""
-    avail = {"yes": True, "low": None, "no": False, "queue": None}.get(value, None)
-    queue_size = 5 if value == "queue" else None  # "очередь" = примерно 5 машин
+    """Шаг: выбран статус → спрашиваем доп. данные."""
+    state_data = _get_state(peer_id) or {}
+    state_data.update({
+        "flow": "report",
+        "step": "extras",
+        "station_id": station_id,
+        "fuel": fuel,
+        "status": value,
+        "price": None,
+        "limit": None,
+        "canister_ban": False,
+        "queue_size": 5 if value == "queue" else None,
+    })
+    _set_state(peer_id, state_data)
+    fuel_name = {"92": "АИ-92", "95": "АИ-95", "98": "АИ-98", "100": "АИ-100",
+                 "diesel": "Дизель", "lpg": "Газ"}.get(fuel, fuel)
+    status_text = {"yes": "✅ Есть", "queue": "🕐 Большая очередь",
+                   "low": "⚠️ Кончается", "no": "❌ Нет"}.get(value, "?")
+    from vk_keyboards import vk_report_extras_keyboard
+    await _vk_send(
+        peer_id,
+        f"Принято: <b>{status_text}</b>\n\n"
+        f"Можешь добавить подробности (или сразу сохранить):",
+        vk_report_extras_keyboard(station_id, fuel, value),
+    )
+
+
+async def handle_report_extra(peer_id: int, station_id: int, fuel: str, status: str, extra_type: str) -> None:
+    """Обработка кнопки доп. данных в VK."""
+    state_data = _get_state(peer_id) or {}
+    state_data.update({
+        "flow": "report",
+        "step": "extras_input",
+        "station_id": station_id,
+        "fuel": fuel,
+        "status": status,
+    })
+
+    if extra_type == "price":
+        state_data["awaiting"] = "price"
+        _set_state(peer_id, state_data)
+        await _vk_send(peer_id, "💰 <b>Введи цену за литр в рублях.</b>\nНапример: <code>55.40</code>")
+    elif extra_type == "limit":
+        state_data["awaiting"] = "limit"
+        _set_state(peer_id, state_data)
+        await _vk_send(peer_id, "🚫 <b>Введи лимит на заправку в литрах.</b>\nНапример: <code>30</code>")
+    elif extra_type == "canister":
+        # Сразу ставим canister_ban=True
+        state_data["canister_ban"] = True
+        state_data.pop("awaiting", None)
+        _set_state(peer_id, state_data)
+        from vk_keyboards import vk_report_extras_keyboard
+        await _vk_send(
+            peer_id,
+            f"✅ Запрет канистр зафиксирован.\n\n"
+            f"Что ещё добавить?",
+            vk_report_extras_keyboard(station_id, fuel, status),
+        )
+    elif extra_type == "queue":
+        state_data["awaiting"] = "queue"
+        _set_state(peer_id, state_data)
+        await _vk_send(peer_id, "🚗 <b>Сколько машин в очереди?</b>\nВведи число от 1 до 50.")
+
+
+async def handle_report_save(peer_id: int, station_id: int, fuel: str, status: str) -> None:
+    """Сохраняет отчёт со всеми собранными данными."""
+    state_data = _get_state(peer_id) or {}
+    avail = {"yes": True, "queue": True, "low": None, "no": False}.get(status)
+    queue_size = state_data.get("queue_size") or (5 if status == "queue" else None)
+    has_limit = bool(state_data.get("limit"))
+    limit_liters = state_data.get("limit")
+    canister_ban = bool(state_data.get("canister_ban"))
+    price = state_data.get("price")
+
     user_id = await _get_user_id(peer_id)
     try:
         await add_report(
@@ -620,24 +691,145 @@ async def handle_report_status(peer_id: int, station_id: int, fuel: str, value: 
             available=avail,
             user_id=user_id,
             queue_size=queue_size,
+            price=price,
+            has_limit=has_limit,
+            limit_liters=limit_liters,
+            canister_ban=canister_ban,
             source="vk_user",
         )
     except Exception as e:
         logger.warning("add_report failed: %s", e)
-    state = _get_state(peer_id)
     if user_id:
         await log_event(user_id, "vk_report")
     fuel_name = {"92": "АИ-92", "95": "АИ-95", "98": "АИ-98", "100": "АИ-100",
                  "diesel": "Дизель", "lpg": "Газ"}.get(fuel, fuel)
-    status_text = {"yes": "✅ Есть", "low": "⚠️ Кончается", "no": "❌ Нет"}.get(value, "?")
+    status_text = {"yes": "✅ Есть", "queue": "🕐 Большая очередь",
+                   "low": "⚠️ Кончается", "no": "❌ Нет"}.get(status, "?")
+    extras = []
+    if price is not None:
+        extras.append(f"💰 Цена: {price:.2f}₽")
+    if has_limit and limit_liters:
+        extras.append(f"🚫 Лимит: {limit_liters}л")
+    if canister_ban:
+        extras.append("❌ Канистры запрещены")
+    if queue_size and status != "queue":
+        extras.append(f"🚗 Очередь: {queue_size} машин")
+    extras_text = ("\n" + " · ".join(extras)) if extras else ""
     await _vk_send(
         peer_id,
         f"✅ <b>Спасибо! Отчёт записан.</b>\n\n"
-        f"АЗС #{station_id}, {fuel_name}: {status_text}\n\n"
+        f"АЗС #{station_id}, {fuel_name}: {status_text}{extras_text}\n\n"
         f"Твой вклад помогает другим водителям!",
         vk_main_menu(),
     )
     _clear_state(peer_id)
+
+
+async def handle_report_price_only(peer_id: int, station_id: int, fuel: str) -> None:
+    """Кнопка 'Только цена' — спрашиваем цену и сохраняем сразу."""
+    _set_state(peer_id, {
+        "flow": "report",
+        "step": "extras_input",
+        "station_id": station_id,
+        "fuel": fuel,
+        "status": "yes",
+        "price_only": True,
+        "awaiting": "price",
+    })
+    await _vk_send(peer_id, "💰 <b>Введи цену за литр в рублях.</b>\nНапример: <code>55.40</code>")
+
+
+async def handle_report_extras_text(peer_id: int, text: str) -> None:
+    """Обрабатывает текстовый ввод цены/лимита/очереди в VK."""
+    state_data = _get_state(peer_id) or {}
+    awaiting = state_data.get("awaiting")
+    if not awaiting:
+        return False
+
+    station_id = state_data.get("station_id")
+    fuel = state_data.get("fuel")
+    status = state_data.get("status", "yes")
+    text_clean = text.strip().replace(",", ".").replace("₽", "").replace("р", "").replace("л", "").replace("машин", "").strip()
+
+    if awaiting == "price":
+        try:
+            price = float(text_clean)
+            if price < 0 or price > 500:
+                raise ValueError
+        except ValueError:
+            await _vk_send(peer_id, "❌ Неверная цена. Введи число от 0 до 500, например <code>55.40</code>")
+            return True
+        if state_data.get("price_only"):
+            # Сразу сохраняем
+            user_id = await _get_user_id(peer_id)
+            try:
+                await add_report(
+                    station_id=station_id,
+                    fuel_type=fuel,
+                    available=True,
+                    user_id=user_id,
+                    price=price,
+                    source="vk_user",
+                )
+            except Exception as e:
+                logger.warning("add_report failed: %s", e)
+            await _vk_send(
+                peer_id,
+                f"✅ Цена {price:.2f}₽ записана для АЗС #{station_id}, {fuel}.",
+                vk_main_menu(),
+            )
+            _clear_state(peer_id)
+        else:
+            state_data["price"] = price
+            state_data.pop("awaiting", None)
+            _set_state(peer_id, state_data)
+            from vk_keyboards import vk_report_extras_keyboard
+            await _vk_send(
+                peer_id,
+                f"✅ Цена: {price:.2f}₽\n\nЧто ещё добавить?",
+                vk_report_extras_keyboard(station_id, fuel, status),
+            )
+        return True
+
+    elif awaiting == "limit":
+        try:
+            limit = int(text_clean)
+            if limit < 1 or limit > 1000:
+                raise ValueError
+        except ValueError:
+            await _vk_send(peer_id, "❌ Неверный лимит. Введи число от 1 до 1000.")
+            return True
+        state_data["limit"] = limit
+        state_data.pop("awaiting", None)
+        _set_state(peer_id, state_data)
+        from vk_keyboards import vk_report_extras_keyboard
+        await _vk_send(
+            peer_id,
+            f"✅ Лимит: {limit}л\n\nЧто ещё добавить?",
+            vk_report_extras_keyboard(station_id, fuel, status),
+        )
+        return True
+
+    elif awaiting == "queue":
+        try:
+            queue = int(text_clean)
+            if queue < 1 or queue > 50:
+                raise ValueError
+        except ValueError:
+            await _vk_send(peer_id, "❌ Неверное число. Введи от 1 до 50.")
+            return True
+        state_data["queue_size"] = queue
+        state_data.pop("awaiting", None)
+        _set_state(peer_id, state_data)
+        from vk_keyboards import vk_report_extras_keyboard
+        await _vk_send(
+            peer_id,
+            f"✅ Очередь: {queue} машин\n\nЧто ещё добавить?",
+            vk_report_extras_keyboard(station_id, fuel, status),
+        )
+        return True
+
+    return False
 
 
 # === Subscribe to station ===
@@ -857,6 +1049,8 @@ async def process_message_new(event: dict) -> None:
         if state.get("awaiting") == "city_input":
             _clear_state(peer_id)
             await handle_text_search(peer_id, text)
+        elif state.get("flow") == "report" and state.get("awaiting") in ("price", "limit", "queue"):
+            await handle_report_extras_text(peer_id, text)
         elif state.get("flow") == "report" and state.get("step") == "choose_station":
             # Поиск АЗС для отчёта
             stations = await find_stations_by_name(text, limit=5)
@@ -1061,6 +1255,27 @@ async def process_message_event(event: dict) -> None:
         value = payload.get("v")
         if station_id and fuel and value:
             await handle_report_status(peer_id, int(station_id), fuel, value)
+
+    elif action == "report_price":
+        station_id = payload.get("s")
+        fuel = payload.get("f")
+        if station_id and fuel:
+            await handle_report_price_only(peer_id, int(station_id), fuel)
+
+    elif action == "report_extra":
+        station_id = payload.get("s")
+        fuel = payload.get("f")
+        status = payload.get("st")
+        extra_type = payload.get("e")
+        if station_id and fuel and status and extra_type:
+            await handle_report_extra(peer_id, int(station_id), fuel, status, extra_type)
+
+    elif action == "report_save":
+        station_id = payload.get("s")
+        fuel = payload.get("f")
+        status = payload.get("st")
+        if station_id and fuel and status:
+            await handle_report_save(peer_id, int(station_id), fuel, status)
 
     elif action == "review":
         station_id = payload.get("s")
