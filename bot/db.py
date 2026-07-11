@@ -2860,3 +2860,129 @@ async def get_pending_owner_applications() -> list:
                   ORDER BY os.created_at DESC""",
             )
         return [dict(r) for r in rows]
+
+
+# === Маршруты (трассы) ===
+
+def _normalize_query(q: str) -> tuple[str, str]:
+    """Нормализует запрос: возвращает (cyrillic, latin) варианты для поиска.
+    Например "м-4" → ("м-4", "m-4") — ищем по обоим.
+    """
+    if not q:
+        return "", ""
+    q_lower = q.strip().lower()
+    # Маппинг кириллица → латиница для типичных замен
+    cyr_to_lat = {
+        "а": "a", "в": "b", "е": "e", "к": "k", "м": "m", "н": "h", "о": "o",
+        "р": "p", "с": "c", "т": "t", "у": "y", "х": "x",
+    }
+    lat_variant = "".join(cyr_to_lat.get(c, c) for c in q_lower)
+    # Также обратный маппинг
+    lat_to_cyr = {v: k for k, v in cyr_to_lat.items()}
+    cyr_variant = "".join(lat_to_cyr.get(c, c) for c in q_lower)
+    return cyr_variant, lat_variant
+
+
+async def search_routes(query: str, limit: int = 10) -> list[dict]:
+    """Ищет трассы по коду или названию. Поиск по подстроке.
+
+    Поддерживает кириллицу и латиницу: "М-4" и "M-4" дают одинаковый результат.
+    """
+    if not query or len(query.strip()) < 2:
+        return []
+    cyr_q, lat_q = _normalize_query(query)
+    queries = list({cyr_q, lat_q, query.strip().lower()})  # уникальные
+    # Строим LIKE patterns
+    like_patterns = [f"%{q}%" for q in queries]
+    # Строим точные и prefix patterns для ранжирования
+    exact = queries[0]
+    prefix = [f"{q}%" for q in queries]
+
+    if USE_SQLITE:
+        # SQLite LOWER() не работает с кириллицей.
+        # Решение: получаем ВСЕ маршруты и фильтруем в Python.
+        all_rows = await _fetch(
+            "SELECT id, code, name, aliases, type, length_km, start_point, end_point, description "
+            "FROM routes WHERE is_active = 1"
+        )
+        rows = []
+        for r in all_rows:
+            r_dict = dict(r)
+            # Нормализуем все текстовые поля в Python
+            text = (r_dict["code"] + " " + r_dict["name"] + " " + (r_dict["aliases"] or "")).lower()
+            if any(q.lower() in text for q in queries):
+                rows.append(r_dict)
+        # Сортируем: точные совпадения кода первыми
+        rows.sort(key=lambda r: 0 if r["code"].lower() == exact else 1)
+        rows = rows[:limit]
+    else:
+        # PG — используем ILIKE для case-insensitive
+        # ILIKE работает с кириллицей
+        conditions = " OR ".join(
+            f"(code ILIKE ${i+1} OR name ILIKE ${i+1} OR aliases ILIKE ${i+1})"
+            for i in range(len(queries))
+        )
+        params = [f"%{q}%" for q in queries]
+        rows = await _fetch(
+            f"""SELECT id, code, name, aliases, type, length_km, start_point, end_point, description
+                FROM routes
+                WHERE is_active = TRUE AND ({conditions})
+                ORDER BY
+                  CASE WHEN LOWER(code) = ${len(queries)+1} THEN 0
+                       ELSE 1
+                  END, code
+                LIMIT ${len(queries)+2}""",
+            *params, exact, limit,
+        )
+    return [dict(r) for r in rows]
+
+
+async def find_stations_by_route(
+    route_id: int,
+    limit: int = 50,
+    fuel: str | None = None,
+    has_live: bool = True,
+) -> list[dict]:
+    """Возвращает АЗС на трассе с координатами и текущим статусом."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT s.id, s.name, s.operator, s.brand, s.city, s.address,
+                      s.lat, s.lon, s.fuel_types, sr.km_marker,
+                      EXISTS(SELECT 1 FROM reports r WHERE r.station_id = s.id
+                             AND r.expires_at > datetime('now')
+                             AND r.available = 1) AS has_fuel
+               FROM station_routes sr
+               JOIN stations s ON s.id = sr.station_id
+               WHERE sr.route_id = ? AND s.is_active = 1
+               ORDER BY sr.km_marker NULLS LAST, s.id
+               LIMIT ?""",
+            route_id, limit,
+        ) if "NULLS LAST" in "?" else await _fetch(
+            """SELECT s.id, s.name, s.operator, s.brand, s.city, s.address,
+                      s.lat, s.lon, s.fuel_types, sr.km_marker,
+                      EXISTS(SELECT 1 FROM reports r WHERE r.station_id = s.id
+                             AND r.expires_at > datetime('now')
+                             AND r.available = 1) AS has_fuel
+               FROM station_routes sr
+               JOIN stations s ON s.id = sr.station_id
+               WHERE sr.route_id = ? AND s.is_active = 1
+               ORDER BY s.id
+               LIMIT ?""",
+            route_id, limit,
+        )
+    else:
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT s.id, s.name, s.operator, s.brand, s.city, s.address,
+                          s.lat, s.lon, s.fuel_types, sr.km_marker,
+                          EXISTS(SELECT 1 FROM reports r WHERE r.station_id = s.id
+                                 AND r.expires_at > NOW()
+                                 AND r.available = TRUE) AS has_fuel
+                   FROM station_routes sr
+                   JOIN stations s ON s.id = sr.station_id
+                   WHERE sr.route_id = $1 AND s.is_active = TRUE
+                   ORDER BY sr.km_marker NULLS LAST, s.id
+                   LIMIT $2""",
+                route_id, limit,
+            )
+    return [dict(r) for r in rows]

@@ -704,6 +704,78 @@ async def handle_search(request):
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
         return web.json_response({"error": "rate limit exceeded"}, status=429)
 
+    q = request.query.get("q", "").strip()
+    if len(q) < 2:
+        return web.json_response({"results": [], "query": q})
+
+    from db import search_routes as _search_routes
+    routes = await _search_routes(q, limit=10)
+
+    return web.json_response({
+        "results": routes,
+        "query": q,
+        "count": len(routes),
+    })
+
+
+async def handle_route_stations(request):
+    """GET /api/routes/{id}/stations — АЗС на трассе."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
+        return web.json_response({"error": "rate limit exceeded"}, status=429)
+
+    route_id = int(request.match_info["id"])
+    limit = int(request.query.get("limit", "50"))
+    fuel = request.query.get("fuel") or None
+
+    from db import find_stations_by_route, get_station_current_status
+    stations = await find_stations_by_route(route_id, limit=limit)
+
+    # Добавляем статусы
+    for s in stations:
+        try:
+            statuses = await get_station_current_status(s["id"])
+            s["statuses"] = statuses
+        except Exception:
+            s["statuses"] = []
+
+    return web.json_response({
+        "stations": stations,
+        "count": len(stations),
+        "route_id": route_id,
+    })
+
+
+async def handle_routes(request):
+    """GET /api/routes?q=... — список всех трасс или поиск."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
+        return web.json_response({"error": "rate limit exceeded"}, status=429)
+
+    q = request.query.get("q", "").strip()
+
+    from db import search_routes as _search_routes
+    if q:
+        routes = await _search_routes(q, limit=20)
+    else:
+        # Возвращаем все трассы
+        from db import _fetch
+        if db.USE_SQLITE:
+            rows = await _fetch("SELECT id, code, name, aliases, length_km, start_point, end_point FROM routes WHERE is_active = 1 ORDER BY code LIMIT 100")
+        else:
+            async with db._db.acquire() as conn:
+                rows = await conn.fetch("SELECT id, code, name, aliases, length_km, start_point, end_point FROM routes WHERE is_active = TRUE ORDER BY code LIMIT 100")
+        routes = [dict(r) for r in rows]
+
+    return web.json_response({
+        "routes": routes,
+        "count": len(routes),
+    })
+
+
+async def handle_search_legacy(request):
+    """GET /api/search (legacy) — backward compat."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
+        return web.json_response({"error": "rate limit exceeded"}, status=429)
+
     query = request.query.get("q", "").strip()
     if len(query) < 2:
         return web.json_response(
@@ -1954,6 +2026,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/stations/by-city", handle_stations_by_city)
     app.router.add_get("/api/stations/emergency", handle_emergency)
     app.router.add_get("/api/search", handle_search)
+    app.router.add_get("/api/routes", handle_routes)
+    app.router.add_get("/api/routes/{id}/stations", handle_route_stations)
     app.router.add_get("/api/stations/{id}", handle_station_detail)
     app.router.add_get("/api/stations/{id}/price-history", handle_price_history)
     app.router.add_get("/api/stations/{id}/analytics", handle_station_analytics)
