@@ -3069,7 +3069,7 @@ async def search_cities(query: str = "", limit: int = 200) -> list[dict]:
         rows = await _fetch(sql, *patterns, fetch_limit)
     else:
         # PG: ILIKE OR
-        like_clauses = " OR ".join([f"py_lower(s.city) ILIKE ${i+1}" for i in range(len(patterns))])
+        like_clauses = " OR ".join([f"LOWER(s.city) ILIKE ${i+1}" for i in range(len(patterns))])
         sql = base_sql + f" AND ({like_clauses}) GROUP BY s.city LIMIT ${len(patterns)+1}"
         async with _db.acquire() as conn:
             rows = await conn.fetch(sql, *patterns, fetch_limit)
