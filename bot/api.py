@@ -1977,12 +1977,13 @@ async def handle_enrich(request):
             sys.path.insert(0, scripts_dir)
         db.API_MODE = True
         try:
-            import enrich_addresses
-            sys.argv = ["enrich_addresses.py", "--limit", "200", "--provider", "photon"]
-            await enrich_addresses.main()
+            import enrich_addresses_nominatim
+            sys.argv = ["enrich_addresses_nominatim.py", "--limit", "200"]
+            logger.info("[enrich] Starting enrichment...")
+            await enrich_addresses_nominatim.main()
             logger.info("[enrich] Done")
         except Exception as e:
-            logger.warning("[enrich] Failed: %s", e)
+            logger.warning("[enrich] Failed: %s", e, exc_info=True)
 
     asyncio.create_task(_run_enrich())
     return json_resp({"ok": True, "message": "enrich started in background"})
