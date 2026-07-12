@@ -22,7 +22,8 @@ import db  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("enrich_addresses")
 
-NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
+# Photon (https://photon.komoot.io) — либеральный лимит, OSM-based
+PHOTON_URL = "https://photon.komoot.io/reverse"
 USER_AGENT = "benzin-ryadom/1.0 (fuel-finder bot)"
 
 
@@ -31,18 +32,15 @@ async def reverse_geocode(
     lat: float,
     lon: float,
 ) -> str | None:
-    """Reverse geocoding через Nominatim."""
+    """Reverse geocoding через Photon (komoot.io, OSM-based)."""
     params = {
         "lat": str(lat),
         "lon": str(lon),
-        "format": "json",
-        "accept-language": "ru",
-        "addressdetails": 1,
-        "zoom": 18,  # street level
+        "lang": "en",  # Photon не поддерживает ru
     }
     try:
         async with session.get(
-            NOMINATIM_URL,
+            PHOTON_URL,
             params=params,
             headers={"User-Agent": USER_AGENT},
             timeout=aiohttp.ClientTimeout(total=15),
@@ -54,42 +52,28 @@ async def reverse_geocode(
         logger.debug(f"  geocode: {e}")
         return None
 
-    if "error" in data or "address" not in data:
+    if "features" not in data or not data["features"]:
         return None
 
-    addr = data["address"]
+    props = data["features"][0].get("properties", {})
+
+    def _clean(v):
+        """Photon иногда возвращает 'None' как строку. Убираем это."""
+        if v is None or v == "None" or v == "":
+            return None
+        return v
 
     # Собираем улицу + дом
-    street_parts = []
-    if "house_number" in addr:
-        street_parts.append(addr["house_number"])
+    street_raw = props.get("street")
+    name_raw = props.get("name")
+    street = _clean(street_raw) or _clean(name_raw)
+    housenumber = _clean(props.get("housenumber"))
 
-    # Приоритет улицы
-    street_name = (
-        addr.get("pedestrian")
-        or addr.get("footway")
-        or addr.get("residential")
-        or addr.get("street")
-    )
-    if street_name:
-        if street_parts:
-            street = f"{street_name}, {street_parts[0]}"
-        else:
-            street = street_name
-    elif street_parts:
-        street = street_parts[0]
-    else:
+    if not street:
         return None
 
-    # Добавляем ориентир если есть
-    extra = []
-    for k in ("suburb", "neighbourhood", "city_district"):
-        if k in addr:
-            extra.append(addr[k])
-            break
-
-    if extra:
-        return f"{street} ({extra[0]})"
+    if housenumber:
+        return f"{street}, {housenumber}"
     return street
 
 
@@ -162,17 +146,23 @@ async def main():
 
     updated = 0
     failed = 0
-    async with aiohttp.ClientSession() as session:
-        for i, s in enumerate(needs_update, 1):
+    semaphore = asyncio.Semaphore(10)  # 10 параллельных (Photon либеральный)
+
+    async def process_one(s, idx):
+        nonlocal updated, failed
+        async with semaphore:
             addr = await reverse_geocode(session, s["lat"], s["lon"])
             if addr:
-                logger.info(f"  [{i}/{len(needs_update)}] #{s['id']} {s.get('city', '')}: {addr}")
+                logger.info(f"  [{idx}/{len(needs_update)}] #{s['id']} {s.get('city', '')}: {addr}")
                 if not args.dry_run:
                     try:
                         if db.USE_SQLITE:
+                            new_addr = addr
+                            if s.get('city') and s.get('city') not in addr:
+                                new_addr = f"{s['city']}, {addr}"
                             await db._execute(
                                 "UPDATE stations SET address = ? WHERE id = ?",
-                                f"{s.get('city', '')}, {addr}" if s.get('city') and s.get('city') not in addr else addr,
+                                new_addr,
                                 s["id"],
                             )
                         else:
@@ -190,10 +180,15 @@ async def main():
                         failed += 1
             else:
                 failed += 1
+            await asyncio.sleep(0.12)  # 10 параллельных = ~0.56s/req, берём 0.12s
 
-            if i % 50 == 0:
-                logger.info(f"  Прогресс: {i}/{len(needs_update)} (обновлено: {updated}, не найдено: {failed})")
-            await asyncio.sleep(1.1)  # Nominatim лимит 1 req/sec
+    async with aiohttp.ClientSession() as session:
+        tasks = [process_one(s, i) for i, s in enumerate(needs_update, 1)]
+        # Запускаем все параллельно батчами по 100
+        for i in range(0, len(tasks), 100):
+            batch = tasks[i:i+100]
+            await asyncio.gather(*batch, return_exceptions=True)
+            logger.info(f"  Прогресс: {min(i+100, len(tasks))}/{len(tasks)} (обновлено: {updated}, не найдено: {failed})")
 
     logger.info(f"\n=== ИТОГО ===")
     logger.info(f"  Обновлено: {updated}")
