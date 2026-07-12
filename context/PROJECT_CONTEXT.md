@@ -76,6 +76,8 @@
 - `GET /api/station-prices/{id}` — текущие цены
 - `GET /api/station-analytics/{id}` — аналитика (для владельцев)
 - `GET /api/premium-status` — статус Premium
+- `GET /api/routes?q=` — **поиск трасс (М-4, М-7, Р-217, "Дон", "Кавказ")**
+- `GET /api/routes/{id}/stations?limit=50` — **АЗС на трассе**
 - `POST /api/reports` — **создание отчёта** (price, queue_size, has_limit, limit_liters, limit_per_visit, limit_daily, limit_weekly, canister_ban, comment, fuel_type)
 - `POST /api/reviews` — **отзыв** (rating 0-5, comment)
 - `POST /api/price-update` — обновление цены
@@ -160,3 +162,16 @@
 - Расписание: каждый час (`0 * * * *`)
 - Содержимое: будит Render API + запускает `GET /api/parse?key=$PARSE_API_KEY`
 - Render cron service НЕ используется (только Web Service)
+
+## Маршруты (трассы) — 12.07.2026
+- **39 федеральных/региональных трасс РФ** (М-1...М-12, Р-21...Р-404, М-17/18 Крым)
+- **71,554 связей АЗС-трасса** (через bbox-привязку)
+- Поиск поддерживает кириллицу/латиницу ("М-4" = "M-4")
+- UI во всех 3 каналах: TG бот, VK бот, Mini App (вкладка "Трассы")
+- API: `/api/routes?q=`, `/api/routes/{id}/stations`
+
+## Обогащение адресов — 12.07.2026
+- 19,516 АЗС без street-level адреса
+- Скрипт `enrich_addresses_nominatim.py` через Nominatim reverse geocoding
+- 1.1 сек между запросами (лимит Nominatim)
+- Полное обогащение: ~6 часов
