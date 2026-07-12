@@ -164,12 +164,14 @@
 - Содержимое: будит Render API + запускает `GET /api/parse?key=$PARSE_API_KEY`
 - Render cron service НЕ используется (только Web Service)
 
-## Маршруты (трассы) — 12.07.2026
+## Маршруты (трассы) — 13.07.2026
 - **39 федеральных/региональных трасс РФ** (М-1...М-12, Р-21...Р-404, М-17/18 Крым)
 - **71,554 связей АЗС-трасса** (через bbox-привязку)
 - Поиск поддерживает кириллицу/латиницу ("М-4" = "M-4")
 - UI во всех 3 каналах: TG бот, VK бот, Mini App (вкладка "Трассы")
 - API: `/api/routes?q=`, `/api/routes/{id}/stations`
+- **Mini App**: вкладка "Трассы" — список всех трасс с группировкой (федеральные/региональные/другие), клик → поиск АЗС, кнопка "← Назад к списку"
+- **JS архитектура**: `loadRoutesList()` и `doRouteSearch()` на IIFE-уровне (не внутри bindEvents)
 
 ## Обогащение адресов — 12.07.2026
 - **Photon (komoot.io)** reverse geocoding — основной провайдер
@@ -184,8 +186,17 @@
 1. **VK group token** — `groups.search` API (error 27) не работает с group token, нужен user token для автопоиска VK-групп по городам
 2. **VK peer_id collision** — VK peer_id сохраняется в `telegram_id` колонку, коллизия с реальными TG ID. Требует миграции: добавить `vk_id` колонку
 
-## Исправления (12.07.2026)
+## Исправления (12-13.07.2026)
 - **PG boolean = integer** — `s.is_active = 1` заменено на `COALESCE(s.is_active, TRUE) = TRUE` в search_cities
 - **Decimal not JSON serializable** — asyncpg возвращает Decimal для lat/lon/price; добавлен `json_resp()` с `_json_default` хелпером
 - **PG LOWER()** — py_lower() заменено на LOWER() в PG-ветке (py_lower() только для SQLite)
 - **Кириллица в URL** — Mini App encodeURI для кириллических запросов к /api/cities
+- **Mini App вкладка Трассы** — `setTab()` не обрабатывал `'routes'`; `#tab-routes` был снаружи `.app`; `.main[hidden]` не скрывал main из-за `flex:1`; `loadRoutesList`/`doRouteSearch` были внутри `bindEvents` (недоступны из `setTab`)
+
+## Статистика пользователей (13.07.2026)
+- **137** уникальных пользователей за всё время
+- **65** активны за 7 дней
+- **6** активны за 24 часа
+- **9** писали отчёты (конверсия ~6.6%)
+- **24** отчёта от пользователей всего
+- Разделение TG/VK невозможно — нет колонки `vk_id` (VK peer_id в `telegram_id`)
