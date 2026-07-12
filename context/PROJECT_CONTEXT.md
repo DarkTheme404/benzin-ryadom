@@ -172,18 +172,17 @@
 - API: `/api/routes?q=`, `/api/routes/{id}/stations`
 
 ## Обогащение адресов — 12.07.2026
-- 19,531 АЗС без street-level адреса
-- Скрипт `enrich_addresses_nominatim.py` через Photon (komoot.io) reverse geocoding
-- Photon: `street` + `housenumber` + `name` поля
-- 10 параллельных запросов через asyncio.Semaphore
-- Запускать: `USE_SQLITE=false python3 scripts/enrich_addresses_nominatim.py`
-- **Проблема**: Photon возвращает 503 на ~97% запросов — enrichment очень медленный
-- **Решение**: добавить retry с backoff, увеличить задержку между запросами
+- **Photon (komoot.io)** reverse geocoding — основной провайдер
+- **Semaphore=3, sleep=0.5** — ~0.3 addr/s, 0 ошибок (было Semaphore=10, sleep=0.12 → 40% 503)
+- **Retry + exponential backoff** — при 503/429: 2s, 4s, 8s
+- **Фильтр POI-имён** — osm_value=fusion → None, «кавычки» → None (бренды АЗС: "«Дон»", "«Холмогоры»")
+- **Success rate**: ~27% (сельские районы без street addressing), ~50%+ в городах
+- **API**: `GET /api/enrich?key=benzin-parse&limit=500` (max 5000, default 500)
+- **Запуск**: Render API в фоне через `asyncio.create_task`
 
 ## Known Issues
-1. **Photon 503** — enrichment幾乎 не работает (97% ошибок). Нужна альтернатива или batch-режим
-2. **VK group token** — `groups.search` API (error 27) не работает с group token, нужен user token для автопоиска VK-групп по городам
-3. **VK peer_id collision** — VK peer_id сохраняется в `telegram_id` колонку, коллизия с реальными TG ID. Требует миграции: добавить `vk_id` колонку
+1. **VK group token** — `groups.search` API (error 27) не работает с group token, нужен user token для автопоиска VK-групп по городам
+2. **VK peer_id collision** — VK peer_id сохраняется в `telegram_id` колонку, коллизия с реальными TG ID. Требует миграции: добавить `vk_id` колонку
 
 ## Исправления (12.07.2026)
 - **PG boolean = integer** — `s.is_active = 1` заменено на `COALESCE(s.is_active, TRUE) = TRUE` в search_cities
