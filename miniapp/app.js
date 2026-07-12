@@ -324,6 +324,132 @@
     }
   }
 
+  // ============= ROUTES LIST =============
+  let _routesLoaded = false;
+
+  async function loadRoutesList() {
+    if (_routesLoaded) return;
+    const routesListEl = document.getElementById('routes-list');
+    const routesResults = document.getElementById('routes-results');
+    if (!routesListEl) return;
+    routesListEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">Загружаю трассы...</div>';
+    try {
+      const data = await api('/api/routes');
+      const routes = data.routes || [];
+      if (!routes.length) {
+        routesListEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">Трассы не найдены</div>';
+        return;
+      }
+      const federal = routes.filter(r => r.type === 'federal');
+      const regional = routes.filter(r => r.type === 'regional');
+      const other = routes.filter(r => r.type !== 'federal' && r.type !== 'regional');
+
+      function renderGroup(title, list) {
+        if (!list.length) return '';
+        return `<div class="routes-group-title">${title}</div>` +
+          list.map(r => {
+            const km = r.length_km ? `${r.length_km} км` : '';
+            const points = [r.start_point, r.end_point].filter(Boolean).join(' → ');
+            const meta = [km, points].filter(Boolean).join(' · ');
+            return `<div class="route-list-item" data-route-id="${r.id}" data-route-code="${escape(r.code)}">
+              <div class="route-list-code">${escape(r.code)}</div>
+              <div class="route-list-info">
+                <div class="route-list-name">${escape(r.name)}</div>
+                ${meta ? `<div class="route-list-meta">${escape(meta)}</div>` : ''}
+              </div>
+              <div class="route-list-arrow">›</div>
+            </div>`;
+          }).join('');
+      }
+
+      routesListEl.innerHTML =
+        renderGroup('Федеральные', federal) +
+        renderGroup('Региональные', regional) +
+        renderGroup('Другие', other);
+
+      _routesLoaded = true;
+
+      $$('.route-list-item').forEach(el => {
+        el.addEventListener('click', () => {
+          const code = el.dataset.routeCode || '';
+          const input = document.getElementById('routes-input');
+          if (input) input.value = code;
+          doRouteSearch(code);
+        });
+      });
+    } catch (e) {
+      routesListEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">Ошибка загрузки</div>';
+    }
+  }
+
+  async function doRouteSearch(q) {
+    q = (q || '').trim();
+    if (q.length < 2) {
+      showToast('Введи номер или название трассы', 'warning');
+      return;
+    }
+    const routesListEl = document.getElementById('routes-list');
+    const routesResults = document.getElementById('routes-results');
+    if (!routesResults) return;
+    showLoading();
+    routesResults.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">🔍 Ищу трассу...</div>';
+    if (routesListEl) routesListEl.hidden = true;
+    try {
+      const r = await api(`/api/routes?q=${encodeURIComponent(q)}`);
+      const routes = r.routes || [];
+      if (!routes.length) {
+        routesResults.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">Ничего не найдено. Попробуй: М-4, М-7, Р-217, Дон, Кавказ.</div>';
+        return;
+      }
+      const route = routes[0];
+      routesResults.innerHTML = `
+        <button class="btn btn-secondary" id="routes-back-btn" style="margin-bottom:8px">← Назад к списку</button>
+        <div class="route-card">
+          <div class="route-card-title">🛣 ${escape(route.code)} — ${escape(route.name)}</div>
+          <div class="route-card-meta">📏 ${route.length_km || '?'} км · ${escape(route.start_point || '')} → ${escape(route.end_point || '')}</div>
+          ${route.description ? `<div class="route-card-desc">${escape(route.description)}</div>` : ''}
+        </div>
+        <div id="route-stations-list" style="text-align:center;padding:12px;color:var(--text-secondary)">⛽ Загружаю АЗС...</div>
+      `;
+      const backBtn = document.getElementById('routes-back-btn');
+      if (backBtn) backBtn.addEventListener('click', () => {
+        routesResults.innerHTML = '';
+        if (routesListEl) routesListEl.hidden = false;
+      });
+      const rs = await api(`/api/routes/${route.id}/stations?limit=30`);
+      const stations = rs.stations || [];
+      const listEl = document.getElementById('route-stations-list');
+      if (!listEl) return;
+      if (!stations.length) {
+        listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">АЗС не найдены</div>';
+        return;
+      }
+      listEl.innerHTML = stations.map(s => {
+        const hasFuel = s.has_fuel;
+        const addr = s.address || s.city || '—';
+        const km = s.km_marker ? ` (~${s.km_marker} км)` : '';
+        const net = s.operator || s.brand || '';
+        const netStr = net ? ` <i style="color:var(--text-secondary)">${escape(net)}</i>` : '';
+        const status = hasFuel ? '✅ Есть топливо' : '❓ Нет данных';
+        return `<div class="route-station ${hasFuel ? 'has-fuel' : ''}" data-station-id="${s.id}">
+          <div class="route-station-name">#${s.id}${netStr} — ${escape(s.name || '')}</div>
+          <div class="route-station-addr">📍 ${escape(s.city || '')}, ${escape(addr)}${km}</div>
+          <div class="route-station-status">${status}</div>
+        </div>`;
+      }).join('');
+      $$('.route-station').forEach(el => {
+        el.addEventListener('click', () => {
+          const sid = parseInt(el.dataset.stationId);
+          openStationDetail({ id: sid });
+        });
+      });
+    } catch (e) {
+      showToast('Ошибка: ' + e.message, 'error');
+    } finally {
+      hideLoading();
+    }
+  }
+
   // ============= NAVIGATION =============
   function setTab(tab) {
     state.tab = tab;
@@ -1505,132 +1631,10 @@
       loadStations();
     });
 
-    // ============= ROUTES LIST =============
-    const routesListEl = document.getElementById('routes-list');
-    let _routesLoaded = false;
-
-    async function loadRoutesList() {
-      if (_routesLoaded) return;
-      if (!routesListEl) return;
-      routesListEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">Загружаю трассы...</div>';
-      try {
-        const data = await api('/api/routes');
-        const routes = data.routes || [];
-        if (!routes.length) {
-          routesListEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">Трассы не найдены</div>';
-          return;
-        }
-        const federal = routes.filter(r => r.type === 'federal');
-        const regional = routes.filter(r => r.type === 'regional');
-        const other = routes.filter(r => r.type !== 'federal' && r.type !== 'regional');
-
-        function renderGroup(title, list) {
-          if (!list.length) return '';
-          return `<div class="routes-group-title">${title}</div>` +
-            list.map(r => {
-              const km = r.length_km ? `${r.length_km} км` : '';
-              const points = [r.start_point, r.end_point].filter(Boolean).join(' → ');
-              const meta = [km, points].filter(Boolean).join(' · ');
-              return `<div class="route-list-item" data-route-id="${r.id}" data-route-code="${escape(r.code)}">
-                <div class="route-list-code">${escape(r.code)}</div>
-                <div class="route-list-info">
-                  <div class="route-list-name">${escape(r.name)}</div>
-                  ${meta ? `<div class="route-list-meta">${escape(meta)}</div>` : ''}
-                </div>
-                <div class="route-list-arrow">›</div>
-              </div>`;
-            }).join('');
-        }
-
-        routesListEl.innerHTML =
-          renderGroup('Федеральные', federal) +
-          renderGroup('Региональные', regional) +
-          renderGroup('Другие', other);
-
-        _routesLoaded = true;
-
-        $$('.route-list-item').forEach(el => {
-          el.addEventListener('click', () => {
-            const code = el.dataset.routeCode || '';
-            const input = document.getElementById('routes-input');
-            if (input) input.value = code;
-            doRouteSearch(code);
-          });
-        });
-      } catch (e) {
-        routesListEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">Ошибка загрузки</div>';
-      }
-    }
-
     // ============= ROUTES =============
     const routesInput = $('#routes-input');
     const routesBtn = $('#routes-search-btn');
     const routesResults = $('#routes-results');
-
-    const doRouteSearch = async (q) => {
-      q = (q || '').trim();
-      if (q.length < 2) {
-        showToast('Введи номер или название трассы', 'warning');
-        return;
-      }
-      showLoading();
-      routesResults.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">🔍 Ищу трассу...</div>';
-      if (routesListEl) routesListEl.hidden = true;
-      try {
-        const r = await api(`/api/routes?q=${encodeURIComponent(q)}`);
-        const routes = r.routes || [];
-        if (!routes.length) {
-          routesResults.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">Ничего не найдено. Попробуй: М-4, М-7, Р-217, Дон, Кавказ.</div>';
-          return;
-        }
-        const route = routes[0];
-        routesResults.innerHTML = `
-          <button class="btn btn-secondary" id="routes-back-btn" style="margin-bottom:8px">← Назад к списку</button>
-          <div class="route-card">
-            <div class="route-card-title">🛣 ${escape(route.code)} — ${escape(route.name)}</div>
-            <div class="route-card-meta">📏 ${route.length_km || '?'} км · ${escape(route.start_point || '')} → ${escape(route.end_point || '')}</div>
-            ${route.description ? `<div class="route-card-desc">${escape(route.description)}</div>` : ''}
-          </div>
-          <div id="route-stations-list" style="text-align:center;padding:12px;color:var(--text-secondary)">⛽ Загружаю АЗС...</div>
-        `;
-        const backBtn = document.getElementById('routes-back-btn');
-        if (backBtn) backBtn.addEventListener('click', () => {
-          routesResults.innerHTML = '';
-          if (routesListEl) routesListEl.hidden = false;
-        });
-        const rs = await api(`/api/routes/${route.id}/stations?limit=30`);
-        const stations = rs.stations || [];
-        const listEl = $('#route-stations-list');
-        if (!listEl) return;
-        if (!stations.length) {
-          listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">АЗС не найдены</div>';
-          return;
-        }
-        listEl.innerHTML = stations.map(s => {
-          const hasFuel = s.has_fuel;
-          const addr = s.address || s.city || '—';
-          const km = s.km_marker ? ` (~${s.km_marker} км)` : '';
-          const net = s.operator || s.brand || '';
-          const netStr = net ? ` <i style="color:var(--text-secondary)">${escape(net)}</i>` : '';
-          const status = hasFuel ? '✅ Есть топливо' : '❓ Нет данных';
-          return `<div class="route-station ${hasFuel ? 'has-fuel' : ''}" data-station-id="${s.id}">
-            <div class="route-station-name">#${s.id}${netStr} — ${escape(s.name || '')}</div>
-            <div class="route-station-addr">📍 ${escape(s.city || '')}, ${escape(addr)}${km}</div>
-            <div class="route-station-status">${status}</div>
-          </div>`;
-        }).join('');
-        $$('.route-station').forEach(el => {
-          el.addEventListener('click', () => {
-            const sid = parseInt(el.dataset.stationId);
-            openStationDetail({ id: sid });
-          });
-        });
-      } catch (e) {
-        showToast('Ошибка: ' + e.message, 'error');
-      } finally {
-        hideLoading();
-      }
-    };
 
     if (routesBtn && routesInput && routesResults) {
       routesBtn.addEventListener('click', () => doRouteSearch(routesInput.value));
