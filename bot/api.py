@@ -9,6 +9,7 @@ import re
 import time
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,20 @@ MAX_REQUEST_BODY = 1024 * 1024  # 1 MB
 _suspicious: dict[str, list[tuple[float, str]]] = defaultdict(list)
 SUSPICIOUS_THRESHOLD = 10  # запросов за 5 минут
 SUSPICIOUS_WINDOW = 300  # 5 минут
+
+
+def _json_default(obj):
+    """JSON serializer fallback for Decimal, datetime, etc."""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, (datetime,)):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def json_resp(data: Any, status: int = 200) -> web.Response:
+    """json_resp wrapper that handles Decimal from asyncpg."""
+    return web.json_response(data, status=status, dumps=lambda o: json.dumps(o, default=_json_default))
 
 # === Parsers lock (чтобы не запускать парсеры параллельно) ===
 _parsers_running: bool = False
@@ -186,12 +201,12 @@ def _parse_float(request, name: str, min_val: float, max_val: float) -> tuple[fl
     try:
         v = float(request.query[name])
     except (KeyError, ValueError):
-        return None, web.json_response(
+        return None, json_resp(
             {"error": f"{name} is required and must be a number"},
             status=400,
         )
     if not (min_val <= v <= max_val):
-        return None, web.json_response(
+        return None, json_resp(
             {"error": f"{name} must be in [{min_val}, {max_val}]"},
             status=400,
         )
@@ -200,7 +215,7 @@ def _parse_float(request, name: str, min_val: float, max_val: float) -> tuple[fl
 
 # === Handlers ===
 async def handle_health(request):
-    return web.json_response({"status": "ok"})
+    return json_resp({"status": "ok"})
 
 
 async def handle_logs(request):
@@ -211,11 +226,11 @@ async def handle_logs(request):
     parse_key = os.environ.get("PARSE_API_KEY", "")
     provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
     if not parse_key or not provided_key or provided_key != parse_key:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return json_resp({"error": "unauthorized"}, status=401)
 
     log_path = Path(__file__).parent / "bot.log"
     if not log_path.exists():
-        return web.json_response({"error": "no log file"}, status=404)
+        return json_resp({"error": "no log file"}, status=404)
     try:
         lines = int(request.query.get("lines", "50"))
         lines = max(1, min(lines, 200))
@@ -227,13 +242,13 @@ async def handle_logs(request):
         text = content.decode("utf-8", errors="ignore")
         all_lines = text.splitlines()
         last = all_lines[-lines:] if len(all_lines) > lines else all_lines
-        return web.json_response({
+        return json_resp({
             "total_lines": len(all_lines),
             "shown": len(last),
             "lines": last,
         })
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
+        return json_resp({"error": str(e)}, status=500)
 
 
 # === Кеш reverse geocoding (city по координатам) ===
@@ -256,7 +271,7 @@ async def handle_reverse_geocode(request):
     # Кеш (округление до 0.01 ≈ 1.1 км)
     cache_key = (round(lat, 2), round(lon, 2))
     if cache_key in _reverse_cache:
-        return web.json_response(_reverse_cache[cache_key])
+        return json_resp(_reverse_cache[cache_key])
 
     try:
         url = (
@@ -287,12 +302,12 @@ async def handle_reverse_geocode(request):
                     if len(_reverse_cache) > 1000:
                         _reverse_cache.clear()
                     _reverse_cache[cache_key] = result
-                    return web.json_response(result)
+                    return json_resp(result)
     except Exception as e:
         pass
 
     # Fallback: не нашли
-    return web.json_response({"city": None, "region": None, "country": None})
+    return json_resp({"city": None, "region": None, "country": None})
 
 
 async def handle_admin_stats(request):
@@ -303,7 +318,7 @@ async def handle_admin_stats(request):
     parse_key = os.environ.get("PARSE_API_KEY", "")
     provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
     if not parse_key or not provided_key or provided_key != parse_key:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return json_resp({"error": "unauthorized"}, status=401)
 
     # === Статистика по источникам ===
     sources_stats = await get_source_stats()
@@ -321,7 +336,7 @@ async def handle_admin_stats(request):
             WHERE created_at > NOW() - INTERVAL '7 days'
         """, one=True)
 
-    return web.json_response({
+    return json_resp({
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "stations": {
@@ -395,7 +410,7 @@ async def get_source_stats() -> list[dict]:
 async def handle_stations(request):
     """GET /api/stations?lat=..&lon=..&radius=..&fuel=92&telegram_id=.."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     lat, err = _parse_float(request, "lat", -90, 90)
     if err:
@@ -436,15 +451,15 @@ async def handle_stations(request):
     try:
         radius = int(request.query.get("radius", default_radius))
         if not (1 <= radius <= max_radius):
-            return web.json_response(
+            return json_resp(
                 {"error": f"radius must be in [1, {max_radius}]"}, status=400
             )
     except ValueError:
-        return web.json_response({"error": "radius must be int"}, status=400)
+        return json_resp({"error": "radius must be int"}, status=400)
 
     fuel = request.query.get("fuel")
     if fuel is not None and fuel not in ("92", "95", "98", "diesel", "100", "lpg"):
-        return web.json_response({"error": f"invalid fuel: {fuel}"}, status=400)
+        return json_resp({"error": f"invalid fuel: {fuel}"}, status=400)
 
     stations = await find_nearest_stations(
         lat=lat, lon=lon, fuel_type=fuel, limit=max_limit, radius_km=radius,
@@ -475,7 +490,7 @@ async def handle_stations(request):
             "has_data": len(statuses) > 0,
         })
 
-    return web.json_response({"stations": result, "count": len(result)})
+    return json_resp({"stations": result, "count": len(result)})
 
 
 # === Дисклеймер ===
@@ -506,11 +521,11 @@ async def handle_stations_by_city(request):
       - telegram_id: для Premium detection
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     city = (request.query.get("city") or "").strip()
     if not city:
-        return web.json_response({"error": "city is required"}, status=400)
+        return json_resp({"error": "city is required"}, status=400)
 
     region = request.query.get("region") or None
     fuel = request.query.get("fuel") or None
@@ -621,7 +636,7 @@ async def handle_stations_by_city(request):
         import json as _json
         _cache_set(cache_key, _json.dumps(response_data, default=str), CACHE_TTL_STATIONS)
 
-    return web.json_response(response_data)
+    return json_resp(response_data)
 
 
 async def handle_emergency(request):
@@ -632,7 +647,7 @@ async def handle_emergency(request):
     """
     city = (request.query.get("city") or "").strip()
     if not city:
-        return web.json_response({"error": "city is required"}, status=400)
+        return json_resp({"error": "city is required"}, status=400)
     fuel = request.query.get("fuel") or "92"
 
     stations = await find_stations_by_city(
@@ -680,7 +695,7 @@ async def handle_emergency(request):
         x["updated_at"] or "",
     ))
 
-    return web.json_response({
+    return json_resp({
         "stations": result,
         "count": len(result),
         "city": city,
@@ -702,16 +717,16 @@ def _to_iso(dt):
 async def handle_search(request):
     """GET /api/search?q=... — поиск АЗС по городу/имени."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     q = request.query.get("q", "").strip()
     if len(q) < 2:
-        return web.json_response({"results": [], "query": q})
+        return json_resp({"results": [], "query": q})
 
     from db import search_routes as _search_routes
     routes = await _search_routes(q, limit=10)
 
-    return web.json_response({
+    return json_resp({
         "results": routes,
         "query": q,
         "count": len(routes),
@@ -721,7 +736,7 @@ async def handle_search(request):
 async def handle_route_stations(request):
     """GET /api/routes/{id}/stations — АЗС на трассе."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     route_id = int(request.match_info["id"])
     limit = int(request.query.get("limit", "50"))
@@ -738,7 +753,7 @@ async def handle_route_stations(request):
         except Exception:
             s["statuses"] = []
 
-    return web.json_response({
+    return json_resp({
         "stations": stations,
         "count": len(stations),
         "route_id": route_id,
@@ -748,7 +763,7 @@ async def handle_route_stations(request):
 async def handle_routes(request):
     """GET /api/routes?q=... — список всех трасс или поиск."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     q = request.query.get("q", "").strip()
 
@@ -765,7 +780,7 @@ async def handle_routes(request):
                 rows = await conn.fetch("SELECT id, code, name, aliases, length_km, start_point, end_point FROM routes WHERE is_active = TRUE ORDER BY code LIMIT 100")
         routes = [dict(r) for r in rows]
 
-    return web.json_response({
+    return json_resp({
         "routes": routes,
         "count": len(routes),
     })
@@ -778,7 +793,7 @@ async def handle_cities(request):
     С q: возвращает все города, название которых содержит подстроку.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     q = request.query.get("q", "").strip()
     try:
@@ -789,7 +804,7 @@ async def handle_cities(request):
     from db import search_cities
     cities = await search_cities(q, limit=limit)
 
-    return web.json_response({
+    return json_resp({
         "cities": cities,
         "count": len(cities),
         "query": q,
@@ -799,11 +814,11 @@ async def handle_cities(request):
 async def handle_search_legacy(request):
     """GET /api/search (legacy) — backward compat."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     query = request.query.get("q", "").strip()
     if len(query) < 2:
-        return web.json_response(
+        return json_resp(
             {"error": "q parameter required (min 2 chars)"},
             status=400,
         )
@@ -853,7 +868,7 @@ async def handle_search_legacy(request):
             "has_data": len(statuses) > 0,
         })
 
-    return web.json_response({
+    return json_resp({
         "stations": result,
         "count": len(result),
         "is_premium": is_premium_user,
@@ -920,19 +935,19 @@ async def _bulk_get_statuses(station_ids: list[int]) -> dict[int, list]:
 async def handle_station_detail(request):
     """GET /api/stations/{id}"""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     try:
         station_id = int(request.match_info["id"])
     except ValueError:
-        return web.json_response({"error": "invalid id"}, status=400)
+        return json_resp({"error": "invalid id"}, status=400)
 
     station = await get_station_by_id(station_id)
     if not station:
-        return web.json_response({"error": "not found"}, status=404)
+        return json_resp({"error": "not found"}, status=404)
 
     statuses = await get_station_current_status(station_id)
-    return web.json_response({
+    return json_resp({
         "station": _serialize_station(station),
         "statuses": [_serialize_status(st) for st in _dedupe_statuses_per_fuel(statuses)],
     })
@@ -941,23 +956,23 @@ async def handle_station_detail(request):
 async def handle_price_history(request):
     """GET /api/stations/{id}/price-history?fuel=92&days=30"""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     try:
         station_id = int(request.match_info["id"])
     except ValueError:
-        return web.json_response({"error": "invalid id"}, status=400)
+        return json_resp({"error": "invalid id"}, status=400)
 
     fuel = request.query.get("fuel", "95")
     if fuel not in ("92", "95", "98", "diesel", "100", "lpg"):
-        return web.json_response({"error": f"invalid fuel: {fuel}"}, status=400)
+        return json_resp({"error": f"invalid fuel: {fuel}"}, status=400)
 
     try:
         days = int(request.query.get("days", "30"))
         if not (1 <= days <= 365):
-            return web.json_response({"error": "days must be in [1, 365]"}, status=400)
+            return json_resp({"error": "days must be in [1, 365]"}, status=400)
     except ValueError:
-        return web.json_response({"error": "days must be int"}, status=400)
+        return json_resp({"error": "days must be int"}, status=400)
 
     from db import _fetch
     if USE_SQLITE:
@@ -989,7 +1004,7 @@ async def handle_price_history(request):
             "at": str(r.get("created_at")),
         })
 
-    return web.json_response({
+    return json_resp({
         "station_id": station_id,
         "fuel": fuel,
         "history": history,
@@ -1002,14 +1017,14 @@ async def handle_station_analytics(request):
     try:
         station_id = int(request.match_info["id"])
     except (KeyError, ValueError, TypeError):
-        return web.json_response({"error": "invalid id"}, status=400)
+        return json_resp({"error": "invalid id"}, status=400)
 
     days = int(request.query.get("days", 30))
     if days < 1 or days > 365:
         days = 30
 
     analytics = await get_station_analytics(station_id, days)
-    return web.json_response(analytics)
+    return json_resp(analytics)
 
 
 async def handle_premium_status(request):
@@ -1017,13 +1032,13 @@ async def handle_premium_status(request):
     try:
         tg = int(request.query.get("tg", "0"))
     except (ValueError, TypeError):
-        return web.json_response({"is_premium": False, "error": "invalid tg"}, status=400)
+        return json_resp({"is_premium": False, "error": "invalid tg"}, status=400)
     if not tg:
-        return web.json_response({"is_premium": False})
+        return json_resp({"is_premium": False})
 
     uid = await get_user_id_by_telegram_id(tg)
     if not uid:
-        return web.json_response({"is_premium": False})
+        return json_resp({"is_premium": False})
 
     is_prem = await is_premium(uid)
     info = await get_premium_info(uid) if is_prem else None
@@ -1040,7 +1055,7 @@ async def handle_premium_status(request):
         except Exception:
             pass
 
-    return web.json_response({
+    return json_resp({
         "is_premium": is_prem,
         "days_left": days_left,
         "expires_at": str(info["expires_at"])[:10] if info else None,
@@ -1072,7 +1087,7 @@ async def handle_station_prices(request):
     try:
         station_id = int(request.match_info["id"])
     except (KeyError, ValueError, TypeError):
-        return web.json_response({"error": "invalid id"}, status=400)
+        return json_resp({"error": "invalid id"}, status=400)
 
     all_prices = await get_all_prices_for_station(station_id)
 
@@ -1119,7 +1134,7 @@ async def handle_station_prices(request):
             src = it.get("source") or "default"
             sources_summary[src] = sources_summary.get(src, 0) + 1
 
-    return web.json_response({
+    return json_resp({
         "station_id": station_id,
         "fuel_prices": fuel_prices,
         "sources_summary": sources_summary,
@@ -1131,15 +1146,15 @@ async def handle_create_report(request):
     """POST /api/reports — создание отчёта из Mini App"""
     # Строже rate limit для POST
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     try:
         data = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid json"}, status=400)
+        return json_resp({"error": "invalid json"}, status=400)
 
     if not isinstance(data, dict):
-        return web.json_response({"error": "expected json object"}, status=400)
+        return json_resp({"error": "expected json object"}, status=400)
 
     station_id = data.get("station_id")
     fuel_type = data.get("fuel_type")
@@ -1158,30 +1173,30 @@ async def handle_create_report(request):
     source = data.get("source", "miniapp")
 
     if not station_id or not isinstance(station_id, int):
-        return web.json_response({"error": "station_id (int) is required"}, status=400)
+        return json_resp({"error": "station_id (int) is required"}, status=400)
     if not fuel_type or fuel_type not in ("92", "95", "98", "diesel", "100", "lpg", "all"):
-        return web.json_response({"error": f"invalid fuel_type: {fuel_type}"}, status=400)
+        return json_resp({"error": f"invalid fuel_type: {fuel_type}"}, status=400)
     if available is not None and not isinstance(available, bool):
-        return web.json_response(
+        return json_resp(
             {"error": "available must be true, false or null"},
             status=400,
         )
     if telegram_id is not None and not isinstance(telegram_id, int):
-        return web.json_response({"error": "telegram_id must be int"}, status=400)
+        return json_resp({"error": "telegram_id must be int"}, status=400)
     if price is not None and (not isinstance(price, (int, float)) or price < 0 or price > 500):
-        return web.json_response({"error": "price must be 0..500"}, status=400)
+        return json_resp({"error": "price must be 0..500"}, status=400)
     if queue_size is not None and (not isinstance(queue_size, int) or queue_size < 0 or queue_size > 100):
-        return web.json_response({"error": "queue_size must be 0..100"}, status=400)
+        return json_resp({"error": "queue_size must be 0..100"}, status=400)
     if limit_liters is not None and (not isinstance(limit_liters, int) or limit_liters < 0 or limit_liters > 1000):
-        return web.json_response({"error": "limit_liters must be 0..1000"}, status=400)
+        return json_resp({"error": "limit_liters must be 0..1000"}, status=400)
     if limit_per_visit is not None and (not isinstance(limit_per_visit, int) or limit_per_visit < 0 or limit_per_visit > 500):
-        return web.json_response({"error": "limit_per_visit must be 0..500"}, status=400)
+        return json_resp({"error": "limit_per_visit must be 0..500"}, status=400)
     if limit_daily is not None and (not isinstance(limit_daily, int) or limit_daily < 0 or limit_daily > 2000):
-        return web.json_response({"error": "limit_daily must be 0..2000"}, status=400)
+        return json_resp({"error": "limit_daily must be 0..2000"}, status=400)
     if limit_weekly is not None and (not isinstance(limit_weekly, int) or limit_weekly < 0 or limit_weekly > 5000):
-        return web.json_response({"error": "limit_weekly must be 0..5000"}, status=400)
+        return json_resp({"error": "limit_weekly must be 0..5000"}, status=400)
     if comment is not None and (not isinstance(comment, str) or len(comment) > 500):
-        return web.json_response({"error": "comment must be string ≤ 500 chars"}, status=400)
+        return json_resp({"error": "comment must be string ≤ 500 chars"}, status=400)
 
     user_id = None
     if telegram_id:
@@ -1206,7 +1221,7 @@ async def handle_create_report(request):
     )
 
     new_badges = await check_and_award_badges(user_id) if user_id else []
-    return web.json_response(
+    return json_resp(
         {
             "ok": True,
             "report_id": report_id,
@@ -1230,15 +1245,15 @@ async def handle_price_update(request):
     Создаёт обычный отчёт с заполненным price.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     try:
         data = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid json"}, status=400)
+        return json_resp({"error": "invalid json"}, status=400)
 
     if not isinstance(data, dict):
-        return web.json_response({"error": "expected json object"}, status=400)
+        return json_resp({"error": "expected json object"}, status=400)
 
     station_id = data.get("station_id")
     fuel_type = data.get("fuel_type")
@@ -1249,11 +1264,11 @@ async def handle_price_update(request):
     first_name = str(data.get("first_name", "PriceUpdate"))[:64]
 
     if not station_id or not isinstance(station_id, int):
-        return web.json_response({"error": "station_id (int) is required"}, status=400)
+        return json_resp({"error": "station_id (int) is required"}, status=400)
     if not fuel_type or fuel_type not in ("92", "95", "98", "diesel", "100", "lpg"):
-        return web.json_response({"error": f"invalid fuel_type: {fuel_type}"}, status=400)
+        return json_resp({"error": f"invalid fuel_type: {fuel_type}"}, status=400)
     if price is None or not isinstance(price, (int, float)) or price < 0 or price > 500:
-        return web.json_response({"error": "price is required, 0..500"}, status=400)
+        return json_resp({"error": "price is required, 0..500"}, status=400)
 
     user_id = None
     if telegram_id:
@@ -1271,7 +1286,7 @@ async def handle_price_update(request):
     )
 
     new_badges = await check_and_award_badges(user_id) if user_id else []
-    return web.json_response(
+    return json_resp(
         {
             "ok": True,
             "report_id": report_id,
@@ -1326,28 +1341,28 @@ async def handle_import_prices(request):
     provided_key = request.headers.get("X-Import-Key", "")
     if not import_key:
         logger.error("IMPORT_API_KEY is not set in env")
-        return web.json_response({"error": "server misconfigured"}, status=500)
+        return json_resp({"error": "server misconfigured"}, status=500)
     if not provided_key or provided_key != import_key:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return json_resp({"error": "unauthorized"}, status=401)
     
     # Rate limit: GitHub Actions дёргает раз в день, но подстрахуемся
     if not _check_rate(request.remote or "?", 10):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
     
     try:
         data = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid json"}, status=400)
+        return json_resp({"error": "invalid json"}, status=400)
     
     if not isinstance(data, dict):
-        return web.json_response({"error": "expected json object"}, status=400)
+        return json_resp({"error": "expected json object"}, status=400)
     
     source = str(data.get("source", "unknown"))[:64]
     results = data.get("results", [])
     if not isinstance(results, list):
-        return web.json_response({"error": "results must be a list"}, status=400)
+        return json_resp({"error": "results must be a list"}, status=400)
     if len(results) > 5000:
-        return web.json_response({"error": "too many results, max 5000 per request"}, status=400)
+        return json_resp({"error": "too many results, max 5000 per request"}, status=400)
     
     saved = 0
     errors = 0
@@ -1432,7 +1447,7 @@ async def handle_import_prices(request):
             new_stations = len(ids) - len(existing_ids)
             existing_stations = len(existing_ids)
     
-    return web.json_response({
+    return json_resp({
         "ok": True,
         "source": source,
         "received": len(results),
@@ -1451,15 +1466,15 @@ async def handle_create_review(request):
     Используется из Mini App и ботов.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
-        return web.json_response({"error": "rate limit exceeded"}, status=429)
+        return json_resp({"error": "rate limit exceeded"}, status=429)
 
     try:
         data = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid json"}, status=400)
+        return json_resp({"error": "invalid json"}, status=400)
 
     if not isinstance(data, dict):
-        return web.json_response({"error": "expected json object"}, status=400)
+        return json_resp({"error": "expected json object"}, status=400)
 
     station_id = data.get("station_id")
     fuel_type = data.get("fuel_type")
@@ -1469,15 +1484,15 @@ async def handle_create_review(request):
     first_name = str(data.get("first_name", "MiniApp User"))[:64]
 
     if not station_id or not isinstance(station_id, int):
-        return web.json_response({"error": "station_id (int) is required"}, status=400)
+        return json_resp({"error": "station_id (int) is required"}, status=400)
     if not fuel_type or fuel_type not in ("92", "95", "98", "diesel", "100", "lpg", "all"):
-        return web.json_response({"error": f"invalid fuel_type: {fuel_type}"}, status=400)
+        return json_resp({"error": f"invalid fuel_type: {fuel_type}"}, status=400)
     if rating is None or not isinstance(rating, int) or rating < 0 or rating > 5:
-        return web.json_response({"error": "rating (0-5 int) is required"}, status=400)
+        return json_resp({"error": "rating (0-5 int) is required"}, status=400)
     if comment is not None and (not isinstance(comment, str) or len(comment) > 1000):
-        return web.json_response({"error": "comment must be string ≤ 1000 chars"}, status=400)
+        return json_resp({"error": "comment must be string ≤ 1000 chars"}, status=400)
     if telegram_id is not None and not isinstance(telegram_id, int):
-        return web.json_response({"error": "telegram_id must be int"}, status=400)
+        return json_resp({"error": "telegram_id must be int"}, status=400)
 
     user_id = None
     if telegram_id:
@@ -1485,7 +1500,7 @@ async def handle_create_review(request):
         user_id = await get_user_id_by_telegram_id(telegram_id)
 
     if not user_id:
-        return web.json_response({"error": "telegram_id is required for reviews"}, status=400)
+        return json_resp({"error": "telegram_id is required for reviews"}, status=400)
 
     review_id = await add_review(
         station_id=station_id,
@@ -1496,7 +1511,7 @@ async def handle_create_review(request):
     )
 
     new_badges = await check_and_award_badges(user_id) if user_id else []
-    return web.json_response(
+    return json_resp(
         {
             "ok": True,
             "review_id": review_id,
@@ -1522,7 +1537,7 @@ async def handle_parse(request):
     """
     global _parsers_running
     if _parsers_running:
-        return web.json_response({
+        return json_resp({
             "ok": False,
             "message": "Parsers already running, skipped"
         }, status=429)
@@ -1532,7 +1547,7 @@ async def handle_parse(request):
     provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
     if not parse_key or not provided_key or provided_key != parse_key:
         _parsers_running = False
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return json_resp({"error": "unauthorized"}, status=401)
     
     import asyncio
     import sys
@@ -1725,14 +1740,14 @@ async def handle_parse(request):
             _parsers_running = False
 
     asyncio.create_task(_run_parsers())
-    return web.json_response({"ok": True, "message": "parsers started in background"})
+    return json_resp({"ok": True, "message": "parsers started in background"})
 
 
 async def handle_parse_benzin(request):
     parse_key = os.environ.get("PARSE_API_KEY", "")
     provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
     if not parse_key or not provided_key or provided_key != parse_key:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return json_resp({"error": "unauthorized"}, status=401)
 
     city = request.query.get("city", "Москва")
     import asyncio
@@ -1762,12 +1777,12 @@ async def handle_parse_benzin(request):
         parser_logger.info("=== КОНЕЦ: saved=%d ===", count)
         logs = log_stream.getvalue()
         parser_logger.removeHandler(log_handler)
-        return web.json_response({"ok": True, "city": city, "saved": count, "logs": logs})
+        return json_resp({"ok": True, "city": city, "saved": count, "logs": logs})
     except Exception as e:
         import traceback
         logs = log_stream.getvalue()
         logger.error("parse_benzin error: %s", e)
-        return web.json_response({
+        return json_resp({
             "ok": False,
             "error": str(e),
             "logs": logs,
@@ -1807,13 +1822,13 @@ async def handle_vk_callback(request):
 
     if not (is_vk_ip or is_local or is_vk_xreal):
         logger.warning("VK callback: rejected from non-VK IP %s (X-Real-IP: %s)", remote, x_real)
-        return web.json_response({"error": "forbidden"}, status=403)
+        return json_resp({"error": "forbidden"}, status=403)
 
     try:
         event = await request.json()
     except Exception as e:
         logger.warning("VK callback: invalid JSON: %s", e)
-        return web.json_response({"error": "invalid json"}, status=400)
+        return json_resp({"error": "invalid json"}, status=400)
 
     event_type = event.get("type", "")
     logger.info("VK callback: type=%s", event_type)
@@ -1822,7 +1837,7 @@ async def handle_vk_callback(request):
     secret = os.environ.get("VK_CALLBACK_SECRET", "")
     if secret and event.get("secret") != secret:
         logger.warning("VK callback: invalid secret")
-        return web.json_response({"error": "invalid secret"}, status=403)
+        return json_resp({"error": "invalid secret"}, status=403)
 
     # Confirmation
     if event_type == "confirmation":
@@ -1845,7 +1860,7 @@ async def handle_vk_callback(request):
         from vk_callback import process_message_new, process_message_event
     except ImportError as e:
         logger.exception("VK callback: import failed: %s", e)
-        return web.json_response({"error": "callback handler not available"}, status=500)
+        return json_resp({"error": "callback handler not available"}, status=500)
 
     # Обработка событий
     if event_type == "message_new":
@@ -1882,7 +1897,7 @@ async def cors_middleware(app, handler):
             content_length = request.headers.get("Content-Length", "0")
             try:
                 if int(content_length) > MAX_REQUEST_BODY:
-                    return web.json_response({"error": "request too large"}, status=413)
+                    return json_resp({"error": "request too large"}, status=413)
             except (ValueError, TypeError):
                 pass
 
@@ -1951,7 +1966,7 @@ async def handle_enrich(request):
     parse_key = os.environ.get("PARSE_API_KEY", "")
     provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
     if not parse_key or not provided_key or provided_key != parse_key:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return json_resp({"error": "unauthorized"}, status=401)
 
     import asyncio
     import sys
@@ -1970,21 +1985,21 @@ async def handle_enrich(request):
             logger.warning("[enrich] Failed: %s", e)
 
     asyncio.create_task(_run_enrich())
-    return web.json_response({"ok": True, "message": "enrich started in background"})
+    return json_resp({"ok": True, "message": "enrich started in background"})
 
 
 async def handle_import_osm(request):
     """GET /api/import-osm?key=...&region=ivanovo|million — импорт АЗС из OpenStreetMap (в фоне)."""
     global _parsers_running
     if _parsers_running:
-        return web.json_response({"ok": False, "message": "Another job is running"}, status=429)
+        return json_resp({"ok": False, "message": "Another job is running"}, status=429)
     _parsers_running = True
 
     parse_key = os.environ.get("PARSE_API_KEY", "")
     provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
     if not parse_key or not provided_key or provided_key != parse_key:
         _parsers_running = False
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return json_resp({"error": "unauthorized"}, status=401)
 
     region = request.query.get("region", "ivanovo").lower()
 
@@ -2013,7 +2028,7 @@ async def handle_import_osm(request):
             db.API_MODE = False
 
     asyncio.create_task(_run_import())
-    return web.json_response({"ok": True, "message": f"OSM import ({region}) started in background"})
+    return json_resp({"ok": True, "message": f"OSM import ({region}) started in background"})
 
 
 def create_app() -> web.Application:
@@ -2035,7 +2050,7 @@ def create_app() -> web.Application:
 
         if suspicious:
             security_logger.error("BLOCKED: %s %s from %s", method, path, ip)
-            return web.json_response({"error": "forbidden"}, status=403)
+            return json_resp({"error": "forbidden"}, status=403)
 
         return await handler(request)
 
@@ -2092,7 +2107,7 @@ async def handle_vk_test_event(request):
     parse_key = os.environ.get("PARSE_API_KEY", "")
     provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
     if not parse_key or not provided_key or provided_key != parse_key:
-        return web.json_response({"error": "unauthorized"}, status=401)
+        return json_resp({"error": "unauthorized"}, status=401)
     try:
         body = await request.json()
     except Exception:
@@ -2112,7 +2127,7 @@ async def handle_vk_test_event(request):
     try:
         from vk_callback import process_message_event
         await process_message_event(test_event)
-        return web.json_response({"ok": True, "test_event": test_event})
+        return json_resp({"ok": True, "test_event": test_event})
     except Exception as e:
         import traceback
-        return web.json_response({"ok": False, "error": str(e), "traceback": traceback.format_exc()}, status=500)
+        return json_resp({"ok": False, "error": str(e), "traceback": traceback.format_exc()}, status=500)
