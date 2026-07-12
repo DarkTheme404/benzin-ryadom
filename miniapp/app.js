@@ -328,10 +328,18 @@
   function setTab(tab) {
     state.tab = tab;
     $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    // Hide all tab-contents
+    $$('.tab-content').forEach(el => el.hidden = true);
+    // Hide all screens
+    $$('.screen').forEach(s => s.classList.remove('active'));
     if (tab === 'home') showScreen('home');
     else if (tab === 'map') {
       showScreen('map');
       loadMap();
+    }
+    else if (tab === 'routes') {
+      const el = document.getElementById('tab-routes');
+      if (el) el.hidden = false;
     }
     else if (tab === 'report') openReportFlow();
     else if (tab === 'profile') {
