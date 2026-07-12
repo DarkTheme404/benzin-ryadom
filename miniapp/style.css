@@ -2172,6 +2172,7 @@ body.vk-dark {
   padding-bottom: calc(var(--nav-h) + var(--safe-bottom) + 16px);
 }
 .tab-content[hidden] { display: none; }
+.main[hidden] { display: none !important; }
 
 .routes-search {
   display: flex;
