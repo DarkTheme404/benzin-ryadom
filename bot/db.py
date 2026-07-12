@@ -2872,13 +2872,19 @@ def _normalize_query(q: str) -> tuple[str, str]:
         return "", ""
     q_lower = q.strip().lower()
     # Маппинг кириллица → латиница для типичных замен
+    # Полный маппинг: визуально одинаковые кириллические и латинские буквы
     cyr_to_lat = {
-        "а": "a", "в": "b", "е": "e", "к": "k", "м": "m", "н": "h", "о": "o",
-        "р": "p", "с": "c", "т": "t", "у": "y", "х": "x",
+        # Транслитерация (русский → английский, по звукам)
+        "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e",
+        "ё": "yo", "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k",
+        "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r",
+        "с": "s", "т": "t", "у": "u", "ф": "f", "х": "kh", "ц": "ts",
+        "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "",
+        "э": "e", "ю": "yu", "я": "ya",
     }
     lat_variant = "".join(cyr_to_lat.get(c, c) for c in q_lower)
     # Также обратный маппинг
-    lat_to_cyr = {v: k for k, v in cyr_to_lat.items()}
+    lat_to_cyr = {v: k for k, v in cyr_to_lat.items() if v}
     cyr_variant = "".join(lat_to_cyr.get(c, c) for c in q_lower)
     return cyr_variant, lat_variant
 
@@ -2986,3 +2992,109 @@ async def find_stations_by_route(
                 route_id, limit,
             )
     return [dict(r) for r in rows]
+
+
+async def search_cities(query: str = "", limit: int = 200) -> list[dict]:
+    """Ищет города из БД. Поддерживает кириллицу/латиницу.
+    Возвращает [{name, region, stations_count, has_live, lat, lon}, ...]
+
+    Быстрый GROUP BY + Python-фильтр (т.к. кириллица/латиница не матчатся в SQL).
+    with_fuel НЕ считается здесь (только city+region+lat+lon) — для скорости.
+    """
+    base_sql = """
+        SELECT s.city,
+               MAX(s.region) as region,
+               COUNT(*) as total,
+               AVG(s.lat) as avg_lat,
+               AVG(s.lon) as avg_lon
+          FROM stations s
+         WHERE s.city IS NOT NULL AND s.city != ''
+           AND s.lat IS NOT NULL AND s.lon IS NOT NULL
+           AND s.is_active = 1
+    """
+
+    if not query or len(query.strip()) < 2:
+        # Без запроса — топ городов по числу АЗС
+        if USE_SQLITE:
+            sql = base_sql + " GROUP BY s.city ORDER BY total DESC LIMIT ?"
+            rows = await _fetch(sql, limit)
+        else:
+            sql = base_sql + " GROUP BY s.city ORDER BY COUNT(*) DESC LIMIT $1"
+            async with _db.acquire() as conn:
+                rows = await conn.fetch(sql, limit)
+        return [
+            {
+                "name": (r["city"] if isinstance(r, dict) else r[0]),
+                "region": (r["region"] if isinstance(r, dict) else r[1]) or "",
+                "stations_count": (r["total"] if isinstance(r, dict) else r[2]) or 0,
+                "with_fuel": 0,
+                "lat": float(r["avg_lat"]) if (r.get("avg_lat") if isinstance(r, dict) else r[3]) else None,
+                "lon": float(r["avg_lon"]) if (r.get("avg_lon") if isinstance(r, dict) else r[4]) else None,
+            }
+            for r in rows
+        ]
+
+    # С запросом — LIKE/ILIKE фильтр в БД
+    q = query.strip().lower()
+    fetch_limit = max(limit * 10, 500)
+    # Дополнительно: транслитерированный вариант запроса (Ivanovo → иваново)
+    cyr_to_lat = {
+        "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e",
+        "ё": "yo", "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k",
+        "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r",
+        "с": "s", "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "ts",
+        "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "",
+        "э": "e", "ю": "yu", "я": "ya",
+    }
+    # LAT → CYR: расширенный (включая ь, х, й, мягкий/твёрдый знаки)
+    lat_to_cyr = {
+        "a": "а", "b": "б", "c": "с", "d": "д", "e": "е", "f": "ф",
+        "g": "г", "h": "х", "i": "и", "j": "й", "k": "к", "l": "л",
+        "m": "м", "n": "н", "o": "о", "p": "п", "q": "к", "r": "р",
+        "s": "с", "t": "т", "u": "у", "v": "в", "w": "в", "x": "х",
+        "y": "й", "z": "з",
+    }
+
+    # Транслитерируем в обе стороны
+    q_cyr_from_lat = "".join(lat_to_cyr.get(c, c) for c in q)
+    q_lat_from_cyr = "".join(cyr_to_lat.get(c, c) for c in q)
+
+    # Уникальные паттерны для SQL
+    patterns = list({f"%{q}%", f"%{q_cyr_from_lat}%", f"%{q_lat_from_cyr}%"} - {""})
+
+    if USE_SQLITE:
+        # SQLite: OR для всех паттернов
+        like_clauses = " OR ".join(["py_lower(s.city) LIKE ?"] * len(patterns))
+        sql = base_sql + f" AND ({like_clauses}) GROUP BY s.city LIMIT ?"
+        rows = await _fetch(sql, *patterns, fetch_limit)
+    else:
+        # PG: ILIKE OR
+        like_clauses = " OR ".join([f"py_lower(s.city) ILIKE ${i+1}" for i in range(len(patterns))])
+        sql = base_sql + f" AND ({like_clauses}) GROUP BY s.city LIMIT ${len(patterns)+1}"
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(sql, *patterns, fetch_limit)
+
+    # Build result (SQL уже отфильтровал)
+    result = []
+    seen_cities = set()
+
+    for r in rows:
+        r_dict = r if isinstance(r, dict) else dict(r)
+        city_name = r_dict.get("city")
+        if not city_name or city_name in seen_cities:
+            continue
+
+        seen_cities.add(city_name)
+        result.append({
+            "name": city_name,
+            "region": r_dict.get("region") or "",
+            "stations_count": r_dict.get("total", 0) or 0,
+            "with_fuel": 0,
+            "lat": float(r_dict["avg_lat"]) if r_dict.get("avg_lat") else None,
+            "lon": float(r_dict["avg_lon"]) if r_dict.get("avg_lon") else None,
+        })
+
+        if len(result) >= limit:
+            break
+
+    return result

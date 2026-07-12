@@ -771,6 +771,31 @@ async def handle_routes(request):
     })
 
 
+async def handle_cities(request):
+    """GET /api/cities?q=... — поиск городов в БД (для Mini App).
+
+    Без q: возвращает топ-200 городов по числу АЗС.
+    С q: возвращает все города, название которых содержит подстроку.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
+        return web.json_response({"error": "rate limit exceeded"}, status=429)
+
+    q = request.query.get("q", "").strip()
+    try:
+        limit = min(int(request.query.get("limit", "200")), 500)
+    except (ValueError, TypeError):
+        limit = 200
+
+    from db import search_cities
+    cities = await search_cities(q, limit=limit)
+
+    return web.json_response({
+        "cities": cities,
+        "count": len(cities),
+        "query": q,
+    })
+
+
 async def handle_search_legacy(request):
     """GET /api/search (legacy) — backward compat."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
@@ -2028,6 +2053,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/search", handle_search)
     app.router.add_get("/api/routes", handle_routes)
     app.router.add_get("/api/routes/{id}/stations", handle_route_stations)
+    app.router.add_get("/api/cities", handle_cities)
     app.router.add_get("/api/stations/{id}", handle_station_detail)
     app.router.add_get("/api/stations/{id}/price-history", handle_price_history)
     app.router.add_get("/api/stations/{id}/analytics", handle_station_analytics)
