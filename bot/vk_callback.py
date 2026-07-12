@@ -282,6 +282,7 @@ async def handle_help(peer_id: int) -> None:
     text = (
         "ℹ️ <b>Команды</b>\n\n"
         "🔍 <b>Найти АЗС</b> — нажми кнопку или напиши город\n"
+        "🛣 <b>Поиск по трассе</b> — М-4, М-7, Р-217 и другие\n"
         "📝 <b>Сообщить</b> — отметь наличие топлива\n"
         "🔔 <b>Подписки</b> — push о завозе рядом\n"
         "👤 <b>Профиль</b> — репутация, бейджи\n"
@@ -290,6 +291,84 @@ async def handle_help(peer_id: int) -> None:
         "💡 Напиши название АЗС, город или сеть — я покажу результат."
     )
     await _vk_send(peer_id, text, vk_main_menu())
+
+
+async def handle_route_search_start(peer_id: int) -> None:
+    """Запуск поиска АЗС по трассе."""
+    _set_state(peer_id, {"flow": "route_search", "step": "waiting_query"})
+    text = (
+        "🛣 <b>Поиск АЗС вдоль трассы</b>\n\n"
+        "Введи номер или название трассы:\n"
+        "• <code>М-4</code> или <code>М4</code> — трасса «Дон»\n"
+        "• <code>М-7</code> — «Волга»\n"
+        "• <code>Р-217</code> — «Кавказ»\n"
+        "• <code>дон</code>, <code>кавказ</code>, <code>крым</code> — по названию\n\n"
+        "Бот покажет АЗС вдоль трассы с адресами, ценами и наличием."
+    )
+    await _vk_send(peer_id, text, vk_main_menu())
+
+
+async def handle_route_search_text(peer_id: int, text: str) -> None:
+    """Обрабатывает ввод названия/номера трассы и показывает результаты."""
+    text_clean = text.strip()
+    if text_clean.lower() in ("отмена", "отменить", "cancel"):
+        _clear_state(peer_id)
+        await _vk_send(peer_id, "Отменено.", vk_main_menu())
+        return
+
+    from db import search_routes, find_stations_by_route
+    routes = await search_routes(text_clean, limit=5)
+    if not routes:
+        await _vk_send(
+            peer_id,
+            f"🔍 По запросу <b>«{text_clean}»</b> трасс не найдено.\n"
+            f"Попробуй: М-4, М-7, Р-217, Дон, Кавказ, Крым.",
+            vk_main_menu(),
+        )
+        return
+
+    route = routes[0]
+    stations = await find_stations_by_route(route["id"], limit=20)
+
+    lines = [
+        f"🛣 <b>{route['code']} — {route['name']}</b>",
+        f"📏 {route['length_km']} км · {route['start_point']} → {route['end_point']}",
+        "",
+    ]
+    if route.get("description"):
+        lines.append(f"<i>{route['description']}</i>")
+        lines.append("")
+    lines.append(f"⛽ <b>Найдено АЗС на трассе: {len(stations)}</b>\n")
+
+    for i, s in enumerate(stations[:10], 1):
+        addr = s.get("address") or "—"
+        city = s.get("city") or ""
+        km = s.get("km_marker")
+        km_str = f" (≈{km} км)" if km else ""
+        has_fuel = s.get("has_fuel", False)
+        status = "✅ Есть топливо" if has_fuel else "❓ Нет данных"
+        net = s.get("operator") or s.get("brand") or ""
+        net_str = f" <i>{net}</i>" if net else ""
+
+        lines.append(f"{i}. <b>#{s['id']}</b>{net_str} — {s['name']}")
+        lines.append(f"   📍 {city}, {addr}{km_str}")
+        lines.append(f"   {status}")
+        lines.append("")
+
+    if len(stations) > 10:
+        lines.append(f"<i>...и ещё {len(stations) - 10} АЗС</i>")
+
+    buttons = []
+    if len(routes) > 1:
+        buttons.append([_callback_button(
+            f"Другие трассы ({len(routes) - 1})",
+            {"a": "route_more", "q": text_clean[:50]},
+        )])
+    buttons.append([_callback_button("🔍 Новый поиск", {"a": "route_search"})])
+    buttons.append([_callback_button("🏠 В начало", {"a": "home"})])
+
+    await _vk_send(peer_id, "\n".join(lines), vk_keyboard(buttons))
+    _clear_state(peer_id)
 
 
 async def handle_find(peer_id: int) -> None:
@@ -1051,6 +1130,8 @@ async def process_message_new(event: dict) -> None:
             await handle_text_search(peer_id, text)
         elif state.get("flow") == "report" and state.get("awaiting") in ("price", "limit", "queue"):
             await handle_report_extras_text(peer_id, text)
+        elif state.get("flow") == "route_search" and state.get("step") == "waiting_query":
+            await handle_route_search_text(peer_id, text)
         elif state.get("flow") == "report" and state.get("step") == "choose_station":
             # Поиск АЗС для отчёта
             stations = await find_stations_by_name(text, limit=5)
@@ -1135,6 +1216,14 @@ async def process_message_event(event: dict) -> None:
 
     elif action == "help":
         await handle_help(peer_id)
+
+    elif action == "route_search":
+        await handle_route_search_start(peer_id)
+
+    elif action == "route_more":
+        q = payload.get("q", "")
+        if q:
+            await handle_route_search_text(peer_id, q)
 
     elif action == "profile":
         await handle_profile(peer_id)

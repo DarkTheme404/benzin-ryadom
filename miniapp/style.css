@@ -2164,3 +2164,42 @@ body.vk-dark {
   --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
   --shadow-lg: 0 10px 30px rgba(0,0,0,0.6);
 }
+
+/* ==== ROUTES TAB ==== */
+.routes-search {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+.routes-search input {
+  flex: 1;
+}
+.routes-results {
+  padding: 12px 16px;
+}
+.route-card {
+  background: var(--bg-card);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.route-card:hover { background: var(--bg-card-hover); }
+.route-card-title { font-weight: 600; font-size: 15px; }
+.route-card-meta { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.route-card-desc { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+.route-station {
+  background: var(--bg-card);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 6px 0;
+  border-left: 3px solid var(--primary);
+}
+.route-station.has-fuel { border-left-color: #4ade80; }
+.route-station-name { font-weight: 600; font-size: 14px; }
+.route-station-addr { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.route-station-status { font-size: 11px; margin-top: 4px; }
+.route-station-status.ok { color: #4ade80; }

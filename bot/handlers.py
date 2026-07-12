@@ -389,6 +389,171 @@ async def cmd_find(message: Message):
     )
 
 
+# === FSM: поиск по трассе ===
+class RouteSearchStates(StatesGroup):
+    waiting_route_query = State()
+
+
+async def cmd_route_search(message: Message, state: FSMContext | None = None):
+    """Поиск АЗС вдоль федеральных/региональных трасс РФ."""
+    if state is not None:
+        await state.set_state(RouteSearchStates.waiting_route_query)
+    await message.answer(
+        "🛣 <b>Поиск АЗС вдоль трассы</b>\n\n"
+        "Введи номер или название трассы:\n"
+        "• <code>М-4</code> или <code>М4</code> — трасса «Дон»\n"
+        "• <code>М-7</code> — «Волга»\n"
+        "• <code>Р-217</code> — «Кавказ»\n"
+        "• <code>дон</code>, <code>кавказ</code>, <code>крым</code> — по названию\n\n"
+        "Бот покажет АЗС вдоль трассы с адресами, ценами и наличием.\n"
+        "Или нажми /cancel для отмены."
+    )
+
+
+async def handle_route_query(message: Message, state: FSMContext):
+    """Обрабатывает ввод номера/названия трассы и показывает АЗС."""
+    if state is None:
+        return
+    text = (message.text or "").strip()
+    if text in ("/cancel", "отмена", "Отмена"):
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+        return
+
+    from db import search_routes, find_stations_by_route
+    routes = await search_routes(text, limit=5)
+    if not routes:
+        await message.answer(
+            f"🔍 По запросу <b>«{text}»</b> трасс не найдено.\n"
+            f"Попробуй: М-4, М-7, Р-217, Дон, Кавказ, Крым.\n\n"
+            f"Или /cancel для отмены."
+        )
+        return
+
+    # Показываем первую трассу
+    route = routes[0]
+    stations = await find_stations_by_route(route["id"], limit=20)
+
+    lines = [
+        f"🛣 <b>{route['code']} — {route['name']}</b>",
+        f"📏 {route['length_km']} км · {route['start_point']} → {route['end_point']}",
+        "",
+    ]
+    if route.get("description"):
+        lines.append(f"<i>{route['description']}</i>")
+        lines.append("")
+
+    lines.append(f"⛽ <b>Найдено АЗС на трассе: {len(stations)}</b>\n")
+
+    from utils import format_station_card
+    for i, s in enumerate(stations[:10], 1):
+        # Адрес
+        addr = s.get("address") or "—"
+        city = s.get("city") or ""
+        km = s.get("km_marker")
+        km_str = f" (≈{km} км)" if km else ""
+
+        # Статус
+        has_fuel = s.get("has_fuel", False)
+        status = "✅ Есть топливо" if has_fuel else "❓ Нет данных"
+
+        # Название сети
+        net = s.get("operator") or s.get("brand") or ""
+        net_str = f" <i>{net}</i>" if net else ""
+
+        lines.append(f"{i}. <b>#{s['id']}</b>{net_str} — {s['name']}")
+        lines.append(f"   📍 {city}, {addr}{km_str}")
+        lines.append(f"   {status}")
+        lines.append("")
+
+    if len(stations) > 10:
+        lines.append(f"<i>...и ещё {len(stations) - 10} АЗС</i>")
+
+    # Кнопки: другие трассы если есть
+    kb_rows = []
+    if len(routes) > 1:
+        kb_rows.append([InlineKeyboardButton(
+            text=f"Другие трассы ({len(routes) - 1})",
+            callback_data=f"route_more:{text}",
+        )])
+    kb_rows.append([InlineKeyboardButton(
+        text="🔍 Новый поиск",
+        callback_data="route:new",
+    )])
+
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+    )
+    await state.clear()
+
+
+async def route_more_callback(callback: CallbackQuery):
+    """Показывает другие трассы по запросу."""
+    text = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    from db import search_routes
+    routes = await search_routes(text, limit=10)
+    if not routes:
+        await callback.answer("Ничего не найдено", show_alert=True)
+        return
+
+    lines = [f"🛣 <b>Найдено трасс: {len(routes)}</b>\n"]
+    kb_rows = []
+    for r in routes:
+        lines.append(f"• <b>{r['code']}</b> — {r['name']} ({r['length_km']} км)")
+        kb_rows.append([InlineKeyboardButton(
+            text=f"{r['code']} {r['name'][:30]}",
+            callback_data=f"route_pick:{r['id']}",
+        )])
+    kb_rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="route:new")])
+    await callback.message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await callback.answer()
+
+
+async def route_pick_callback(callback: CallbackQuery):
+    """Показывает АЗС выбранной трассы."""
+    rid = int(callback.data.split(":", 1)[1])
+    from db import find_stations_by_route, _fetch
+    if db.USE_SQLITE:
+        row = await _fetch("SELECT * FROM routes WHERE id = ?", rid)
+    else:
+        async with db._db.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM routes WHERE id = $1", rid)
+    if not row:
+        await callback.answer("Трасса не найдена", show_alert=True)
+        return
+    route = dict(row) if not isinstance(row, dict) else row
+    stations = await find_stations_by_route(rid, limit=20)
+
+    lines = [
+        f"🛣 <b>{route['code']} — {route['name']}</b>",
+        f"📏 {route['length_km']} км",
+        "",
+        f"⛽ АЗС: {len(stations)}\n",
+    ]
+    for i, s in enumerate(stations[:10], 1):
+        addr = s.get("address") or "—"
+        city = s.get("city") or ""
+        has_fuel = s.get("has_fuel", False)
+        status = "✅" if has_fuel else "❓"
+        net = s.get("operator") or s.get("brand") or ""
+        lines.append(f"{status} <b>#{s['id']}</b> {s['name']} <i>{net}</i>")
+        lines.append(f"   📍 {city}, {addr}")
+    await callback.message.answer("\n".join(lines))
+    await callback.answer()
+
+
+async def route_new_callback(callback: CallbackQuery, state: FSMContext):
+    """Новый поиск по трассе."""
+    if state is not None:
+        await state.set_state(RouteSearchStates.waiting_route_query)
+    await callback.message.answer(
+        "🛣 <b>Введи номер или название трассы</b>\n"
+        "Примеры: <code>М-4</code>, <code>М-7</code>, <code>Р-217</code>, <code>дон</code>"
+    )
+    await callback.answer()
+
+
 # === /subscribe ===
 async def cmd_subscribe(message: Message, state: FSMContext | None = None):
     if state:
@@ -1085,6 +1250,8 @@ async def handle_main_button(message: Message, state: FSMContext = None):
 
     if text == BTN_FIND or text == "🔍 Найти АЗС":
         await cmd_find(message)
+    elif text == BTN_ROUTE or text == "🛣 Поиск по трассе":
+        await cmd_route_search(message, state)
     elif text == BTN_REPORT or text == "📝 Сообщить о наличии":
         await message.answer(
             "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
@@ -3085,12 +3252,19 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_price, F.text)
     dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_limit, F.text)
     dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_queue, F.text)
+    dp.message.register(handle_route_query, RouteSearchStates.waiting_route_query, F.text)
     dp.message.register(handle_main_button, F.text)
 
     # Callback (кнопки)
     dp.callback_query.register(show_station_details, F.data.startswith("st:"))
-    # Route
-    dp.callback_query.register(route_callback, F.data.startswith("route:"))
+    # Route to station (existing — uses lat:lon:station_id format)
+    dp.callback_query.register(route_callback, F.data.regexp(r"^route:\d+:"))
+    # Route new search
+    dp.callback_query.register(route_new_callback, F.data == "route:new")
+    # Route more (other routes from search)
+    dp.callback_query.register(route_more_callback, F.data.startswith("route_more:"))
+    # Route pick (select specific route)
+    dp.callback_query.register(route_pick_callback, F.data.startswith("route_pick:"))
     # Promote
     dp.callback_query.register(promote_callback, F.data.startswith("promote:"))
     # Report flow

@@ -1492,6 +1492,76 @@
       loadStations();
     });
 
+    // ============= ROUTES =============
+    const routesInput = $('#routes-input');
+    const routesBtn = $('#routes-search-btn');
+    const routesResults = $('#routes-results');
+    if (routesBtn && routesInput && routesResults) {
+      const doRouteSearch = async (q) => {
+        q = (q || '').trim();
+        if (q.length < 2) {
+          showToast('Введи номер или название трассы', 'warning');
+          return;
+        }
+        showLoading();
+        routesResults.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">🔍 Ищу трассу...</div>';
+        try {
+          const r = await api(`/api/routes?q=${encodeURIComponent(q)}`);
+          const routes = r.routes || [];
+          if (!routes.length) {
+            routesResults.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">Ничего не найдено. Попробуй: М-4, М-7, Р-217, Дон, Кавказ.</div>';
+            return;
+          }
+          const route = routes[0];
+          routesResults.innerHTML = `
+            <div class="route-card">
+              <div class="route-card-title">🛣 ${route.code} — ${route.name}</div>
+              <div class="route-card-meta">📏 ${route.length_km || '?'} км · ${route.start_point || ''} → ${route.end_point || ''}</div>
+              ${route.description ? `<div class="route-card-desc">${route.description}</div>` : ''}
+            </div>
+            <div id="route-stations-list" style="text-align:center;padding:12px;color:var(--text-secondary)">⛽ Загружаю АЗС...</div>
+          `;
+          // Загружаем АЗС
+          const rs = await api(`/api/routes/${route.id}/stations?limit=30`);
+          const stations = rs.stations || [];
+          const listEl = $('#route-stations-list');
+          if (!listEl) return;
+          if (!stations.length) {
+            listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">АЗС не найдены</div>';
+            return;
+          }
+          listEl.innerHTML = stations.map(s => {
+            const hasFuel = s.has_fuel;
+            const addr = s.address || s.city || '—';
+            const km = s.km_marker ? ` (~${s.km_marker} км)` : '';
+            const net = s.operator || s.brand || '';
+            const netStr = net ? ` <i style="color:var(--text-secondary)">${net}</i>` : '';
+            const status = hasFuel ? '<span class="route-station-status ok">✅ Есть топливо</span>' : '<span class="route-station-status">❓ Нет данных</span>';
+            return `<div class="route-station ${hasFuel ? 'has-fuel' : ''}" data-station-id="${s.id}">
+              <div class="route-station-name">#${s.id}${netStr} — ${s.name}</div>
+              <div class="route-station-addr">📍 ${s.city || ''}, ${addr}${km}</div>
+              <div class="route-station-status">${status.replace(/<[^>]+>/g, '')}</div>
+            </div>`;
+          }).join('');
+          // Click handlers на АЗС
+          $$('.route-station').forEach(el => {
+            el.addEventListener('click', () => {
+              const sid = parseInt(el.dataset.stationId);
+              openStationDetail({ id: sid });
+            });
+          });
+        } catch (e) {
+          showToast('Ошибка: ' + e.message, 'error');
+        } finally {
+          hideLoading();
+        }
+      };
+      routesBtn.addEventListener('click', () => doRouteSearch(routesInput.value));
+      routesInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') doRouteSearch(routesInput.value);
+      });
+    }
+
     // Fuel chips
     $$('.chip-fuel').forEach(c => {
       c.addEventListener('click', () => {

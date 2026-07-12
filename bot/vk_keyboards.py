@@ -131,6 +131,7 @@ def vk_keyboard(rows: list[list[dict]], one_time: bool = False, inline: bool = F
 
 # === Текстовые кнопки (аналог BTN_*) ===
 VK_BTN_FIND = "🔍 Найти АЗС"
+VK_BTN_ROUTE = "🛣 Поиск по трассе"
 VK_BTN_REPORT = "📝 Сообщить"
 VK_BTN_SUBSCRIBE = "🔔 Уведомления"
 VK_BTN_OWNER = "👤 Я владелец"
@@ -149,6 +150,10 @@ def vk_main_menu() -> str:
         [
             _callback_button(VK_BTN_FIND, {"a": "find"}, "primary") if use_callback
             else _button(VK_BTN_FIND, "primary"),
+            _callback_button(VK_BTN_ROUTE, {"a": "route_search"}, "primary") if use_callback
+            else _button(VK_BTN_ROUTE, "primary"),
+        ],
+        [
             _callback_button(VK_BTN_REPORT, {"a": "report_start"}, "positive") if use_callback
             else _button(VK_BTN_REPORT, "positive"),
         ],

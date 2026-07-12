@@ -11,6 +11,7 @@ from aiogram.types import (
 
 # === Текстовые кнопки (reply keyboard внизу экрана) ===
 BTN_FIND = "🔍 Найти АЗС"
+BTN_ROUTE = "🛣 Поиск по трассе"
 BTN_REPORT = "📝 Сообщить о наличии"
 BTN_SUBSCRIBE = "🔔 Уведомления"
 BTN_OWNER = "👤 Я владелец АЗС"
@@ -29,12 +30,12 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     """Главное меню (кнопки внизу экрана)."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_REPORT)],
-            [KeyboardButton(text=BTN_SUBSCRIBE), KeyboardButton(text=BTN_OWNER)],
-            [KeyboardButton(text=BTN_APP), KeyboardButton(text=BTN_PROFILE)],
-            [KeyboardButton(text=BTN_MY_STATIONS), KeyboardButton(text=BTN_HELP)],
-            [KeyboardButton(text=BTN_PREMIUM), KeyboardButton(text=BTN_DONATE)],
-            [KeyboardButton(text=BTN_BUG), KeyboardButton(text=BTN_IDEA)],
+            [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_ROUTE)],
+            [KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_SUBSCRIBE)],
+            [KeyboardButton(text=BTN_OWNER), KeyboardButton(text=BTN_APP)],
+            [KeyboardButton(text=BTN_PROFILE), KeyboardButton(text=BTN_MY_STATIONS)],
+            [KeyboardButton(text=BTN_HELP), KeyboardButton(text=BTN_PREMIUM)],
+            [KeyboardButton(text=BTN_DONATE), KeyboardButton(text=BTN_BUG)],
         ],
         resize_keyboard=True,
     )
