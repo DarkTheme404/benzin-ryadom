@@ -171,7 +171,9 @@
 - API: `/api/routes?q=`, `/api/routes/{id}/stations`
 
 ## Обогащение адресов — 12.07.2026
-- 19,516 АЗС без street-level адреса
-- Скрипт `enrich_addresses_nominatim.py` через Nominatim reverse geocoding
-- 1.1 сек между запросами (лимит Nominatim)
-- Полное обогащение: ~6 часов
+- 19,531 АЗС без street-level адреса
+- Скрипт `enrich_addresses_nominatim.py` через Photon (komoot.io) reverse geocoding
+- Photon: `street` + `housenumber` + `name` поля
+- 10 параллельных запросов через asyncio.Semaphore
+- Запускать: `USE_SQLITE=false python3 scripts/enrich_addresses_nominatim.py`
+- Долго из-за rate limit Photon (503 на ~80% запросов)
