@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Обогащение адресов АЗС через Nominatim (OpenStreetMap) reverse geocoding.
+"""Обогащение адресов АЗС через Photon (komoot.io) reverse geocoding.
 
 Заполняет street-level адреса для АЗС, у которых:
-- address пустой или содержит только "г. <город>"
+- address пустой или содержит только "г. <город>" / "город <город>"
 - есть координаты (lat, lon)
 
-Использует Nominatim (https://nominatim.org/) — бесплатный, без auth, лимит 1 req/sec.
+Photon (OSM-based) — лимит ~10 req/s, но безопаснее 2-3 req/s.
 """
 import argparse
 import asyncio
@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import sys
+import time
 
 import aiohttp
 
@@ -22,54 +23,74 @@ import db  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("enrich_addresses")
 
-# Photon (https://photon.komoot.io) — либеральный лимит, OSM-based
 PHOTON_URL = "https://photon.komoot.io/reverse"
 USER_AGENT = "benzin-ryadom/1.0 (fuel-finder bot)"
+
+
+def _clean(v):
+    if v is None or v == "None" or v == "":
+        return None
+    return v
 
 
 async def reverse_geocode(
     session: aiohttp.ClientSession,
     lat: float,
     lon: float,
+    retries: int = 3,
 ) -> str | None:
-    """Reverse geocoding через Photon (komoot.io, OSM-based)."""
-    params = {
-        "lat": str(lat),
-        "lon": str(lon),
-        "lang": "en",  # Photon не поддерживает ru
-    }
-    try:
-        async with session.get(
-            PHOTON_URL,
-            params=params,
-            headers={"User-Agent": USER_AGENT},
-            timeout=aiohttp.ClientTimeout(total=15),
-        ) as r:
-            if r.status != 200:
+    """Reverse geocoding через Photon с retry + exponential backoff."""
+    params = {"lat": str(lat), "lon": str(lon), "lang": "en"}
+    for attempt in range(retries):
+        try:
+            async with session.get(
+                PHOTON_URL,
+                params=params,
+                headers={"User-Agent": USER_AGENT},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    break
+                if r.status in (429, 503):
+                    wait = 2 ** attempt * 2  # 2, 4, 8 сек
+                    logger.debug(f"  HTTP {r.status}, retry in {wait}s (attempt {attempt+1}/{retries})")
+                    await asyncio.sleep(wait)
+                    continue
                 return None
-            data = await r.json()
-    except Exception as e:
-        logger.debug(f"  geocode: {e}")
+        except asyncio.TimeoutError:
+            if attempt < retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            return None
+        except Exception as e:
+            logger.debug(f"  geocode: {e}")
+            return None
+    else:
         return None
 
     if "features" not in data or not data["features"]:
         return None
 
     props = data["features"][0].get("properties", {})
-
-    def _clean(v):
-        """Photon иногда возвращает 'None' как строку. Убираем это."""
-        if v is None or v == "None" or v == "":
-            return None
-        return v
-
-    # Собираем улицу + дом
     street_raw = props.get("street")
-    name_raw = props.get("name")
-    street = _clean(street_raw) or _clean(name_raw)
     housenumber = _clean(props.get("housenumber"))
+    osm_value = props.get("osm_value", "")
+
+    # Используем только реальные улицы.
+    # Photon иногда возвращает название POI (АЗС) в поле street для rural areas.
+    # Фильтруем: street должен быть реальной улицей, а не названием бренда.
+    street = _clean(street_raw)
 
     if not street:
+        return None
+
+    # Если osm_value = fuel — это АЗС, Photon вернул бренд как street
+    if osm_value == "fuel":
+        return None
+
+    # Если street в кавычках — скорее всего бренд АЗС: "«Дон»", "«Холмогоры»"
+    if street.startswith("«") or street.startswith('"') or street.endswith("»"):
         return None
 
     if housenumber:
@@ -77,35 +98,81 @@ async def reverse_geocode(
     return street
 
 
+# Слова-индикаторы плохого адреса (нет street-level)
+_BAD_PREFIXES = re.compile(
+    r'^(г\.?|город|п\.?г\.т\.?|пос\.\s*городского\s*типа|сельское\s*поселение|район)',
+    re.IGNORECASE,
+)
+
+# Слова-индикаторы хорошего адреса (есть улица/номер)
+_STREET_KEYWORDS = re.compile(
+    r'ул|улица|шоссе|проспект|переул|проезд|бульв|км\s|просп|набережн|площадь|пер\.',
+    re.IGNORECASE,
+)
+
+
 def is_good_address(address: str) -> bool:
-    """Проверяет, есть ли street-level информация."""
-    if not address:
+    """Проверяет, есть ли street-level информация.
+
+    Хорошо:  "ул. Ленина, 5", "Москва, ул. Тверская, 1", "Каширское шоссе, км 15"
+    Плохо:  "", "г. Москва", "Москва, Московская область", "Россия"
+    """
+    if not address or not address.strip():
         return False
-    if address.startswith("г ") or address.startswith("г.") or address.startswith("город"):
+    address = address.strip()
+
+    # Пустой / слишком короткий
+    if len(address) < 5:
         return False
+
+    # "г. Город" / "город Город" / "п.г.т. ..." — без улицы
+    if _BAD_PREFIXES.match(address):
+        # Но если дальше есть улица — ок: "г. Москва, ул. Ленина, 5"
+        if _STREET_KEYWORDS.search(address):
+            return True
+        return False
+
+    # Если содержит запятую — проверяем части
     if "," in address:
-        # "Иваново, Ивановская область" — нет улицы
-        parts = address.split(",")
-        # Если только 1-2 части и нет улицы — плохо
-        if len(parts) < 3 and not any(p for p in parts if re.search(r'ул|шоссе|проспект|переул|проезд|км', p, re.I)):
+        parts = [p.strip() for p in address.split(",")]
+        # Если последняя часть — регион/область, смотрим остальные
+        for p in parts:
+            if _STREET_KEYWORDS.search(p):
+                return True
+        # Только город + регион — плохо
+        if len(parts) <= 2:
             return False
-    # Должно быть слово с улицей
-    if re.search(r'ул|шоссе|проспект|переул|проезд|трасса|км', address, re.I):
+        return False
+
+    # Одна строка — если есть ключевое слово улицы или "км" — хорошо
+    if _STREET_KEYWORDS.search(address):
         return True
+
     return False
+
+
+def needs_enrichment(station: dict) -> bool:
+    """Определяет, нуждается ли станция в обогащении адреса."""
+    addr = station.get("address") or ""
+    if is_good_address(addr):
+        return False
+    if not station.get("lat") or not station.get("lon"):
+        return False
+    return True
 
 
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int, default=0, help="Лимит АЗС")
+    parser.add_argument("--limit", type=int, default=0, help="Лимит АЗС (0 = все)")
     parser.add_argument("--city", help="Только этот город")
     parser.add_argument("--dry-run", action="store_true", help="Не сохранять в БД")
+    parser.add_argument("--concurrency", type=int, default=3, help="Параллельных запросов (default: 3)")
     args = parser.parse_args()
 
     if not db.API_MODE:
         await db.init_db()
 
-    # Получаем АЗС без хороших адресов
+    # Получаем АЗС с координатами
     if db.USE_SQLITE:
         query = """SELECT id, name, city, address, lat, lon FROM stations
                    WHERE is_active = 1 AND lat IS NOT NULL AND lon IS NOT NULL"""
@@ -114,61 +181,62 @@ async def main():
             params = [args.city]
         else:
             params = []
-        query += " LIMIT ?"
-        params.append(args.limit or 999999)
+        if args.limit:
+            query += " LIMIT ?"
+            params.append(args.limit)
         all_stations = await db._fetch(query, *params)
     else:
         async with db._db.acquire() as conn:
             sql = """SELECT id, name, city, address, lat, lon FROM stations
                      WHERE is_active = TRUE AND lat IS NOT NULL AND lon IS NOT NULL"""
             if args.city:
-                sql += " AND city = $1"
-                sql += " LIMIT $2"
-                rows = await conn.fetch(sql, args.city, args.limit or 999999)
+                sql += f" AND city = $1"
+                if args.limit:
+                    sql += f" LIMIT $2"
+                    rows = await conn.fetch(sql, args.city, args.limit)
+                else:
+                    rows = await conn.fetch(sql, args.city)
             else:
-                sql += " LIMIT $1"
-                rows = await conn.fetch(sql, args.limit or 999999)
+                if args.limit:
+                    sql += f" LIMIT $1"
+                    rows = await conn.fetch(sql, args.limit)
+                else:
+                    rows = await conn.fetch(sql)
             all_stations = [dict(r) for r in rows]
 
-    logger.info(f"Всего АЗС для проверки: {len(all_stations)}")
+    logger.info(f"Всего АЗС с координатами: {len(all_stations)}")
 
-    needs_update = []
-    for s in all_stations:
-        s_dict = s if isinstance(s, dict) else dict(s)
-        if not is_good_address(s_dict.get("address") or ""):
-            needs_update.append(s_dict)
+    needs = [s for s in all_stations if needs_enrichment(s)]
+    logger.info(f"Нужно обновить: {len(needs)}")
 
-    logger.info(f"Нужно обновить адресов: {len(needs_update)}")
-
-    if not needs_update:
+    if not needs:
         logger.info("Все адреса в порядке!")
         return
 
     updated = 0
-    failed = 0
-    semaphore = asyncio.Semaphore(10)  # 10 параллельных (Photon либеральный)
+    found = 0
+    not_found = 0
+    errors = 0
+    semaphore = asyncio.Semaphore(args.concurrency)
+    start_time = time.time()
 
     async def process_one(s, idx):
-        nonlocal updated, failed
+        nonlocal updated, found, not_found, errors
         async with semaphore:
             addr = await reverse_geocode(session, s["lat"], s["lon"])
             if addr:
-                logger.info(f"  [{idx}/{len(needs_update)}] #{s['id']} {s.get('city', '')}: {addr}")
+                found += 1
+                new_addr = addr
+                if s.get("city") and s.get("city") not in addr:
+                    new_addr = f"{s['city']}, {addr}"
                 if not args.dry_run:
                     try:
                         if db.USE_SQLITE:
-                            new_addr = addr
-                            if s.get('city') and s.get('city') not in addr:
-                                new_addr = f"{s['city']}, {addr}"
                             await db._execute(
                                 "UPDATE stations SET address = ? WHERE id = ?",
-                                new_addr,
-                                s["id"],
+                                new_addr, s["id"],
                             )
                         else:
-                            new_addr = addr
-                            if s.get('city') and s.get('city') not in addr:
-                                new_addr = f"{s['city']}, {addr}"
                             async with db._db.acquire() as conn:
                                 await conn.execute(
                                     "UPDATE stations SET address = $1 WHERE id = $2",
@@ -177,22 +245,36 @@ async def main():
                         updated += 1
                     except Exception as e:
                         logger.warning(f"  update #{s['id']}: {e}")
-                        failed += 1
+                        errors += 1
+                else:
+                    updated += 1
+                    if idx <= 5:
+                        logger.info(f"  [dry] #{s['id']} {s.get('city', '')}: {new_addr}")
             else:
-                failed += 1
-            await asyncio.sleep(0.12)  # 10 параллельных = ~0.56s/req, берём 0.12s
+                not_found += 1
+            # Throttle: ~2 req/s per worker, 3 workers = ~6 req/s total
+            await asyncio.sleep(0.5)
 
     async with aiohttp.ClientSession() as session:
-        tasks = [process_one(s, i) for i, s in enumerate(needs_update, 1)]
-        # Запускаем все параллельно батчами по 100
-        for i in range(0, len(tasks), 100):
-            batch = tasks[i:i+100]
+        tasks = [process_one(s, i) for i, s in enumerate(needs, 1)]
+        for i in range(0, len(tasks), 30):
+            batch = tasks[i:i+30]
             await asyncio.gather(*batch, return_exceptions=True)
-            logger.info(f"  Прогресс: {min(i+100, len(tasks))}/{len(tasks)} (обновлено: {updated}, не найдено: {failed})")
+            elapsed = time.time() - start_time
+            rate = found / elapsed if elapsed > 0 else 0
+            logger.info(
+                f"  Прогресс: {min(i+30, len(tasks))}/{len(tasks)} "
+                f"(найдено: {found}, обновлено: {updated}, не найдено: {not_found}, ошибки: {errors}) "
+                f"[{rate:.1f} addr/s]"
+            )
 
-    logger.info(f"\n=== ИТОГО ===")
-    logger.info(f"  Обновлено: {updated}")
-    logger.info(f"  Не найдено: {failed}")
+    elapsed = time.time() - start_time
+    logger.info(f"\n=== ИТОГО за {elapsed:.0f}s ===")
+    logger.info(f"  Найдено адресов: {found}")
+    logger.info(f"  Обновлено в БД: {updated}")
+    logger.info(f"  Не найдено: {not_found}")
+    logger.info(f"  Ошибки: {errors}")
+    logger.info(f"  Скорость: {found/elapsed:.1f} addr/s")
 
     if not db.API_MODE:
         await db.close_db()
