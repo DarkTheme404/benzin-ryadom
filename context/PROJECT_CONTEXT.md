@@ -18,11 +18,11 @@
 бензин рядом/
 ├── bot/                    # Основной код ботов
 │   ├── main.py             # Точка входа — запускает TG + VK + API
-│   ├── handlers.py         # TG бот — все обработчики (~3000 строк)
+│   ├── handlers.py         # TG бот — все обработчики (~3444 строк)
 │   ├── vk_bot.py           # VK бот — longpoll (~1400 строк)
-│   ├── vk_callback.py      # VK бот — callback webhook (~1100 строк)
-│   ├── db.py               # БД слой — все запросы (~2860 строк)
-│   ├── api.py              # HTTP API для Mini App (~1900 строк)
+│   ├── vk_callback.py      # VK бот — callback webhook (~1429 строк)
+│   ├── db.py               # БД слой — все запросы (~3100 строк)
+│   ├── api.py              # HTTP API для Mini App (~2133 строк)
 │   ├── keyboards.py        # TG клавиатуры
 │   ├── vk_keyboards.py     # VK клавиатуры
 │   ├── utils.py            # Форматирование станций, get_main_status()
@@ -76,13 +76,14 @@
 - `GET /api/station-prices/{id}` — текущие цены
 - `GET /api/station-analytics/{id}` — аналитика (для владельцев)
 - `GET /api/premium-status` — статус Premium
-- `GET /api/routes?q=` — **поиск трасс (М-4, М-7, Р-217, "Дон", "Кавказ")**
+- `GET /api/cities?q=` — **поиск городов** (кириллица/латиница, транслитерация)
+- `GET /api/routes?q=` — **поиск трасс** (М-4, М-7, Р-217, "Дон", "Кавказ")
 - `GET /api/routes/{id}/stations?limit=50` — **АЗС на трассе**
 - `POST /api/reports` — **создание отчёта** (price, queue_size, has_limit, limit_liters, limit_per_visit, limit_daily, limit_weekly, canister_ban, comment, fuel_type)
 - `POST /api/reviews` — **отзыв** (rating 0-5, comment)
 - `POST /api/price-update` — обновление цены
 - `POST /api/import_prices` — импорт от парсеров
-- `POST/GET /api/parse?key=` — запуск парсеров
+- `POST/GET /api/parse?key=` — запуск парсеров (12 источников)
 - `GET /api/parse-benzin` — benzin-status.tech парсер
 - `POST /api/vk/callback` — VK webhook
 - `POST /api/vk/test-event` — тест VK
@@ -126,14 +127,14 @@
 Парсеры устанавливают `source` в имя источника. Пользовательские отчёты — "user", "miniapp", "vk_user".
 
 ## Статистика (на 12.07.2026)
-- 28,521 станций в БД
+- 28,959 станций в БД
 - 4,234 уникальных города
-- **1,367+ городов с live данными** (было 117)
-- **18,000+ live отчётов**
+- **533+ городов с live данными** (было 117)
+- **24,978+ live отчётов** (было 18,000)
 - **8,634+ станций с live наличием** (было 3,710)
-- **398 отчётов с лимитом/канистрами**
-- **595 отчётов с очередями**
-- **18,846 отчётов с ценами**
+- **398+ отчётов с лимитом/канистрами**
+- **595+ отчётов с очередями**
+- **18,846+ отчётов с ценами**
 
 ### Источники live данных:
 - gdebenz.ru: 6,000+ станций (наличие) — **главный источник наличия, 4,233 городов**
@@ -176,4 +177,16 @@
 - Photon: `street` + `housenumber` + `name` поля
 - 10 параллельных запросов через asyncio.Semaphore
 - Запускать: `USE_SQLITE=false python3 scripts/enrich_addresses_nominatim.py`
-- Долго из-за rate limit Photon (503 на ~80% запросов)
+- **Проблема**: Photon возвращает 503 на ~97% запросов — enrichment очень медленный
+- **Решение**: добавить retry с backoff, увеличить задержку между запросами
+
+## Known Issues
+1. **Photon 503** — enrichment幾乎 не работает (97% ошибок). Нужна альтернатива или batch-режим
+2. **VK group token** — `groups.search` API (error 27) не работает с group token, нужен user token для автопоиска VK-групп по городам
+3. **VK peer_id collision** — VK peer_id сохраняется в `telegram_id` колонку, коллизия с реальными TG ID. Требует миграции: добавить `vk_id` колонку
+
+## Исправления (12.07.2026)
+- **PG boolean = integer** — `s.is_active = 1` заменено на `COALESCE(s.is_active, TRUE) = TRUE` в search_cities
+- **Decimal not JSON serializable** — asyncpg возвращает Decimal для lat/lon/price; добавлен `json_resp()` с `_json_default` хелпером
+- **PG LOWER()** — py_lower() заменено на LOWER() в PG-ветке (py_lower() только для SQLite)
+- **Кириллица в URL** — Mini App encodeURI для кириллических запросов к /api/cities
