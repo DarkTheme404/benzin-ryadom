@@ -3010,7 +3010,7 @@ async def search_cities(query: str = "", limit: int = 200) -> list[dict]:
           FROM stations s
          WHERE s.city IS NOT NULL AND s.city != ''
            AND s.lat IS NOT NULL AND s.lon IS NOT NULL
-           AND s.is_active = 1
+           AND COALESCE(s.is_active, TRUE) = TRUE
     """
 
     if not query or len(query.strip()) < 2:
