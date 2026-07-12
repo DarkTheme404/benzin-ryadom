@@ -332,19 +332,23 @@
     $$('.tab-content').forEach(el => el.hidden = true);
     // Hide all screens
     $$('.screen').forEach(s => s.classList.remove('active'));
-    if (tab === 'home') showScreen('home');
-    else if (tab === 'map') {
-      showScreen('map');
-      loadMap();
-    }
-    else if (tab === 'routes') {
+    const mainEl = document.getElementById('main');
+    if (tab === 'routes') {
+      if (mainEl) mainEl.hidden = true;
       const el = document.getElementById('tab-routes');
       if (el) el.hidden = false;
-    }
-    else if (tab === 'report') openReportFlow();
-    else if (tab === 'profile') {
-      showScreen('profile');
-      loadProfile();
+    } else {
+      if (mainEl) mainEl.hidden = false;
+      if (tab === 'home') showScreen('home');
+      else if (tab === 'map') {
+        showScreen('map');
+        loadMap();
+      }
+      else if (tab === 'report') openReportFlow();
+      else if (tab === 'profile') {
+        showScreen('profile');
+        loadProfile();
+      }
     }
   }
 

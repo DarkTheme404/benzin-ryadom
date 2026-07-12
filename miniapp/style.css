@@ -2167,9 +2167,11 @@ body.vk-dark {
 
 /* ==== ROUTES TAB ==== */
 .tab-content {
+  flex: 1;
+  overflow-y: auto;
   padding-bottom: calc(var(--nav-h) + var(--safe-bottom) + 16px);
-  min-height: 100vh;
 }
+.tab-content[hidden] { display: none; }
 
 .routes-search {
   display: flex;
