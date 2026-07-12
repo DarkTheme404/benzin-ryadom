@@ -1971,6 +1971,8 @@ async def handle_enrich(request):
     import asyncio
     import sys
 
+    limit = min(int(request.query.get("limit", "500")), 5000)
+
     async def _run_enrich():
         scripts_dir = str(Path(__file__).parent.parent / "scripts")
         if scripts_dir not in sys.path:
@@ -1978,8 +1980,8 @@ async def handle_enrich(request):
         db.API_MODE = True
         try:
             import enrich_addresses_nominatim
-            sys.argv = ["enrich_addresses_nominatim.py", "--limit", "200"]
-            logger.info("[enrich] Starting enrichment...")
+            sys.argv = ["enrich_addresses_nominatim.py", "--limit", str(limit)]
+            logger.info("[enrich] Starting enrichment (limit=%d)...", limit)
             await enrich_addresses_nominatim.main()
             logger.info("[enrich] Done")
         except Exception as e:
