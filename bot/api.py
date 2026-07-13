@@ -2075,6 +2075,9 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/premium/check", handle_premium_feature)
     app.router.add_post("/api/premium/activate", handle_premium_activate)
     app.router.add_post("/api/premium/cancel", handle_premium_cancel)
+    app.router.add_post("/api/premium/create-payment", handle_premium_create_payment)
+    app.router.add_get("/api/premium/payment-callback", handle_premium_payment_callback)
+    app.router.add_get("/api/premium/payment-status", handle_premium_payment_status)
     # Mini App static
     miniapp_dir = Path(__file__).parent.parent / "miniapp"
     if miniapp_dir.exists():
@@ -2176,6 +2179,133 @@ async def handle_premium_cancel(request):
         return json_resp({"ok": False, "error": "user not found"}, status=404)
     await cancel_premium(uid)
     return json_resp({"ok": True, "message": "Подписка отменена"})
+
+
+# VK Pay настройки (заглушка — без реального merchant_id)
+VK_PAY_MERCHANT_ID = os.environ.get("VK_PAY_MERCHANT_ID", "benzin-ryadom-merchant")
+
+
+async def handle_premium_create_payment(request):
+    """POST /api/premium/create-payment — создаёт платёж и возвращает ссылку VK Pay.
+
+    Универсальный endpoint для TG, VK, Mini App.
+    После успешной оплаты VK Pay вызывает callback на /api/premium/payment-callback.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    tid = body.get("telegram_id") or body.get("vk_user_id")
+    tier = body.get("tier")
+    if not tid or not tier:
+        return json_resp({"error": "telegram_id and tier required"}, status=400)
+    if tier not in ("economy", "standard", "elite"):
+        return json_resp({"error": "invalid tier"}, status=400)
+
+    from db import (
+        get_user_id_by_telegram_id, upsert_user,
+        get_plan, create_payment_request,
+    )
+    uid = await get_user_id_by_telegram_id(int(tid))
+    if not uid:
+        await upsert_user(int(tid), username=None, first_name="Premium User")
+        uid = await get_user_id_by_telegram_id(int(tid))
+    if not uid:
+        return json_resp({"error": "user creation failed"}, status=500)
+
+    plan = get_plan(tier)
+    if not plan:
+        return json_resp({"error": "invalid plan"}, status=400)
+
+    token = await create_payment_request(uid, tier, payment_method="vk_pay")
+
+    # URL бэкенда для callback
+    backend = str(request.url).split("/api/")[0]
+    callback_url = f"{backend}/api/premium/payment-callback?token={token}"
+    success_url = body.get("success_url", "https://vk.com/benzyn_ryadom")
+    fail_url = body.get("fail_url", "https://vk.com/benzyn_ryadom")
+
+    # VK Pay ссылка
+    import urllib.parse
+    desc = f"Бензин рядом · Премиум {plan['name']} · {plan['price']}₽ / {plan['period_days']} дней"
+    params = {
+        "merchant_id": VK_PAY_MERCHANT_ID,
+        "amount": str(plan["price"]),
+        "description": desc,
+        "currency": "RUB",
+        "extra": token,
+        "action": "pay-to-user",
+        "sig": _vk_pay_sig(plan["price"], desc, token),
+        "return_url": success_url,
+        "callback_url": callback_url,
+    }
+    vk_pay_url = "https://vk.com/pay?" + urllib.parse.urlencode(params)
+
+    return json_resp({
+        "ok": True,
+        "payment_token": token,
+        "vk_pay_url": vk_pay_url,
+        "amount": plan["price"],
+        "tier": tier,
+        "description": desc,
+        "method": "vk_pay",
+    })
+
+
+def _vk_pay_sig(amount: int, desc: str, token: str) -> str:
+    """Простая HMAC-подпись для VK Pay (заглушка)."""
+    import hmac, hashlib
+    secret = os.environ.get("VK_PAY_SECRET", "benzin-pay-secret-change-me").encode()
+    msg = f"{amount}|{desc}|{token}".encode()
+    return hmac.new(secret, msg, hashlib.sha256).hexdigest()[:32]
+
+
+async def handle_premium_payment_callback(request):
+    """GET /api/premium/payment-callback?token=... — VK Pay вызывает после оплаты.
+
+    Если token валиден — активируем подписку. Если нет — возвращаем fail_url.
+    """
+    token = request.query.get("token")
+    if not token:
+        return web.Response(status=400, text="missing token")
+    from db import get_payment_by_token, confirm_payment
+    payment = await get_payment_by_token(token)
+    if not payment:
+        return web.Response(status=404, text="payment not found")
+    if payment.get("status") == "paid":
+        # Уже оплачен — редирект на success
+        return web.Response(status=302, headers={"Location": "https://vk.com/benzyn_ryadom"})
+    # VK Pay должен передавать ?paid=1 при успехе
+    paid = request.query.get("paid", "0") == "1"
+    if not paid:
+        return web.Response(status=302, headers={"Location": "https://vk.com/benzyn_ryadom?pay=fail"})
+    await confirm_payment(token)
+    return web.Response(status=302, headers={"Location": "https://vk.com/benzyn_ryadom?pay=ok"})
+
+
+async def handle_premium_payment_status(request):
+    """GET /api/premium/payment-status?token=... — проверка статуса оплаты.
+
+    Для Mini App: после возврата из VK Pay опрашиваем этот endpoint.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    token = request.query.get("token")
+    if not token:
+        return json_resp({"error": "token required"}, status=400)
+    from db import get_payment_by_token
+    payment = await get_payment_by_token(token)
+    if not payment:
+        return json_resp({"error": "payment not found"}, status=404)
+    return json_resp({
+        "status": payment.get("status"),
+        "tier": payment.get("tier"),
+        "amount": payment.get("amount"),
+        "paid_at": str(payment.get("paid_at", "")),
+    })
 
 
 async def handle_premium_feature(request):

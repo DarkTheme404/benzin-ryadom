@@ -3367,3 +3367,91 @@ async def is_premium(user_id: int) -> bool:
     """Проверяет, есть ли у пользователя активный премиум."""
     sub = await get_user_premium(user_id)
     return sub is not None
+
+
+# === Запросы на оплату (для VK Pay) ===
+
+import secrets as _secrets
+from datetime import timedelta as _timedelta
+
+
+async def create_payment_request(user_id: int, tier: str, payment_method: str = "vk_pay") -> str:
+    """Создаёт pending-платёж, возвращает токен для оплаты.
+
+    Токен используется в VK Pay ссылке. После оплаты вызывается
+    confirm_payment() чтобы активировать подписку.
+    """
+    plan = get_plan(tier)
+    if not plan:
+        raise ValueError(f"Unknown tier: {tier}")
+    token = _secrets.token_urlsafe(24)
+
+    if USE_SQLITE:
+        await _execute(
+            """INSERT INTO premium_payments
+               (user_id, tier, amount, status, payment_method, external_id, created_at)
+               VALUES (?, ?, ?, 'pending', ?, ?, datetime('now'))""",
+            user_id, tier, plan["price"], payment_method, token,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO premium_payments
+                   (user_id, tier, amount, status, payment_method, external_id, created_at)
+                   VALUES ($1, $2, $3, 'pending', $4, $5, NOW())""",
+                user_id, tier, plan["price"], payment_method, token,
+            )
+    return token
+
+
+async def get_payment_by_token(token: str) -> dict | None:
+    """Получает платёж по токену."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT * FROM premium_payments WHERE external_id = ?",
+            token, one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM premium_payments WHERE external_id = $1",
+                token,
+            )
+    if not row:
+        return None
+    return dict(row) if not USE_SQLITE else row
+
+
+async def confirm_payment(token: str) -> dict | None:
+    """Подтверждает оплату и активирует премиум.
+
+    Вызывается после успешной оплаты через VK Pay callback.
+    """
+    payment = await get_payment_by_token(token)
+    if not payment:
+        return None
+    if payment.get("status") == "paid":
+        # Уже подтверждён
+        return await get_user_premium(payment["user_id"])
+
+    if USE_SQLITE:
+        await _execute(
+            "UPDATE premium_payments SET status = 'paid', paid_at = datetime('now') WHERE external_id = ?",
+            token,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE premium_payments SET status = 'paid', paid_at = NOW() WHERE external_id = $1",
+                token,
+            )
+
+    plan = get_plan(payment["tier"])
+    sub = await activate_premium(
+        payment["user_id"],
+        payment["tier"],
+        days=plan["period_days"] if plan else 30,
+        payment_id=token,
+        amount=payment["amount"],
+    )
+    return sub

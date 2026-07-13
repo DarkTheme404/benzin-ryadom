@@ -1011,25 +1011,32 @@ async def cmd_premium(message: Message):
 
     text = (
         "💎 <b>Премиум-подписка «Бензин рядом»</b>\n\n"
-        "Выбери тариф:\n\n"
+        "🔥 <b>Почему стоит подключить:</b>\n"
+        "• Экономия до 3000₽ в месяц на топливе\n"
+        "• Знаешь заранее, где будет бензин по пути\n"
+        "• SOS-режим — если застрял, помогут другие премиум\n"
+        "• Чем больше премиум-пользователей, тем точнее данные\n"
+        "• Поддерживаешь развитие сервиса — мы остаёмся бесплатными для остальных\n\n"
+
+        "<b>Выбери тариф:</b>\n\n"
 
         "📊 <b>Эконом</b> — 100₽/мес\n"
-        "   • График цен 30 дней с прогнозом\n"
-        "   • Экспорт истории в CSV/Excel\n"
-        "   • Оффлайн-карта региона\n\n"
+        "   📈 График цен 30 дней с прогнозом «когда дешевле»\n"
+        "   📦 Экспорт истории в CSV/Excel (для бухгалтерии)\n"
+        "   🗺️ Оффлайн-карта региона (работает без интернета)\n\n"
 
         "🗺️ <b>Стандарт</b> — 250₽/мес\n"
-        "   • Всё из Эконом +\n"
-        "   • 🆕 Маршрут A→B с гарантией топлива\n"
-        "   • 🆕 Прогноз наличия на 7 дней\n"
-        "   • 🆕 «Топливный будильник»\n\n"
+        "   Всё из Эконом +\n"
+        "   🆕 Маршрут A→B с гарантией топлива\n"
+        "   🆕 Прогноз наличия на 7 дней вперёд\n"
+        "   🆕 «Топливный будильник» — заранее подскажет АЗС\n\n"
 
         "👑 <b>Элит</b> — 500₽/мес\n"
-        "   • Всё из Стандарт +\n"
-        "   • 🆕 «Анти-пробка по топливу»\n"
-        "   • 🆕 SOS-режим (уведомляет всех премиум в радиусе 50 км)\n\n"
+        "   Всё из Стандарт +\n"
+        "   🆕 «Анти-пробка по топливу» (пробки+цены+наличие в реальном времени)\n"
+        "   🆕 SOS-режим (уведомляет всех премиум в радиусе 50 км)\n\n"
 
-        "👇 Нажми на тариф:"
+        "👇 Нажми на тариф (оплата через VK Pay):"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -1048,7 +1055,7 @@ async def cmd_premium(message: Message):
 
 
 async def buy_tier_callback(callback: CallbackQuery):
-    """Активация премиум тарифа (пока manual — для тестов)."""
+    """Генерирует ссылку VK Pay для оплаты тарифа."""
     await callback.answer()
     tier = callback.data.replace("buy_", "")
     if tier not in ("economy", "standard", "elite"):
@@ -1059,15 +1066,68 @@ async def buy_tier_callback(callback: CallbackQuery):
     plan = get_plan(tier)
     if not plan:
         return
-    sub = await activate_premium(uid, tier, days=plan["period_days"], payment_id=f"tg_{callback.from_user.id}", amount=plan["price"])
+
+    # Создаём pending платёж
+    from db import create_payment_request
+    token = await create_payment_request(uid, tier, payment_method="vk_pay")
+
+    # Формируем ссылку VK Pay
+    import urllib.parse
+    backend = "https://benzin-ryadom.onrender.com"
+    callback_url = f"{backend}/api/premium/payment-callback?token={token}&paid=1"
+    success_url = "https://vk.com/benzyn_ryadom?pay=ok"
+    fail_url = "https://vk.com/benzyn_ryadom?pay=fail"
+    desc = f"Бензин рядом · Премиум {plan['name']} · {plan['price']}₽ / {plan['period_days']} дней"
+    params = {
+        "merchant_id": "benzin-ryadom",
+        "amount": str(plan["price"]),
+        "description": desc,
+        "currency": "RUB",
+        "extra": token,
+        "action": "pay-to-user",
+        "return_url": success_url,
+        "callback_url": callback_url,
+    }
+    vk_pay_url = "https://vk.com/pay?" + urllib.parse.urlencode(params)
+
     plan_features = "\n".join([f"  ✅ {f}" for f in plan["features"]])
-    await callback.message.answer(
-        f"✅ <b>Премиум '{plan['name']}' активирован!</b>\n\n"
-        f"💳 {plan['price']}₽ / {plan['period_days']} дней\n"
-        f"📅 До: {str(sub.get('expires_at', ''))[:10]}\n\n"
+    text = (
+        f"💳 <b>Оплата Премиум '{plan['name']}'</b>\n\n"
+        f"💰 Стоимость: {plan['price']}₽ / {plan['period_days']} дней\n\n"
         f"🎁 Доступные фичи:\n{plan_features}\n\n"
-        f"Используй /premium для просмотра статуса."
+        f"👇 Нажми кнопку для оплаты через VK Pay:"
     )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💳 Оплатить {plan['price']}₽ через VK Pay", url=vk_pay_url)],
+        [InlineKeyboardButton(text="✅ Я оплатил — проверить", callback_data=f"check_pay_{token}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="cmd_premium")],
+    ])
+    await callback.message.answer(text, reply_markup=kb)
+
+
+async def check_payment_callback(callback: CallbackQuery):
+    """Проверяет статус оплаты после возврата из VK Pay."""
+    await callback.answer()
+    token = callback.data.replace("check_pay_", "")
+    from db import get_payment_by_token, confirm_payment
+    payment = await get_payment_by_token(token)
+    if not payment:
+        await callback.message.answer("❌ Платёж не найден.")
+        return
+    if payment.get("status") == "paid":
+        plan = get_plan(payment["tier"])
+        await callback.message.answer(
+            f"✅ <b>Премиум '{plan['name']}' активирован!</b>\n\n"
+            f"💳 {payment['amount']}₽ оплачено\n"
+            f"📅 До: {str(payment.get('paid_at', ''))[:10]}\n\n"
+            f"Используй /premium для просмотра статуса."
+        )
+    else:
+        await callback.message.answer(
+            "⏳ Платёж ещё не поступил.\n\n"
+            "Если вы оплатили — подождите 30 сек и нажмите кнопку ещё раз.\n"
+            "Если не оплатили — нажмите «Оплатить» ниже."
+        )
 
 
 async def premium_trial_callback(callback: CallbackQuery):
@@ -3377,6 +3437,7 @@ def register_all_handlers(dp: Dispatcher):
     # Premium
     dp.message.register(cmd_premium, Command("premium"))
     dp.callback_query.register(buy_tier_callback, F.data.in_({"buy_economy", "buy_standard", "buy_elite"}))
+    dp.callback_query.register(check_payment_callback, F.data.startswith("check_pay_"))
     dp.callback_query.register(buy_premium_callback, F.data == "buy_premium")
     dp.callback_query.register(premium_callback, F.data == "cmd_premium")
     dp.callback_query.register(premium_trial_callback, F.data == "premium_trial")
