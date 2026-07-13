@@ -1162,8 +1162,15 @@ async def cmd_link(message: Message):
     telegram_id = _tg_id(message)
     # Парсим код из текста команды (если есть)
     text = (message.text or "").strip()
-    parts = text.split(maxsplit=1)
-    code = parts[1].strip() if len(parts) >= 2 else ""
+    # Если это /link без кода — текст будет "/link" или "🔗 Привязать"
+    # Если это /link 123456 — текст "/link 123456"
+    if text.startswith("/link"):
+        parts = text.split(maxsplit=1)
+        code = parts[1].strip() if len(parts) >= 2 else ""
+    else:
+        # Если вызвано через callback menu:link — text это текст callback-сообщения,
+        # а не команда. Не парсим код, а просто показываем меню.
+        code = ""
 
     if not code:
         # Меню привязки
