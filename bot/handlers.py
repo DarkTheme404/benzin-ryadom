@@ -1049,19 +1049,23 @@ async def cmd_premium(message: Message):
 
 
 async def buy_tier_callback(callback: CallbackQuery):
-    """Генерирует инструкцию СБП для оплаты тарифа (через /api/premium/create-payment)."""
+    """Генерирует инструкцию для оплаты тарифа через /api/premium/create-payment."""
+    logger.info(f"buy_tier_callback: data={callback.data} user={callback.from_user.id}")
     await callback.answer()
     tier = callback.data.replace("buy_", "")
     if tier not in ("economy", "standard", "elite"):
+        logger.warning(f"buy_tier_callback: invalid tier {tier}")
         return
     uid = await _ensure_callback_user(callback)
     if not uid:
+        logger.warning(f"buy_tier_callback: no uid for user {callback.from_user.id}")
         return
     plan = get_plan(tier)
     if not plan:
+        logger.warning(f"buy_tier_callback: no plan for tier {tier}")
         return
 
-    # Вызываем наш API чтобы получить инструкцию СБП
+    # Вызываем наш API чтобы получить payment_url
     import aiohttp
     backend = "https://benzin-ryadom.onrender.com"
     try:
@@ -1072,23 +1076,33 @@ async def buy_tier_callback(callback: CallbackQuery):
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as r:
                 data = await r.json()
+                logger.info(f"buy_tier_callback: API response {data}")
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка: {e}")
+        logger.exception(f"buy_tier_callback: API error: {e}")
+        await callback.message.answer(f"❌ Ошибка соединения с сервером оплаты: {e}")
         return
 
     if not data.get("ok"):
         err = data.get("error", "unknown")
+        logger.warning(f"buy_tier_callback: payment not ok, err={err}")
         await callback.message.answer(
             f"⚠️ <b>Оплата временно недоступна</b>\n\n"
-            f"Администратор ещё не настроил YooMoney.\n"
             f"Ошибка: <code>{err}</code>\n\n"
-            f"Пока можно оплатить через <b>@benzyn_ryadom</b> напрямую — напишите в ЛС."
+            f"Попробуй позже или напиши в <b>@benzyn_ryadom</b>"
         )
         return
 
     token = data.get("payment_token")
     from premium_texts import format_tier_text
     pay_url = data.get("payment_url", "")
+
+    if not pay_url:
+        logger.error(f"buy_tier_callback: no payment_url in response: {data}")
+        await callback.message.answer(
+            f"❌ Не удалось получить ссылку на оплату.\n"
+            f"Попробуй позже или напиши в <b>@benzyn_ryadom</b>"
+        )
+        return
 
     tier_text = format_tier_text(tier, plan, show_features=True)
 
