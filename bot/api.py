@@ -954,7 +954,11 @@ async def handle_station_detail(request):
 
 
 async def handle_price_history(request):
-    """GET /api/stations/{id}/price-history?fuel=92&days=30"""
+    """GET /api/stations/{id}/price-history?fuel=92&days=30
+
+    Без Premium: только последние 3 дня.
+    С Premium: до 365 дней + прогноз.
+    """
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
         return json_resp({"error": "rate limit exceeded"}, status=429)
 
@@ -970,9 +974,29 @@ async def handle_price_history(request):
     try:
         days = int(request.query.get("days", "30"))
         if not (1 <= days <= 365):
-            return json_resp({"error": "days must be in [1, 365]"}, status=400)
+            days = 30
     except ValueError:
-        return json_resp({"error": "days must be int"}, status=400)
+        days = 30
+
+    # Premium check
+    tid = request.query.get("telegram_id")
+    is_premium = False
+    if tid:
+        try:
+            from db import get_user_id_by_any, get_user_premium
+            uid = await get_user_id_by_any(int(tid))
+            if uid:
+                sub = await get_user_premium(uid)
+                is_premium = bool(sub and sub.get("tier"))
+        except Exception:
+            pass
+
+    # Free = 3 дня, Premium = сколько запросил
+    if not is_premium:
+        days = min(days, 3)
+        max_records = 10
+    else:
+        max_records = 50
 
     from db import _fetch
     if USE_SQLITE:
@@ -982,8 +1006,8 @@ async def handle_price_history(request):
                WHERE station_id = ? AND fuel_type = ? AND price IS NOT NULL
                  AND created_at > datetime('now', ?)
                ORDER BY created_at DESC
-               LIMIT 50""",
-            station_id, fuel, f"-{days} days",
+               LIMIT ?""",
+            station_id, fuel, f"-{days} days", max_records,
         )
     else:
         rows = await _fetch(
@@ -992,8 +1016,8 @@ async def handle_price_history(request):
                WHERE station_id = $1 AND fuel_type = $2 AND price IS NOT NULL
                  AND created_at > NOW() - ($3 || ' days')::interval
                ORDER BY created_at DESC
-               LIMIT 50""",
-            station_id, fuel, str(days),
+               LIMIT $4""",
+            station_id, fuel, str(days), max_records,
         )
 
     history = []
@@ -1004,11 +1028,38 @@ async def handle_price_history(request):
             "at": str(r.get("created_at")),
         })
 
+    # Если нет данных — возвращаем "fake" историю для премиум-триггера
+    if not history and is_premium:
+        # Если нет реальных данных — возвращаем placeholder
+        history = [
+            {"fuel_type": fuel, "price": None, "at": "Нет данных", "_placeholder": True}
+        ]
+    elif not history:
+        # Free: не показываем даже 3 дня если нет данных
+        history = []
+
+    # Простой прогноз (только Premium): средняя цена за 7 дней ± 5%
+    forecast = None
+    if is_premium and len(history) >= 3:
+        prices = [h["price"] for h in history if h.get("price")]
+        if prices:
+            avg = sum(prices) / len(prices)
+            forecast = {
+                "avg": round(avg, 2),
+                "low": round(avg * 0.95, 2),
+                "high": round(avg * 1.05, 2),
+                "trend": "stable",
+            }
+
     return json_resp({
         "station_id": station_id,
         "fuel": fuel,
         "history": history,
         "count": len(history),
+        "is_premium": is_premium,
+        "max_days_free": 3,
+        "max_days_premium": 365,
+        "forecast": forecast,
     })
 
 
@@ -2104,6 +2155,7 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/account/link/create", handle_account_link_create)
     app.router.add_post("/api/account/link/use", handle_account_link_use)
     app.router.add_get("/api/account/info", handle_account_info)
+    app.router.add_get("/api/export/csv", handle_export_csv)
     # Mini App static
     miniapp_dir = Path(__file__).parent.parent / "miniapp"
     if miniapp_dir.exists():
@@ -2338,6 +2390,129 @@ async def handle_account_info(request):
         })
     except Exception as e:
         logger.exception(f"account_info error: {e}")
+        return json_resp({"error": str(e)}, status=500)
+
+
+async def handle_export_csv(request):
+    """GET /api/export/csv?telegram_id=&type=reports
+
+    Premium only. Возвращает CSV с историей отчётов/цен пользователя.
+    Типы: reports, prices.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id")
+    if not tid:
+        return json_resp({"error": "telegram_id required"}, status=400)
+    try:
+        from db import get_user_id_by_any, get_user_premium
+        uid = await get_user_id_by_any(int(tid))
+        if not uid:
+            return json_resp({"error": "user not found"}, status=404)
+        sub = await get_user_premium(uid)
+        if not sub or not sub.get("tier"):
+            return json_resp({
+                "error": "premium_required",
+                "feature": "export_csv",
+                "message": "Экспорт в CSV доступен только для Premium",
+            }, status=402)
+    except Exception as e:
+        logger.exception(f"export_csv auth: {e}")
+        return json_resp({"error": str(e)}, status=500)
+
+    # Получаем отчёты
+    csv_type = request.query.get("type", "reports")
+    if csv_type not in ("reports", "prices"):
+        return json_resp({"error": "type must be 'reports' or 'prices'"}, status=400)
+
+    days = int(request.query.get("days", "30"))
+    days = min(max(days, 1), 365)
+
+    import csv
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")  # ; для Excel ru
+
+    try:
+        if csv_type == "reports":
+            writer.writerow([
+                "Дата", "АЗС", "Адрес", "Город", "Топливо", "Цена", "Наличие",
+                "Очередь", "Лимит", "Канистры", "Комментарий", "Подтверждений"
+            ])
+            if USE_SQLITE:
+                rows = await _fetch(
+                    """SELECT r.created_at, s.name, s.address, s.city, r.fuel_type,
+                              r.price, r.available, r.queue_size, r.has_limit,
+                              r.canister_ban, r.comment, r.confirmations
+                       FROM reports r
+                       JOIN stations s ON s.id = r.station_id
+                       WHERE r.user_id = ? AND r.created_at > datetime('now', ?)
+                       ORDER BY r.created_at DESC
+                       LIMIT 1000""",
+                    uid, f"-{days} days",
+                )
+            else:
+                rows = await _fetch(
+                    """SELECT r.created_at, s.name, s.address, s.city, r.fuel_type,
+                              r.price, r.available, r.queue_size, r.has_limit,
+                              r.canister_ban, r.comment, r.confirmations
+                       FROM reports r
+                       JOIN stations s ON s.id = r.station_id
+                       WHERE r.user_id = $1 AND r.created_at > NOW() - ($2 || ' days')::interval
+                       ORDER BY r.created_at DESC
+                       LIMIT 1000""",
+                    uid, str(days),
+                )
+        else:  # prices
+            writer.writerow([
+                "Дата", "АЗС", "Адрес", "Город", "Топливо", "Цена"
+            ])
+            if USE_SQLITE:
+                rows = await _fetch(
+                    """SELECT r.created_at, s.name, s.address, s.city, r.fuel_type, r.price
+                       FROM reports r
+                       JOIN stations s ON s.id = r.station_id
+                       WHERE r.user_id = ? AND r.price IS NOT NULL
+                         AND r.created_at > datetime('now', ?)
+                       ORDER BY r.created_at DESC
+                       LIMIT 1000""",
+                    uid, f"-{days} days",
+                )
+            else:
+                rows = await _fetch(
+                    """SELECT r.created_at, s.name, s.address, s.city, r.fuel_type, r.price
+                       FROM reports r
+                       JOIN stations s ON s.id = r.station_id
+                       WHERE r.user_id = $1 AND r.price IS NOT NULL
+                         AND r.created_at > NOW() - ($2 || ' days')::interval
+                       ORDER BY r.created_at DESC
+                       LIMIT 1000""",
+                    uid, str(days),
+                )
+
+        for r in rows:
+            row = []
+            for key in r:
+                v = r.get(key) if isinstance(r, dict) else r[key]
+                if v is None:
+                    v = ""
+                elif hasattr(v, 'isoformat'):
+                    v = v.isoformat()
+                else:
+                    v = str(v)
+                row.append(v)
+            writer.writerow(row)
+
+        csv_text = output.getvalue()
+        return web.Response(
+            text=csv_text,
+            content_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{csv_type}_{days}d.csv"',
+            },
+        )
+    except Exception as e:
+        logger.exception(f"export_csv error: {e}")
         return json_resp({"error": str(e)}, status=500)
 
 

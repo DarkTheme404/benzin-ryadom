@@ -2374,3 +2374,431 @@ body.vk-dark {
 .route-list-name { font-weight: 600; font-size: 14px; }
 .route-list-meta { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
 .route-list-arrow { font-size: 18px; color: var(--text-muted); flex-shrink: 0; }
+
+/* ============================================
+   PREMIUM UX/UI — Upsell Modal & Components
+   ============================================ */
+
+/* === Premium Badge (на Premium юзерах) === */
+.premium-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #000;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 2px 8px rgba(251, 191, 36, 0.3);
+}
+.premium-badge-economy { background: linear-gradient(135deg, #9ca3af, #6b7280); color: #fff; }
+.premium-badge-standard { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #000; }
+.premium-badge-elite { background: linear-gradient(135deg, #c084fc, #8b5cf6); color: #fff; }
+
+/* === Locked feature (заблокировано для Free) === */
+.feature-locked {
+  position: relative;
+  opacity: 0.65;
+  filter: grayscale(0.5);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.feature-locked:hover { opacity: 1; filter: grayscale(0); }
+.feature-locked::after {
+  content: '🔒';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 16px;
+  background: rgba(0,0,0,0.5);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.feature-locked-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(251,191,36,0.1) 0%, rgba(245,158,11,0.05) 100%);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* === Upsell Modal === */
+.upsell-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: fadeIn 0.25s ease;
+}
+.upsell-modal {
+  background: var(--bg);
+  border-radius: 24px;
+  width: 100%;
+  max-width: 420px;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+  animation: slideUp 0.3s ease;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.upsell-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(255,255,255,0.1);
+  border: none;
+  color: #fff;
+  font-size: 24px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 10;
+  line-height: 1;
+}
+.upsell-close:hover { background: rgba(255,255,255,0.2); }
+.upsell-hero {
+  position: relative;
+  padding: 32px 24px 24px;
+  text-align: center;
+  overflow: hidden;
+}
+.upsell-hero-bg {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
+  opacity: 0.95;
+}
+.upsell-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 20% 30%, rgba(255,255,255,0.2) 0%, transparent 50%),
+              radial-gradient(circle at 80% 70%, rgba(255,255,255,0.1) 0%, transparent 50%);
+}
+.upsell-hero-content { position: relative; z-index: 1; }
+.upsell-hero-emoji { font-size: 48px; margin-bottom: 8px; }
+.upsell-hero-title {
+  font-size: 28px;
+  font-weight: 900;
+  color: #000;
+  margin-bottom: 4px;
+}
+.upsell-hero-subtitle {
+  font-size: 14px;
+  color: rgba(0,0,0,0.7);
+  font-weight: 600;
+}
+.upsell-body { padding: 20px 20px 24px; }
+.upsell-social-proof {
+  text-align: center;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: rgba(251, 191, 36, 0.08);
+  border-radius: 12px;
+  border: 1px solid rgba(251, 191, 36, 0.15);
+}
+.upsell-counter-num {
+  font-size: 22px;
+  font-weight: 900;
+  color: #fbbf24;
+  display: block;
+}
+.upsell-counter-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.upsell-features {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.upsell-feature {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-card);
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.05);
+  align-items: flex-start;
+}
+.upsell-feature-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(251, 191, 36, 0.1);
+  border-radius: 10px;
+}
+.upsell-feature-body { flex: 1; min-width: 0; }
+.upsell-feature-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.upsell-feature-tagline {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.upsell-feature-savings {
+  font-size: 12px;
+  color: #34d399;
+  font-weight: 700;
+}
+.upsell-feature-urgency {
+  font-size: 11px;
+  color: #f59e0b;
+  margin-top: 4px;
+  font-style: italic;
+}
+
+.upsell-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.upsell-tier {
+  position: relative;
+  background: var(--bg-card);
+  border-radius: 14px;
+  padding: 14px;
+  border: 2px solid rgba(255,255,255,0.05);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  width: 100%;
+  color: inherit;
+  font-family: inherit;
+}
+.upsell-tier:hover {
+  border-color: #fbbf24;
+  transform: translateY(-1px);
+}
+.upsell-tier-featured {
+  border-color: #fbbf24;
+  background: linear-gradient(135deg, rgba(251,191,36,0.12) 0%, rgba(245,158,11,0.05) 100%);
+}
+.upsell-tier-badge {
+  position: absolute;
+  top: -8px;
+  right: 12px;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+.upsell-tier-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.upsell-tier-icon { font-size: 22px; }
+.upsell-tier-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+}
+.upsell-tier-price {
+  font-size: 18px;
+  font-weight: 900;
+  color: #fbbf24;
+}
+.upsell-tier-price-suffix {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.upsell-tier-headline {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.upsell-tier-pitch {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.upsell-guarantee {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 12px;
+  padding: 10px;
+  background: rgba(52, 211, 153, 0.05);
+  border-radius: 8px;
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp {
+  from { transform: translateY(30px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* === Premium Toast (всплывающее уведомление о locked фиче) === */
+.premium-toast {
+  position: fixed;
+  bottom: 80px;
+  left: 16px;
+  right: 16px;
+  background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 16px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 9998;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  animation: slideUp 0.3s ease;
+}
+.premium-toast-icon {
+  font-size: 22px;
+  flex-shrink: 0;
+}
+.premium-toast-text {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+}
+.premium-toast-btn {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #000;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* === Hero Premium CTA (на главном экране) === */
+.hero-premium-cta {
+  background: linear-gradient(135deg, rgba(251,191,36,0.15) 0%, rgba(245,158,11,0.05) 100%);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 16px;
+  padding: 14px 16px;
+  margin: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.hero-premium-cta:hover {
+  border-color: #fbbf24;
+  transform: translateY(-1px);
+}
+.hero-premium-cta-icon { font-size: 32px; }
+.hero-premium-cta-body { flex: 1; min-width: 0; }
+.hero-premium-cta-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.hero-premium-cta-subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.hero-premium-cta-arrow {
+  font-size: 18px;
+  color: #fbbf24;
+}
+
+/* === Streak / Savings widget === */
+.streak-widget {
+  background: linear-gradient(135deg, rgba(52,211,153,0.1) 0%, rgba(16,185,129,0.05) 100%);
+  border: 1px solid rgba(52, 211, 153, 0.2);
+  border-radius: 12px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.streak-widget-icon { font-size: 32px; }
+.streak-widget-body { flex: 1; }
+.streak-widget-num {
+  font-size: 18px;
+  font-weight: 900;
+  color: #34d399;
+}
+.streak-widget-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* === Feature card with savings === */
+.feature-card {
+  position: relative;
+  background: var(--bg-card);
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,0.05);
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.feature-card:hover {
+  border-color: rgba(251, 191, 36, 0.3);
+}
+.feature-card-locked { opacity: 0.7; }
+.feature-card-locked:hover { opacity: 1; }
+.feature-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.feature-card-icon { font-size: 24px; }
+.feature-card-title { font-size: 15px; font-weight: 700; color: var(--text); flex: 1; }
+.feature-card-save {
+  font-size: 11px;
+  font-weight: 700;
+  color: #34d399;
+  background: rgba(52,211,153,0.15);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+.feature-card-tagline {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.feature-card-urgency {
+  font-size: 11px;
+  color: #f59e0b;
+  font-style: italic;
+}

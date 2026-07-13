@@ -65,6 +65,9 @@
         </div>
       </div>
 
+      <!-- Hero Premium CTA (для Free юзеров) -->
+      <div id="hero-premium-cta"></div>
+
       <!-- Hero Search -->
       <div class="hero-search">
         <div class="search-input-wrap">
@@ -324,6 +327,7 @@
       <div class="profile-actions">
         <button class="btn btn-secondary" id="btn-share">📤 Поделиться ботом</button>
         <button class="btn btn-secondary" id="btn-donate">❤️ Поддержать проект</button>
+        <button class="btn btn-secondary" id="btn-export">📊 Экспорт в Excel (Premium)</button>
         <button class="btn btn-secondary" id="btn-help">❓ Помощь</button>
       </div>
     </section>
@@ -556,10 +560,50 @@
   </div>
 </div>
 
+<!-- Premium catalog (каталог фич) -->
+<script src="/app/premium-catalog.js?v=1"></script>
+<!-- Premium UI (upsell, badges, locks) -->
+<script src="/app/premium-ui.js?v=1"></script>
+
+<!-- Premium Upsell Modal -->
+<div class="upsell-overlay" id="upsell-overlay" style="display: none;" onclick="if(event.target===this)closeUpsell()">
+  <div class="upsell-modal">
+    <button class="upsell-close" onclick="closeUpsell()">×</button>
+    <div class="upsell-hero">
+      <div class="upsell-hero-bg"></div>
+      <div class="upsell-hero-content">
+        <div class="upsell-hero-emoji" id="upsell-hero-emoji">💎</div>
+        <h2 class="upsell-hero-title" id="upsell-hero-title">Premium</h2>
+        <p class="upsell-hero-subtitle" id="upsell-hero-subtitle">Экономия и удобство</p>
+      </div>
+    </div>
+    <div class="upsell-body">
+      <div class="upsell-social-proof" id="upsell-social-proof">
+        <div class="upsell-counter">
+          <span class="upsell-counter-num">2 400+</span>
+          <span class="upsell-counter-label">водителей уже с нами</span>
+        </div>
+      </div>
+      <div class="upsell-features" id="upsell-features"></div>
+      <div class="upsell-tiers" id="upsell-tiers"></div>
+      <div class="upsell-guarantee">
+        🔒 Безопасная оплата через ЮMoney · Можно отменить в любой момент
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast для premium уведомлений -->
+<div class="premium-toast" id="premium-toast" style="display: none;">
+  <span class="premium-toast-icon">💎</span>
+  <span class="premium-toast-text">Premium фича заблокирована</span>
+  <button class="premium-toast-btn" onclick="showUpsell()">Купить</button>
+</div>
+
 <!-- Scripts: VK Bridge ДО app.js (без async, чтобы гарантировать загрузку) -->
 <script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="/app/app.js?v=11"></script>
+<script src="/app/app.js?v=12"></script>
 </body>
 </html>

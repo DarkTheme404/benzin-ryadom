@@ -694,12 +694,89 @@
       // Prices is optional, don't fail if it errors
       const pricesData = await api(`/api/stations/${s.id}/prices`).catch(() => null);
       renderStationDetail(detail, pricesData);
+
+      // Загружаем price history (Premium)
+      await loadStationPriceHistory(s.id);
     } catch (e) {
       console.error('openStationDetail error:', e);
       showToast('Не удалось загрузить: ' + e.message, 'error');
       // Still try to render with what we have
       renderStationDetail({ station: s, statuses: s.statuses || [] }, null);
     }
+  }
+
+  async function loadStationPriceHistory(stationId) {
+    // Загружает историю цен и рисует мини-график (Premium).
+    const tgId = getTgId();
+    const url = `/api/stations/${stationId}/price-history?days=30&fuel=95` + (tgId ? `&telegram_id=${tgId}` : '');
+    const data = await api(url).catch(() => null);
+    if (!data || !data.history) return;
+
+    const container = document.getElementById('station-premium-features');
+    if (!container) return;
+
+    // Строим простой SVG график
+    const history = data.history.filter(h => h.price != null);
+    if (history.length === 0) {
+      // Нет данных
+      if (data.is_premium) {
+        container.insertAdjacentHTML('afterbegin',
+          '<div class="feature-card"><div class="feature-card-header">' +
+          '<div class="feature-card-icon">📈</div>' +
+          '<div class="feature-card-title">История цен</div>' +
+          '<div class="feature-card-save">Premium</div></div>' +
+          '<div class="feature-card-tagline">Нет данных за последние 30 дней</div></div>'
+        );
+      }
+      return;
+    }
+
+    // Рисуем мини-график
+    const w = 320, h = 80, pad = 6;
+    const prices = history.map(h => h.price);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const range = max - min || 1;
+    const stepX = (w - pad * 2) / Math.max(history.length - 1, 1);
+    const points = history.map((h, i) => {
+      const x = pad + i * stepX;
+      const y = pad + (h.price - min) / range * (h - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+
+    const lastPrice = history[0].price.toFixed(2);
+    const firstPrice = history[history.length - 1].price.toFixed(2);
+    const diff = (history[0].price - history[history.length - 1].price).toFixed(2);
+    const trend = history[0].price > history[history.length - 1].price ? '📉 дешевеет' :
+                  history[0].price < history[history.length - 1].price ? '📈 дорожает' : '➡️ стабильно';
+
+    const isPremium = data.is_premium;
+    const period = isPremium ? '30 дней' : '3 дня';
+
+    const historyHtml = `
+      <div class="feature-card" ${!isPremium ? 'onclick="showUpsell({feature:\'price_history\'})"' : ''}>
+        <div class="feature-card-header">
+          <div class="feature-card-icon">📈</div>
+          <div class="feature-card-title">История цен ${period}</div>
+          <div class="feature-card-save" style="${isPremium ? 'color:#34d399;background:rgba(52,211,153,0.15);' : 'color:#fbbf24;background:rgba(251,191,36,0.15);'}">
+            ${isPremium ? '✅ Активно' : '💎 Premium'}
+          </div>
+        </div>
+        <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:80px;background:rgba(255,255,255,0.02);border-radius:8px;margin-top:8px;">
+          <polyline points="${points}" fill="none" stroke="#fbbf24" stroke-width="2"/>
+        </svg>
+        <div class="feature-card-tagline" style="margin-top:6px;">
+          ${lastPrice}₽ ${trend} (было ${firstPrice}₽, Δ${diff}₽)
+        </div>
+        ${data.forecast ? `
+          <div class="feature-card-urgency" style="color:#34d399;">
+            🔮 Прогноз: ${data.forecast.low}₽ — ${data.forecast.high}₽ (средн. ${data.forecast.avg}₽)
+          </div>
+        ` : ''}
+      </div>
+    `;
+
+    container.insertAdjacentHTML('afterbegin', historyHtml);
   }
 
   function renderStationDetail(detail, pricesData) {
@@ -837,6 +914,19 @@
       <div class="detail-actions">
         <button class="btn btn-primary" data-action="report">📝 Сообщить</button>
         <button class="btn btn-secondary" data-action="review">⭐ Оценить</button>
+      </div>
+
+      <!-- Premium features (price history, forecast, alarm) -->
+      <div class="section-header" style="margin-top: 16px;">
+        <h2 class="section-title">💎 Premium-фичи для этой АЗС</h2>
+      </div>
+      <div id="station-premium-features">
+        ${window.PremiumUI && window.PremiumUI.getStatus().active ?
+          window.PremiumUI.renderUnlockedCard('price_history') +
+          window.PremiumUI.renderUnlockedCard('fuel_alarm') :
+          window.PremiumUI.renderLockedCard('price_history') +
+          window.PremiumUI.renderLockedCard('fuel_alarm')
+        }
       </div>
 
       <div class="detail-actions">
@@ -1893,6 +1983,42 @@
     $('#btn-help').addEventListener('click', () => {
       showToast('Бот: @benzyn_ryadom\nVK: vk.com/benzyn_ryadom', 'info');
     });
+    const exportBtn = $('#btn-export');
+    if (exportBtn) {
+      exportBtn.addEventListener('click', async () => {
+        const uid = getTgId();
+        if (!uid) {
+          showToast('Не удалось определить ID', 'error');
+          return;
+        }
+        // Проверяем premium статус
+        const status = window.PremiumUI ? window.PremiumUI.getStatus() : { active: false };
+        if (!status.active) {
+          showUpsell({ feature: 'export_csv' });
+          return;
+        }
+        // Скачиваем CSV
+        try {
+          showLoading();
+          const res = await fetch(`${API}/api/export/csv?telegram_id=${uid}&type=reports&days=30`, {
+            headers: tg?.initData ? { 'X-Telegram-Init-Data': tg.initData } : {},
+          });
+          if (!res.ok) throw new Error('Ошибка скачивания');
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `benzin_reports_${new Date().toISOString().slice(0,10)}.csv`;
+          a.click();
+          URL.revokeObjectURL(url);
+          showToast('CSV скачан ✅', 'success');
+        } catch (e) {
+          showToast('Ошибка: ' + e.message, 'error');
+        } finally {
+          hideLoading();
+        }
+      });
+    }
     const linkBtn = $('#btn-link-apply');
     if (linkBtn) {
       linkBtn.addEventListener('click', async () => {
@@ -1971,6 +2097,16 @@
   // ============= INIT =============
   async function init() {
     bindEvents();
+
+    // === Загружаем Premium статус и обновляем UI ===
+    try {
+      await window.PremiumUI.loadStatus();
+      // Hero CTA на главном экране
+      const heroEl = document.getElementById('hero-premium-cta');
+      if (heroEl) heroEl.innerHTML = window.PremiumUI.renderHeroCTA();
+    } catch (e) {
+      console.error('PremiumUI init:', e);
+    }
 
     // Load saved city
     try {
