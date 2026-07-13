@@ -262,6 +262,28 @@
         </div>
       </div>
 
+      <!-- Account Linking -->
+      <div class="profile-section">
+        <h3 class="profile-section-title">🔗 Привязка аккаунта</h3>
+        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px;">
+          Чтобы Premium работал и в Telegram, и в VK — привяжи аккаунт
+        </p>
+        <div class="link-section" id="link-section">
+          <input type="text" id="link-code-input" placeholder="Введи 6-значный код" maxlength="6" style="width: 100%; padding: 10px; background: var(--bg-elev); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--text); font-size: 16px; text-align: center; letter-spacing: 4px; margin-bottom: 8px;">
+          <button class="btn btn-secondary" id="btn-link-apply" style="width: 100%;">✅ Применить код</button>
+          <div id="link-status" style="margin-top: 8px; font-size: 13px; text-align: center;"></div>
+        </div>
+        <details style="margin-top: 12px; font-size: 12px; color: var(--text-secondary);">
+          <summary style="cursor: pointer;">📖 Как получить код?</summary>
+          <ol style="padding-left: 18px; margin-top: 8px; line-height: 1.6;">
+            <li>Открой Telegram бот @benzyn_ryadom</li>
+            <li>Напиши: <code>/link</code></li>
+            <li>Бот даст 6-значный код (10 мин)</li>
+            <li>Введи код выше</li>
+          </ol>
+        </details>
+      </div>
+
       <!-- Actions -->
       <div class="profile-actions">
         <button class="btn btn-secondary" id="btn-share">📤 Поделиться ботом</button>

@@ -2100,6 +2100,9 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/premium/payment-callback", handle_premium_payment_callback)
     app.router.add_get("/api/premium/payment-status", handle_premium_payment_status)
     app.router.add_get("/api/premium/pending", handle_premium_pending_payments)
+    # Account linking
+    app.router.add_post("/api/account/link/create", handle_account_link_create)
+    app.router.add_post("/api/account/link/use", handle_account_link_use)
     # Mini App static
     miniapp_dir = Path(__file__).parent.parent / "miniapp"
     if miniapp_dir.exists():
@@ -2135,8 +2138,8 @@ async def handle_premium_status(request):
     if not tid:
         return json_resp({"error": "telegram_id required"}, status=400)
     try:
-        from db import get_user_id_by_telegram_id, get_user_premium
-        uid = await get_user_id_by_telegram_id(int(tid))
+        from db import get_user_id_by_any, get_user_premium
+        uid = await get_user_id_by_any(int(tid))
         if not uid:
             return json_resp({"active": False, "tier": None, "expires_at": None})
         sub = await get_user_premium(uid)
@@ -2168,12 +2171,12 @@ async def handle_premium_activate(request):
         return json_resp({"error": "telegram_id and tier required"}, status=400)
     if tier not in ("economy", "standard", "elite"):
         return json_resp({"error": "invalid tier"}, status=400)
-    from db import get_user_id_by_telegram_id, upsert_user, activate_premium, get_plan
-    uid = await get_user_id_by_telegram_id(int(tid))
+    from db import get_user_id_by_any, upsert_user, activate_premium, get_plan
+    uid = await get_user_id_by_any(int(tid))
     if not uid:
         # Создаём пользователя
         await upsert_user(int(tid), username=None, first_name="Premium User")
-        uid = await get_user_id_by_telegram_id(int(tid))
+        uid = await get_user_id_by_any(int(tid))
     plan = get_plan(tier)
     sub = await activate_premium(uid, tier, days=plan["period_days"], payment_id=body.get("payment_id", f"manual_{tid}"), amount=plan["price"])
     return json_resp({
@@ -2195,8 +2198,8 @@ async def handle_premium_cancel(request):
     tid = body.get("telegram_id") or body.get("vk_user_id")
     if not tid:
         return json_resp({"error": "telegram_id required"}, status=400)
-    from db import get_user_id_by_telegram_id, cancel_premium
-    uid = await get_user_id_by_telegram_id(int(tid))
+    from db import get_user_id_by_any, cancel_premium
+    uid = await get_user_id_by_any(int(tid))
     if not uid:
         return json_resp({"ok": False, "error": "user not found"}, status=404)
     await cancel_premium(uid)
@@ -2210,6 +2213,56 @@ async def handle_premium_pending_payments(request):
     from db import get_pending_payments
     payments = await get_pending_payments(limit=50)
     return json_resp({"payments": payments, "count": len(payments)})
+
+
+# === Account linking ===
+
+async def handle_account_link_create(request):
+    """POST /api/account/link/create — создать 6-значный код для привязки.
+
+    Тело: {"telegram_id": 12345}
+    Возвращает: {"ok": true, "code": "123456", "expires_in": 600}
+    Используется когда юзер в TG хочет привязать свой аккаунт к VK/MiniApp.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    tid = body.get("telegram_id")
+    if not tid:
+        return json_resp({"error": "telegram_id required"}, status=400)
+    from db import create_link_code, get_user_id_by_any, upsert_user
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        await upsert_user(int(tid), username=None, first_name="User")
+    code = await create_link_code(int(tid))
+    return json_resp({"ok": True, "code": code, "expires_in": 600})
+
+
+async def handle_account_link_use(request):
+    """POST /api/account/link/use — использовать код для привязки.
+
+    Тело: {"telegram_id": 67890, "code": "123456"}
+    Привязывает telegram_id=67890 к аккаунту, который создал код.
+    После привязки premium работает на обоих ID.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    tid = body.get("telegram_id") or body.get("vk_user_id")
+    code = body.get("code")
+    if not tid or not code:
+        return json_resp({"error": "telegram_id and code required"}, status=400)
+    from db import link_accounts
+    result = await link_accounts(int(tid), str(code).strip())
+    if result.get("ok"):
+        return json_resp(result)
+    return json_resp(result, status=400)
 
 
 # VK Pay — настройки в bot/vkpay.py
@@ -2236,13 +2289,13 @@ async def handle_premium_create_payment(request):
         return json_resp({"error": "invalid tier"}, status=400)
 
     from db import (
-        get_user_id_by_telegram_id, upsert_user,
+        get_user_id_by_any, upsert_user,
         get_plan, create_payment_request,
     )
-    uid = await get_user_id_by_telegram_id(int(tid))
+    uid = await get_user_id_by_any(int(tid))
     if not uid:
         await upsert_user(int(tid), username=None, first_name="Premium User")
-        uid = await get_user_id_by_telegram_id(int(tid))
+        uid = await get_user_id_by_any(int(tid))
     if not uid:
         return json_resp({"error": "user creation failed"}, status=500)
 
@@ -2367,8 +2420,8 @@ async def handle_premium_feature(request):
     feature = request.query.get("feature")
     if not tid or not feature:
         return json_resp({"error": "telegram_id and feature required"}, status=400)
-    from db import get_user_id_by_telegram_id, get_user_premium, has_feature, FEATURE_TIER
-    uid = await get_user_id_by_telegram_id(int(tid))
+    from db import get_user_id_by_any, get_user_premium, has_feature, FEATURE_TIER
+    uid = await get_user_id_by_any(int(tid))
     sub = None
     if uid:
         sub = await get_user_premium(uid)

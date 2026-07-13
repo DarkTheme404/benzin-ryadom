@@ -422,6 +422,57 @@ async def handle_profile(peer_id: int) -> None:
     else:
         text += "\n🎯 Сделай первый отчёт, чтобы получить бейдж 🥉 «Новичок»!"
     await _vk_send(peer_id, text, vk_main_menu())
+async def handle_link(peer_id: int, text: str = "") -> None:
+    """Привязка VK аккаунта к TG (использовать код).
+
+    Текст: "link 123456" — использовать код для привязки.
+    Текст: "link" — показать инструкцию.
+    """
+    import aiohttp
+    backend = "https://benzin-ryadom.onrender.com"
+
+    # Парсим код из текста
+    parts = text.strip().split()
+    code = parts[1] if len(parts) >= 2 else ""
+
+    if not code:
+        await _vk_send(peer_id,
+            "🔗 <b>Привязка к Telegram</b>\n\n"
+            "Чтобы твой Premium работал и в TG, и в VK, и в Mini App:\n\n"
+            "1. Открой TG бот @benzyn_ryadom\n"
+            "2. Напиши ему: <code>/link</code>\n"
+            "3. Бот даст 6-значный код\n"
+            "4. Вернись сюда и напиши: <code>link 123456</code>\n\n"
+            "Код действует 10 минут.",
+        )
+        return
+
+    # Используем код
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{backend}/api/account/link/use",
+                json={"vk_user_id": peer_id, "code": code.strip()},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+        if data.get("ok"):
+            target_name = data.get("linked_to_name") or "пользователь"
+            await _vk_send(peer_id,
+                f"✅ <b>Аккаунт привязан!</b>\n\n"
+                f"Твой VK аккаунт привязан к <b>{target_name}</b>.\n\n"
+                f"Теперь Premium (если есть) работает на всех площадках.",
+            )
+        else:
+            err = data.get("error", "Неизвестная ошибка")
+            await _vk_send(peer_id,
+                f"❌ <b>Не удалось привязать</b>\n\n"
+                f"{err}\n\n"
+                f"Проверь что код введён правильно и не истёк (10 мин).",
+            )
+    except Exception as e:
+        logger.exception(f"handle_link error: {e}")
+        await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
 
 
 async def handle_premium(peer_id: int) -> None:
@@ -1159,6 +1210,8 @@ async def process_message_new(event: dict) -> None:
         await handle_donate(peer_id)
     elif low in ("/premium", "premium", "премиум"):
         await handle_premium(peer_id)
+    elif low.startswith("/link") or low.startswith("link "):
+        await handle_link(peer_id, text)
     elif low in ("/owner", "owner", "владелец", "я владелец"):
         await handle_owner_info(peer_id)
     elif low in ("/home", "home", "в начало", "главное меню"):

@@ -1818,6 +1818,38 @@
     $('#btn-help').addEventListener('click', () => {
       showToast('Бот: @benzyn_ryadom\nVK: vk.com/benzyn_ryadom', 'info');
     });
+    const linkBtn = $('#btn-link-apply');
+    if (linkBtn) {
+      linkBtn.addEventListener('click', async () => {
+        const input = $('#link-code-input');
+        const status = $('#link-status');
+        const code = (input?.value || '').trim();
+        if (!/^\d{6}$/.test(code)) {
+          if (status) status.textContent = '❌ Введи 6-значный код';
+          return;
+        }
+        const uid = getTgId();
+        if (!uid) {
+          if (status) status.textContent = '❌ Не удалось определить ID';
+          return;
+        }
+        try {
+          const res = await api('/api/account/link/use', {
+            method: 'POST',
+            body: JSON.stringify({ telegram_id: uid, code: code }),
+          });
+          if (res.ok) {
+            if (status) status.textContent = `✅ Привязано к ${res.linked_to_name || 'пользователь'}`;
+            showToast('Аккаунт привязан!', 'success');
+          } else {
+            if (status) status.textContent = '❌ ' + (res.error || 'Ошибка');
+            showToast('Ошибка: ' + (res.error || 'код неверный'), 'error');
+          }
+        } catch (e) {
+          if (status) status.textContent = '❌ Ошибка соединения';
+        }
+      });
+    }
     $('#btn-premium').addEventListener('click', () => {
       haptic('medium');
       const tiers = document.getElementById('premium-tiers');

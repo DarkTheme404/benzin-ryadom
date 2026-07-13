@@ -1146,6 +1146,76 @@ async def check_payment_callback(callback: CallbackQuery):
         )
 
 
+# === /link — привязка аккаунта к VK / MiniApp ===
+
+async def cmd_link(message: Message, command: CommandObject):
+    """Привязка аккаунта: /link (создать код) или /link 123456 (использовать код)."""
+    await get_or_create_user(message)
+    telegram_id = _tg_id(message)
+    code = (command.args or "").strip() if command.args else ""
+
+    if not code:
+        # Генерируем код
+        import aiohttp
+        backend = "https://benzin-ryadom.onrender.com"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{backend}/api/account/link/create",
+                    json={"telegram_id": telegram_id},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    data = await r.json()
+            if data.get("ok"):
+                code = data["code"]
+                await message.answer(
+                    f"🔗 <b>Код для привязки:</b> <code>{code}</code>\n\n"
+                    f"Этот код действует 10 минут.\n\n"
+                    f"<b>Чтобы привязать VK аккаунт:</b>\n"
+                    f"1. Открой наш VK бот @benzyn_ryadom\n"
+                    f"2. Напиши ему: <code>link {code}</code>\n\n"
+                    f"<b>Чтобы привязать Mini App:</b>\n"
+                    f"1. Открой приложение\n"
+                    f"2. В профиле нажми «Привязать»\n"
+                    f"3. Введи код <code>{code}</code>\n\n"
+                    f"После привязки Premium будет работать на всех площадках."
+                )
+                return
+        except Exception as e:
+            logger.exception(f"link create error: {e}")
+        await message.answer("❌ Ошибка при создании кода. Попробуй позже.")
+        return
+
+    # Используем код
+    import aiohttp
+    backend = "https://benzin-ryadom.onrender.com"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{backend}/api/account/link/use",
+                json={"telegram_id": telegram_id, "code": code},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+        if data.get("ok"):
+            target_name = data.get("linked_to_name") or "пользователь"
+            await message.answer(
+                f"✅ <b>Аккаунт привязан!</b>\n\n"
+                f"Твой TG аккаунт привязан к <b>{target_name}</b>.\n\n"
+                f"Теперь Premium (если есть) работает и в TG, и в VK, и в Mini App."
+            )
+        else:
+            err = data.get("error", "Неизвестная ошибка")
+            await message.answer(
+                f"❌ <b>Не удалось привязать</b>\n\n"
+                f"{err}\n\n"
+                f"Проверь что код введён правильно и не истёк (10 мин)."
+            )
+    except Exception as e:
+        logger.exception(f"link use error: {e}")
+        await message.answer("❌ Ошибка соединения. Попробуй позже.")
+
+
 async def premium_trial_callback(callback: CallbackQuery):
     await callback.answer()
     uid = await _ensure_callback_user(callback)
@@ -3452,6 +3522,7 @@ def register_all_handlers(dp: Dispatcher):
 
     # Premium
     dp.message.register(cmd_premium, Command("premium"))
+    dp.message.register(cmd_link, Command("link"))
     dp.callback_query.register(buy_tier_callback, F.data.in_({"buy_economy", "buy_standard", "buy_elite"}))
     dp.callback_query.register(check_payment_callback, F.data.startswith("check_pay_"))
     dp.callback_query.register(buy_premium_callback, F.data == "buy_premium")
