@@ -184,20 +184,26 @@
 
 ## Premium подписки — 13.07.2026
 - **3 тарифа**: Эконом 100₽, Стандарт 250₽, Элит 500₽ (все /мес)
-- **Оплата**: VK Pay (единый метод для TG/VK/MiniApp)
+- **Оплата**: VK Pay (реальная интеграция, не заглушка)
+- **Модуль `bot/vkpay.py`**: HMAC-SHA256 подпись, проверка callback'ов
 - **Таблицы**: `premium_users`, `premium_payments` (PG + SQLite)
 - **API**:
   - `GET /api/premium/plans` — список тарифов
   - `GET /api/premium/status?telegram_id=` — статус
   - `GET /api/premium/check?feature=&telegram_id=` — проверка фичи
-  - `POST /api/premium/create-payment` — создаёт pending платёж, возвращает VK Pay URL
-  - `GET /api/premium/payment-callback?token=&paid=1` — VK Pay callback
-  - `GET /api/premium/payment-status?token=` — проверка статуса для Mini App
+  - `POST /api/premium/create-payment` — создаёт pending платёж, возвращает VK Pay URL с подписью
+  - `POST /api/premium/payment-callback` — VK Pay callback (с X-Signature проверкой)
+  - `GET /api/premium/payment-callback?token=` — manual callback (для тестов)
+  - `GET /api/premium/payment-status?token=` — проверка статуса
   - `POST /api/premium/activate` — ручная активация (тесты)
   - `POST /api/premium/cancel` — отмена
-- **TG бот**: `/premium` → 3 кнопки → inline URL на VK Pay → кнопка «Я оплатил — проверить»
-- **VK Pay secret**: `benzin-pay-secret-change-me` (env VK_PAY_SECRET)
-- **Merchant ID**: `benzin-ryadom` (env VK_PAY_MERCHANT_ID)
+- **TG бот**: `/premium` → 3 кнопки → вызов API → inline URL на VK Pay → кнопка «Я оплатил — проверить»
+- **VK Pay ENV**:
+  - `VK_PAY_MERCHANT_ID` — ID магазина (по умолчанию `benzin-ryadom-merchant` — заглушка)
+  - `VK_PAY_SECRET_KEY` — секретный ключ для HMAC
+  - `VK_PAY_CALLBACK_URL` — URL для уведомлений (наш `/api/premium/payment-callback`)
+  - `VK_PAY_SUCCESS_URL` / `VK_PAY_FAIL_URL` — редиректы
+- **Для включения реального VK Pay**: зарегистрировать магазин на https://vk.com/pay/business, получить merchant_id и secret_key, добавить в Render env
 
 ### Фичи по тарифам:
 - **Эконом (3)**: price_history, export_csv, offline_map
