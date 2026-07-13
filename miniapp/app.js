@@ -464,6 +464,9 @@
       const el = document.getElementById('tab-routes');
       if (el) el.hidden = false;
       loadRoutesList();
+    } else if (tab === 'route-fuel') {
+      if (mainEl) mainEl.hidden = false;
+      showScreen('route-fuel');
     } else {
       if (mainEl) mainEl.hidden = false;
       if (tab === 'home') showScreen('home');
@@ -1793,6 +1796,182 @@
   }
 
   // ============= EVENT BINDING =============
+  // === ROUTE FUEL A→B ===
+  let routeFuelCoords = { from: null, to: null };
+
+  async function geocode(query) {
+    // Используем /api/search для геокодинга
+    try {
+      const data = await api(`/api/search?q=${encodeURIComponent(query)}&limit=1`);
+      if (data && data.results && data.results.length > 0) {
+        const r = data.results[0];
+        if (r.lat && r.lon) {
+          return { lat: r.lat, lon: r.lon, name: r.name || r.city || query };
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function findRouteFuel() {
+    const fromInput = $('#route-fuel-from')?.value?.trim();
+    const toInput = $('#route-fuel-to')?.value?.trim();
+    const fuel = $('#route-fuel-type')?.value || '95';
+    const results = $('#route-fuel-results');
+
+    if (!fromInput || !toInput) {
+      showToast('Введи точки A и B', 'error');
+      return;
+    }
+
+    showLoading();
+    try {
+      // Геокодинг
+      const fromCoords = await geocode(fromInput);
+      const toCoords = await geocode(toInput);
+      if (!fromCoords) {
+        hideLoading();
+        showToast('Не нашёл точку A: ' + fromInput, 'error');
+        return;
+      }
+      if (!toCoords) {
+        hideLoading();
+        showToast('Не нашёл точку B: ' + toInput, 'error');
+        return;
+      }
+
+      // Показываем координаты
+      const fromEl = $('#route-fuel-from-coords');
+      const toEl = $('#route-fuel-to-coords');
+      if (fromEl) fromEl.textContent = `📍 ${fromCoords.lat.toFixed(4)}, ${fromCoords.lon.toFixed(4)}`;
+      if (toEl) toEl.textContent = `📍 ${toCoords.lat.toFixed(4)}, ${toCoords.lon.toFixed(4)}`;
+
+      // Запрос
+      const tgId = getTgId();
+      let url = `/api/route/fuel?from_lat=${fromCoords.lat}&from_lon=${fromCoords.lon}&to_lat=${toCoords.lat}&to_lon=${toCoords.lon}&fuel=${fuel}`;
+      if (tgId) url += `&telegram_id=${tgId}`;
+
+      const data = await api(url);
+      hideLoading();
+
+      renderRouteFuelResults(data, results, fuel);
+    } catch (e) {
+      hideLoading();
+      console.error('findRouteFuel:', e);
+      showToast('Ошибка: ' + e.message, 'error');
+    }
+  }
+
+  function renderRouteFuelResults(data, container, fuel) {
+    if (!data || !container) return;
+
+    const isPremium = data.is_premium;
+    const guaranteed = data.guaranteed_stations || [];
+    const allStations = data.stations || [];
+
+    let html = '';
+
+    // Summary
+    html += `
+      <div class="route-fuel-summary">
+        <div class="route-fuel-summary-num">${data.total_distance_km} км</div>
+        <div class="route-fuel-summary-label">${fuel === 'diesel' ? 'ДТ' : 'АИ-' + fuel} · ${allStations.length} АЗС в коридоре</div>
+      </div>
+    `;
+
+    if (isPremium && guaranteed.length > 0) {
+      html += `
+        <div class="route-fuel-summary" style="background: linear-gradient(135deg, rgba(52,211,153,0.1) 0%, rgba(16,185,129,0.05) 100%); border-color: rgba(52,211,153,0.2);">
+          <div class="route-fuel-summary-num" style="color: #34d399;">${guaranteed.length} ✅</div>
+          <div class="route-fuel-summary-label">АЗС с гарантией наличия</div>
+        </div>
+      `;
+      if (data.savings_30l) {
+        html += `
+          <div class="route-fuel-summary" style="background: linear-gradient(135deg, rgba(52,211,153,0.1) 0%, rgba(16,185,129,0.05) 100%); border-color: rgba(52,211,153,0.2);">
+            <div class="route-fuel-summary-num" style="color: #34d399;">до ${data.savings_30l}₽</div>
+            <div class="route-fuel-summary-label">экономия на 30л между макс и мин ценой</div>
+          </div>
+        `;
+      }
+    } else if (!isPremium) {
+      // Free: показать upsell после результатов
+      html += `
+        <div style="text-align: center; padding: 12px; background: linear-gradient(135deg, rgba(251,191,36,0.1) 0%, rgba(245,158,11,0.05) 100%); border-radius: 12px; margin: 12px 0; border: 1px solid rgba(251,191,36,0.2);">
+          <div style="font-size: 14px; font-weight: 700; color: #fbbf24; margin-bottom: 6px;">
+            💎 Premium покажет все АЗС с гарантией
+          </div>
+          <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">
+            ${data.message}
+          </div>
+          <button class="btn btn-premium" onclick="showUpsell({feature:'route_fuel'})" style="width: 100%;">
+            Купить Premium — от 100₽/мес
+          </button>
+        </div>
+      `;
+    }
+
+    // Рекомендация (Premium)
+    if (isPremium && data.recommendation) {
+      const r = data.recommendation;
+      html += `
+        <div class="route-fuel-result route-fuel-result-guaranteed" style="border-width: 2px;">
+          <div class="route-fuel-result-name">
+            ⭐ Лучший выбор <span class="route-fuel-recommend">РЕКОМЕНДУЕМ</span>
+          </div>
+          <div class="route-fuel-result-name">${escape(r.operator || r.name || 'АЗС')}</div>
+          ${r.address ? `<div style="font-size:12px;color:var(--text-secondary);">📍 ${escape(r.address)}</div>` : ''}
+          <div class="route-fuel-result-meta">
+            <span>📏 ${r.distance_from_route_km} км от маршрута</span>
+            <span style="color:#34d399;">✅ В наличии</span>
+            ${r.last_queue ? `<span>👥 ${r.last_queue}</span>` : ''}
+            ${r.last_has_limit ? `<span>🚫 лимит</span>` : ''}
+          </div>
+          ${r.last_price ? `<div class="route-fuel-result-price">${r.last_price}₽/л — самая низкая цена</div>` : ''}
+        </div>
+      `;
+    }
+
+    // Все АЗС
+    if (allStations.length > 0) {
+      html += '<div style="font-size: 13px; font-weight: 700; color: var(--text); margin: 12px 0 8px;">Все АЗС в коридоре:</div>';
+      for (const s of allStations) {
+        const isGuaranteed = isPremium && s.last_available === true;
+        const yandexUrl = `https://yandex.ru/maps/?rtext=${s.lat},${s.lon}&rtt=auto`;
+        html += `
+          <div class="route-fuel-result ${isGuaranteed ? 'route-fuel-result-guaranteed' : ''}">
+            <div class="route-fuel-result-name">
+              ${escape(s.operator || s.name || 'АЗС')}
+              ${isGuaranteed ? '<span class="route-fuel-recommend">✅</span>' : ''}
+            </div>
+            ${s.address ? `<div style="font-size:11px;color:var(--text-secondary);">📍 ${escape(s.address)}</div>` : ''}
+            <div class="route-fuel-result-meta">
+              <span>📏 ${s.distance_from_route_km} км</span>
+              ${s.last_available === true ? '<span style="color:#34d399;">✅ В наличии</span>' :
+                s.last_available === false ? '<span style="color:#f87171;">❌ Нет</span>' :
+                '<span style="color:var(--text-secondary);">❓ Уточняйте</span>'}
+              ${s.last_price ? `<span style="color:#fbbf24;">${s.last_price}₽</span>` : ''}
+              ${s.last_queue ? `<span>👥 ${s.last_queue}</span>` : ''}
+            </div>
+            <div class="route-fuel-result-actions">
+              <a href="${yandexUrl}" target="_blank" class="route-fuel-result-btn">🗺 Маршрут</a>
+              <button class="route-fuel-result-btn" onclick="showStation(${s.id})">📊 Детали</button>
+            </div>
+          </div>
+        `;
+      }
+    } else {
+      html += `
+        <div style="text-align: center; padding: 24px; color: var(--text-secondary);">
+          😔 АЗС в этом коридоре не найдено. Попробуй расширить маршрут.
+        </div>
+      `;
+    }
+
+    container.innerHTML = html;
+    container.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+
   function bindEvents() {
     // Nav items
     $$('.nav-item').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
@@ -1983,6 +2162,13 @@
     $('#btn-help').addEventListener('click', () => {
       showToast('Бот: @benzyn_ryadom\nVK: vk.com/benzyn_ryadom', 'info');
     });
+    const routeFuelBtn = $('#route-fuel-submit');
+    if (routeFuelBtn) {
+      routeFuelBtn.addEventListener('click', () => {
+        haptic('medium');
+        findRouteFuel();
+      });
+    }
     const exportBtn = $('#btn-export');
     if (exportBtn) {
       exportBtn.addEventListener('click', async () => {

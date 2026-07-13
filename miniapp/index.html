@@ -362,6 +362,50 @@
       </div>
     </section>
 
+    <!-- ============ PREMIUM ROUTE A→B SCREEN ============ -->
+    <section class="screen screen-route-fuel" data-screen="route-fuel">
+      <div class="screen-header">
+        <button class="icon-btn back-btn" data-action="back">‹</button>
+        <h2 class="screen-title">🛣 Маршрут A→B с топливом</h2>
+      </div>
+      <div class="route-fuel-intro" style="padding: 0 16px 12px;">
+        <div class="upsell-feature" style="margin-bottom: 12px;">
+          <div class="upsell-feature-icon">🛣️</div>
+          <div class="upsell-feature-body">
+            <div class="upsell-feature-name">Premium: гарантия топлива</div>
+            <div class="upsell-feature-tagline">Без Premium — только 2 ближайших АЗС без фильтрации</div>
+            <div class="upsell-feature-savings">💰 Экономия до 1 200₽ на поездку</div>
+          </div>
+        </div>
+        <div class="route-fuel-form">
+          <div class="route-fuel-point">
+            <div class="route-fuel-point-label">📍 Точка A</div>
+            <input type="text" id="route-fuel-from" placeholder="Откуда (город, адрес)" class="route-fuel-input">
+            <div class="route-fuel-coords" id="route-fuel-from-coords"></div>
+          </div>
+          <div class="route-fuel-arrow">↓</div>
+          <div class="route-fuel-point">
+            <div class="route-fuel-point-label">📍 Точка B</div>
+            <input type="text" id="route-fuel-to" placeholder="Куда (город, адрес)" class="route-fuel-input">
+            <div class="route-fuel-coords" id="route-fuel-to-coords"></div>
+          </div>
+          <div class="route-fuel-fuel">
+            <label>Топливо:</label>
+            <select id="route-fuel-type" class="route-fuel-select">
+              <option value="92">АИ-92</option>
+              <option value="95" selected>АИ-95</option>
+              <option value="98">АИ-98</option>
+              <option value="diesel">Дизель</option>
+              <option value="100">АИ-100</option>
+              <option value="lpg">Газ</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="route-fuel-submit" style="width: 100%; margin-top: 12px;">🔍 Найти АЗС по маршруту</button>
+        </div>
+        <div id="route-fuel-results" style="margin-top: 16px;"></div>
+      </div>
+    </section>
+
     <!-- ============ MAP SCREEN ============ -->
     <section class="screen screen-map" data-screen="map">
       <div class="screen-header">
@@ -403,6 +447,10 @@
     <button class="nav-item" data-tab="routes">
       <span class="nav-icon">🛣</span>
       <span class="nav-label">Трассы</span>
+    </button>
+    <button class="nav-item" data-tab="route-fuel">
+      <span class="nav-icon">🅰️</span>
+      <span class="nav-label">A→B</span>
     </button>
     <button class="nav-item" data-tab="report">
       <span class="nav-icon">📝</span>

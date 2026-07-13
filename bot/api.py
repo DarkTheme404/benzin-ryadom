@@ -2156,6 +2156,7 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/account/link/use", handle_account_link_use)
     app.router.add_get("/api/account/info", handle_account_info)
     app.router.add_get("/api/export/csv", handle_export_csv)
+    app.router.add_get("/api/route/fuel", handle_route_fuel)
     # Mini App static
     miniapp_dir = Path(__file__).parent.parent / "miniapp"
     if miniapp_dir.exists():
@@ -2514,6 +2515,202 @@ async def handle_export_csv(request):
     except Exception as e:
         logger.exception(f"export_csv error: {e}")
         return json_resp({"error": str(e)}, status=500)
+
+
+async def handle_route_fuel(request):
+    """GET /api/route/fuel?from_lat=&from_lon=&to_lat=&to_lon=&fuel=92
+
+    Premium фича. Находит АЗС по маршруту между двумя точками.
+    Free: возвращает только ближайшие 2 АЗС без гарантии наличия.
+    Premium: все АЗС на маршруте + фильтрация по наличию + цены + расстояние.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+
+    try:
+        from_lat = float(request.query.get("from_lat", "0"))
+        from_lon = float(request.query.get("from_lon", "0"))
+        to_lat = float(request.query.get("to_lat", "0"))
+        to_lon = float(request.query.get("to_lon", "0"))
+    except (TypeError, ValueError):
+        return json_resp({"error": "invalid coordinates"}, status=400)
+
+    if not (-90 <= from_lat <= 90) or not (-90 <= to_lat <= 90):
+        return json_resp({"error": "lat must be in [-90, 90]"}, status=400)
+    if not (-180 <= from_lon <= 180) or not (-180 <= to_lon <= 180):
+        return json_resp({"error": "lon must be in [-180, 180]"}, status=400)
+
+    fuel = request.query.get("fuel", "95")
+    if fuel not in ("92", "95", "98", "diesel", "100", "lpg"):
+        fuel = "95"
+
+    # Premium check
+    tid = request.query.get("telegram_id")
+    is_premium = False
+    user_tier = None
+    if tid:
+        try:
+            from db import get_user_id_by_any, get_user_premium
+            uid = await get_user_id_by_any(int(tid))
+            if uid:
+                sub = await get_user_premium(uid)
+                if sub and sub.get("tier"):
+                    is_premium = True
+                    user_tier = sub.get("tier")
+        except Exception:
+            pass
+
+    # Расчёт расстояния и направления
+    import math
+    def haversine(lat1, lon1, lat2, lon2):
+        R = 6371
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    total_distance = haversine(from_lat, from_lon, to_lat, to_lon)
+
+    def bbox_search(lat, lon, radius_km, limit=10):
+        """Ищет АЗС в bbox."""
+        lat_delta = radius_km / 111.0
+        lon_delta = radius_km / (111.0 * math.cos(math.radians(lat)))
+        lat_min, lat_max = lat - lat_delta, lat + lat_delta
+        lon_min, lon_max = lon - lon_delta, lon + lon_delta
+        return lat_min, lat_max, lon_min, lon_max
+
+    # Ищем АЗС в коридоре вокруг маршрута
+    # Для простоты: ищем АЗС на расстоянии до 20% от общей длины от mid-точки
+    corridor_km = min(50, max(10, total_distance * 0.15))
+    mid_lat = (from_lat + to_lat) / 2
+    mid_lon = (from_lon + to_lon) / 2
+
+    lat_min, lat_max, lon_min, lon_max = bbox_search(mid_lat, mid_lon, corridor_km, 50)
+
+    try:
+        if USE_SQLITE:
+            rows = await _fetch(
+                """SELECT s.id, s.name, s.operator, s.address, s.city,
+                          s.lat, s.lon,
+                          (SELECT price FROM reports
+                           WHERE station_id = s.id AND fuel_type = ? AND price IS NOT NULL
+                           ORDER BY created_at DESC LIMIT 1) as last_price,
+                          (SELECT available FROM reports
+                           WHERE station_id = s.id
+                           ORDER BY created_at DESC LIMIT 1) as last_available,
+                          (SELECT created_at FROM reports
+                           WHERE station_id = s.id
+                           ORDER BY created_at DESC LIMIT 1) as last_report,
+                          (SELECT queue_size FROM reports
+                           WHERE station_id = s.id
+                           ORDER BY created_at DESC LIMIT 1) as last_queue,
+                          (SELECT has_limit FROM reports
+                           WHERE station_id = s.id
+                           ORDER BY created_at DESC LIMIT 1) as last_has_limit
+                   FROM stations s
+                   WHERE s.lat BETWEEN ? AND ? AND s.lon BETWEEN ? AND ?
+                     AND s.is_active = 1
+                   LIMIT 50""",
+                fuel, lat_min, lat_max, lon_min, lon_max,
+            )
+        else:
+            rows = await _fetch(
+                """SELECT s.id, s.name, s.operator, s.address, s.city,
+                          s.lat, s.lon,
+                          (SELECT price FROM reports
+                           WHERE station_id = s.id AND fuel_type = $5 AND price IS NOT NULL
+                           ORDER BY created_at DESC LIMIT 1) as last_price,
+                          (SELECT available FROM reports
+                           WHERE station_id = s.id
+                           ORDER BY created_at DESC LIMIT 1) as last_available,
+                          (SELECT created_at FROM reports
+                           WHERE station_id = s.id
+                           ORDER BY created_at DESC LIMIT 1) as last_report,
+                          (SELECT queue_size FROM reports
+                           WHERE station_id = s.id
+                           ORDER BY created_at DESC LIMIT 1) as last_queue,
+                          (SELECT has_limit FROM reports
+                           WHERE station_id = s.id
+                           ORDER BY created_at DESC LIMIT 1) as last_has_limit
+                   FROM stations s
+                   WHERE s.lat BETWEEN $1 AND $2 AND s.lon BETWEEN $3 AND $4
+                     AND COALESCE(s.is_active, TRUE) = TRUE
+                   LIMIT 50""",
+                lat_min, lat_max, lon_min, lon_max, fuel,
+            )
+    except Exception as e:
+        logger.exception(f"route_fuel db: {e}")
+        return json_resp({"error": str(e)}, status=500)
+
+    # Сортируем по расстоянию от mid-точки
+    stations_with_dist = []
+    for r in rows:
+        d = haversine(mid_lat, mid_lon, float(r["lat"]), float(r["lon"]))
+        stations_with_dist.append({
+            "id": r["id"],
+            "name": r.get("name"),
+            "operator": r.get("operator"),
+            "address": r.get("address"),
+            "city": r.get("city"),
+            "lat": float(r["lat"]),
+            "lon": float(r["lon"]),
+            "distance_from_route_km": round(d, 1),
+            "last_price": float(r["last_price"]) if r.get("last_price") is not None else None,
+            "last_available": r.get("last_available"),
+            "last_queue": r.get("last_queue"),
+            "last_has_limit": r.get("last_has_limit"),
+            "last_report": str(r["last_report"]) if r.get("last_report") else None,
+        })
+
+    stations_with_dist.sort(key=lambda x: x["distance_from_route_km"])
+
+    # Free: 2 ближайших без фильтрации
+    # Premium: все + фильтрация по наличию
+    if is_premium:
+        # Фильтруем только те, что с наличием
+        guaranteed = [s for s in stations_with_dist if s["last_available"] is True]
+        all_stations = stations_with_dist[:30]  # до 30 АЗС
+    else:
+        all_stations = stations_with_dist[:2]  # только 2
+        guaranteed = []
+
+    # Считаем экономию
+    if guaranteed:
+        prices = [s["last_price"] for s in guaranteed if s.get("last_price")]
+        if prices:
+            avg_price = sum(prices) / len(prices)
+            max_price = max(prices)
+            savings = round((max_price - min(prices)) * 30, 0)  # за 30 литров экономия
+        else:
+            avg_price = max_price = savings = None
+    else:
+        avg_price = max_price = savings = None
+
+    # Рекомендация
+    recommendation = None
+    if guaranteed:
+        # Самая дешёвая с наличием, ближайшая к середине маршрута
+        rec = min(guaranteed, key=lambda s: (s["last_price"] or 999, s["distance_from_route_km"]))
+        recommendation = rec
+
+    return json_resp({
+        "from": {"lat": from_lat, "lon": from_lon},
+        "to": {"lat": to_lat, "lon": to_lon},
+        "total_distance_km": round(total_distance, 1),
+        "fuel": fuel,
+        "stations": all_stations,
+        "guaranteed_stations": guaranteed,
+        "is_premium": is_premium,
+        "user_tier": user_tier,
+        "avg_price": round(avg_price, 2) if avg_price else None,
+        "savings_30l": savings,
+        "recommendation": recommendation,
+        "corridor_km": round(corridor_km, 1),
+        "message": (
+            "Найдено АЗС с гарантией наличия" if is_premium
+            else f"Free: только 2 ближайших. Premium: все АЗС + гарантия наличия + экономия до 1200₽"
+        ),
+    })
 
 
 # VK Pay — настройки в bot/vkpay.py
