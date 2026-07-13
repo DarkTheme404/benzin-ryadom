@@ -2006,6 +2006,17 @@ def create_app() -> web.Application:
 
 def setup_app() -> web.Application:
     """Создаёт и настраивает aiohttp приложение."""
+
+    def _cors_headers() -> dict:
+        """CORS заголовки."""
+        origins = os.environ.get("ALLOWED_ORIGINS", "*")
+        return {
+            "Access-Control-Allow-Origin": origins,
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS, HEAD",
+            "Access-Control-Allow-Headers": "Content-Type, X-Parse-Key, Authorization",
+            "Access-Control-Max-Age": "86400",
+        }
+
     @web.middleware
     async def audit_middleware(request, handler):
         ip = request.remote or "?"
