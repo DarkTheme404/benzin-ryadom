@@ -45,13 +45,16 @@ from db import (
     get_or_create_user,
     get_owner_stations,
     get_pending_owner_applications,
+    get_plan,
     get_premium_info,
+    get_premium_plans,
     get_station_by_id,
     get_station_current_status,
     get_station_rating,
     get_station_recent_reviews,
     get_stations_with_statuses,
     get_user_id_by_telegram_id,
+    get_user_premium,
     is_owner_of_station,
     is_premium,
     log_event,
@@ -981,27 +984,90 @@ async def cmd_find_raw(message: Message):
 
 # === /premium ===
 async def cmd_premium(message: Message):
+    """Показать 3 тарифа премиума."""
     await get_or_create_user(message)
     telegram_id = _tg_id(message)
     uid = await get_user_id_by_telegram_id(telegram_id)
-    info = await get_premium_info(uid) if uid else None
-    active = await is_premium(uid) if uid else False
+    sub = await get_user_premium(uid) if uid else None
 
-    if active and info:
-        days_left = (datetime.fromisoformat(info["expires_at"]) - datetime.now()).days
-        text = PREMIUM_ACTIVE.format(
-            days_left=max(days_left, 0),
-            expires_at=info["expires_at"][:10],
+    if sub:
+        from datetime import datetime as _dt
+        exp = sub.get("expires_at", "")
+        if isinstance(exp, str):
+            try: exp_dt = _dt.fromisoformat(exp)
+            except: exp_dt = None
+        else:
+            exp_dt = exp
+        days_left = max(0, (exp_dt - _dt.now()).days) if exp_dt else 0
+        tier_name = {"economy": "📊 Эконом", "standard": "🗺️ Стандарт", "elite": "👑 Элит"}.get(sub.get("tier"), sub.get("tier"))
+        text = (
+            f"✅ <b>У тебя активен Премиум</b>\n\n"
+            f"Тариф: {tier_name}\n"
+            f"Истекает: {str(exp)[:10]} ({days_left} дн.)\n\n"
+            f"Используй все фичи: /route (маршрут с топливом), /history (история цен), /export (CSV-выгрузка)"
         )
-        await message.answer(text, reply_markup=with_home_inline(InlineKeyboardMarkup(inline_keyboard=[])))
+        await message.answer(text)
         return
 
-    text = PREMIUM_OFFER.format(
-        price=settings.PREMIUM_PRICE_STARS,
-        days=settings.PREMIUM_DURATION_DAYS,
+    text = (
+        "💎 <b>Премиум-подписка «Бензин рядом»</b>\n\n"
+        "Выбери тариф:\n\n"
+
+        "📊 <b>Эконом</b> — 100₽/мес\n"
+        "   • График цен 30 дней с прогнозом\n"
+        "   • Экспорт истории в CSV/Excel\n"
+        "   • Оффлайн-карта региона\n\n"
+
+        "🗺️ <b>Стандарт</b> — 250₽/мес\n"
+        "   • Всё из Эконом +\n"
+        "   • 🆕 Маршрут A→B с гарантией топлива\n"
+        "   • 🆕 Прогноз наличия на 7 дней\n"
+        "   • 🆕 «Топливный будильник»\n\n"
+
+        "👑 <b>Элит</b> — 500₽/мес\n"
+        "   • Всё из Стандарт +\n"
+        "   • 🆕 «Анти-пробка по топливу»\n"
+        "   • 🆕 SOS-режим (уведомляет всех премиум в радиусе 50 км)\n\n"
+
+        "👇 Нажми на тариф:"
     )
-    kb = premium_keyboard()
-    await message.answer(text, reply_markup=with_home_inline(kb))
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 Эконом — 100₽", callback_data="buy_economy"),
+            InlineKeyboardButton(text="🗺️ Стандарт — 250₽", callback_data="buy_standard"),
+        ],
+        [
+            InlineKeyboardButton(text="👑 Элит — 500₽", callback_data="buy_elite"),
+        ],
+        [
+            InlineKeyboardButton(text="🎁 Попробовать 7 дней бесплатно", callback_data="premium_trial"),
+        ],
+        [InlineKeyboardButton(text="🏠 Главная", callback_data="back_home")],
+    ])
+    await message.answer(text, reply_markup=kb)
+
+
+async def buy_tier_callback(callback: CallbackQuery):
+    """Активация премиум тарифа (пока manual — для тестов)."""
+    await callback.answer()
+    tier = callback.data.replace("buy_", "")
+    if tier not in ("economy", "standard", "elite"):
+        return
+    uid = await _ensure_callback_user(callback)
+    if not uid:
+        return
+    plan = get_plan(tier)
+    if not plan:
+        return
+    sub = await activate_premium(uid, tier, days=plan["period_days"], payment_id=f"tg_{callback.from_user.id}", amount=plan["price"])
+    plan_features = "\n".join([f"  ✅ {f}" for f in plan["features"]])
+    await callback.message.answer(
+        f"✅ <b>Премиум '{plan['name']}' активирован!</b>\n\n"
+        f"💳 {plan['price']}₽ / {plan['period_days']} дней\n"
+        f"📅 До: {str(sub.get('expires_at', ''))[:10]}\n\n"
+        f"🎁 Доступные фичи:\n{plan_features}\n\n"
+        f"Используй /premium для просмотра статуса."
+    )
 
 
 async def premium_trial_callback(callback: CallbackQuery):
@@ -3310,6 +3376,7 @@ def register_all_handlers(dp: Dispatcher):
 
     # Premium
     dp.message.register(cmd_premium, Command("premium"))
+    dp.callback_query.register(buy_tier_callback, F.data.in_({"buy_economy", "buy_standard", "buy_elite"}))
     dp.callback_query.register(buy_premium_callback, F.data == "buy_premium")
     dp.callback_query.register(premium_callback, F.data == "cmd_premium")
     dp.callback_query.register(premium_trial_callback, F.data == "premium_trial")
