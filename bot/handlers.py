@@ -84,7 +84,7 @@ from keyboards import (
     review_fuel_keyboard,
     BTN_FIND, BTN_REPORT, BTN_SUBSCRIBE, BTN_PROFILE,
     BTN_OWNER, BTN_MY_STATIONS, BTN_HELP, BTN_PREMIUM, BTN_HOME,
-    BTN_APP, BTN_BUG, BTN_IDEA, BTN_DONATE,
+    BTN_APP, BTN_BUG, BTN_IDEA, BTN_DONATE, BTN_ROUTE,
 )
 from utils import format_distance, format_fuel_status, format_station_card
 from config import settings
