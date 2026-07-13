@@ -1799,6 +1799,123 @@
   // === ROUTE FUEL A→B ===
   let routeFuelCoords = { from: null, to: null };
 
+  // === MAP PICKER (выбор точек A/B на карте) ===
+  let _pickerMap = null;
+  let _pickerMarker = null;
+  let _pickerTarget = 'from';  // 'from' или 'to'
+  let _pickerCallback = null;
+
+  function openMapPicker(target, callback) {
+    _pickerTarget = target;
+    _pickerCallback = callback;
+
+    const overlay = document.getElementById('map-picker-overlay');
+    const title = document.getElementById('map-picker-title');
+    if (title) title.textContent = target === 'from' ? '📍 Выбери точку A' : '📍 Выбери точку B';
+    if (overlay) overlay.style.display = 'flex';
+
+    // Инициализация карты
+    setTimeout(() => initPickerMap(), 100);
+  }
+
+  function closeMapPicker() {
+    const overlay = document.getElementById('map-picker-overlay');
+    if (overlay) overlay.style.display = 'none';
+    _pickerCallback = null;
+  }
+
+  function initPickerMap() {
+    const container = document.getElementById('map-picker-container');
+    if (!container) return;
+
+    // Если карта уже создана — обновим размер
+    if (_pickerMap) {
+      _pickerMap.invalidateSize();
+      return;
+    }
+
+    // Начальная позиция — Москва
+    const initialLat = _pickerMarker ? _pickerMarker.getLatLng().lat : 55.7558;
+    const initialLon = _pickerMarker ? _pickerMarker.getLatLng().lng : 37.6173;
+
+    _pickerMap = L.map(container, {
+      zoomControl: true,
+      attributionControl: true,
+    }).setView([initialLat, initialLon], 10);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap',
+    }).addTo(_pickerMap);
+
+    // Если уже есть координаты — показываем маркер
+    if (_pickerMarker) {
+      _pickerMarker.addTo(_pickerMap);
+      _pickerMap.setView([initialLat, initialLon], 12);
+    }
+
+    // Клик по карте — установка маркера
+    _pickerMap.on('click', (e) => {
+      setPickerMarker(e.latlng.lat, e.latlng.lng);
+    });
+
+    // Поиск
+    const searchBtn = document.getElementById('map-picker-search-btn');
+    const searchInput = document.getElementById('map-picker-search-input');
+    if (searchBtn) {
+      searchBtn.addEventListener('click', () => doPickerSearch());
+    }
+    if (searchInput) {
+      searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') doPickerSearch();
+      });
+    }
+
+    // Кнопка "Подтвердить"
+    const confirmBtn = document.getElementById('map-picker-confirm');
+    if (confirmBtn) {
+      confirmBtn.addEventListener('click', () => {
+        if (!_pickerMarker) return;
+        const ll = _pickerMarker.getLatLng();
+        const name = document.getElementById('map-picker-search-input')?.value || `${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)}`;
+        if (_pickerCallback) _pickerCallback({ lat: ll.lat, lon: ll.lng, name: name });
+        closeMapPicker();
+      });
+    }
+  }
+
+  function setPickerMarker(lat, lon) {
+    const coords = document.getElementById('map-picker-coords');
+    const confirmBtn = document.getElementById('map-picker-confirm');
+    if (coords) coords.textContent = `📍 ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+    if (confirmBtn) confirmBtn.disabled = false;
+
+    if (_pickerMarker) {
+      _pickerMarker.setLatLng([lat, lon]);
+    } else {
+      _pickerMarker = L.marker([lat, lon], { draggable: true }).addTo(_pickerMap);
+      _pickerMarker.on('dragend', (e) => {
+        const ll = e.target.getLatLng();
+        setPickerMarker(ll.lat, ll.lng);
+      });
+    }
+  }
+
+  async function doPickerSearch() {
+    const input = document.getElementById('map-picker-search-input');
+    const q = input?.value?.trim();
+    if (!q) return;
+    showLoading();
+    const coords = await geocode(q);
+    hideLoading();
+    if (!coords) {
+      showToast('Не нашёл: ' + q, 'error');
+      return;
+    }
+    setPickerMarker(coords.lat, coords.lon);
+    _pickerMap.setView([coords.lat, coords.lon], 12);
+  }
+
   async function geocode(query) {
     // Используем /api/search для геокодинга
     try {
@@ -1826,17 +1943,26 @@
 
     showLoading();
     try {
-      // Геокодинг
-      const fromCoords = await geocode(fromInput);
-      const toCoords = await geocode(toInput);
+      // Используем координаты из map picker, если они есть и совпадают с вводом
+      let fromCoords = routeFuelCoords.from;
+      let toCoords = routeFuelCoords.to;
+
+      // Если нет — делаем геокодинг
+      if (!fromCoords) {
+        fromCoords = await geocode(fromInput);
+      }
+      if (!toCoords) {
+        toCoords = await geocode(toInput);
+      }
+
       if (!fromCoords) {
         hideLoading();
-        showToast('Не нашёл точку A: ' + fromInput, 'error');
+        showToast('Не нашёл точку A: ' + fromInput + '\nИли выбери на карте (кнопка 🗺)', 'error');
         return;
       }
       if (!toCoords) {
         hideLoading();
-        showToast('Не нашёл точку B: ' + toInput, 'error');
+        showToast('Не нашёл точку B: ' + toInput + '\nИли выбери на карте (кнопка 🗺)', 'error');
         return;
       }
 
@@ -1859,6 +1985,19 @@
       hideLoading();
       console.error('findRouteFuel:', e);
       showToast('Ошибка: ' + e.message, 'error');
+    }
+  }
+
+  // === Обработка выбора точки на карте ===
+  function onMapPicked(target, coords) {
+    if (target === 'from') {
+      routeFuelCoords.from = coords;
+      const fromEl = $('#route-fuel-from-coords');
+      if (fromEl) fromEl.textContent = `📍 ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}`;
+    } else {
+      routeFuelCoords.to = coords;
+      const toEl = $('#route-fuel-to-coords');
+      if (toEl) toEl.textContent = `📍 ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}`;
     }
   }
 
@@ -2169,6 +2308,19 @@
         findRouteFuel();
       });
     }
+    // Кнопки "Выбрать на карте" для A и B
+    $$('.route-fuel-pick-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        haptic('light');
+        const target = btn.dataset.pick;
+        // Запоминаем текущее значение в input как дефолт
+        const inputId = target === 'from' ? '#route-fuel-from' : '#route-fuel-to';
+        const currentVal = $(inputId)?.value || '';
+        const searchInput = $('#map-picker-search-input');
+        if (searchInput && currentVal) searchInput.value = currentVal;
+        openMapPicker(target, (coords) => onMapPicked(target, coords));
+      });
+    });
     const exportBtn = $('#btn-export');
     if (exportBtn) {
       exportBtn.addEventListener('click', async () => {

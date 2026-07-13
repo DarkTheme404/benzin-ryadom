@@ -2942,3 +2942,116 @@ body.vk-dark {
   margin-top: 4px;
 }
 
+
+/* === Route Fuel — input row with map button === */
+.route-fuel-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.route-fuel-input-row .route-fuel-input {
+  flex: 1;
+  margin-bottom: 0;
+}
+.route-fuel-pick-btn {
+  flex-shrink: 0;
+  padding: 8px 12px !important;
+  font-size: 18px !important;
+  min-width: 44px;
+}
+
+/* === Map Picker Modal === */
+.map-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  animation: fadeIn 0.25s ease;
+}
+.map-picker-modal {
+  background: var(--bg);
+  border-radius: 20px;
+  width: 100%;
+  max-width: 600px;
+  height: 95vh;
+  max-height: 700px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  animation: slideUp 0.3s ease;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.map-picker-header {
+  padding: 14px 16px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  position: relative;
+}
+.map-picker-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255,255,255,0.1);
+  border: none;
+  color: #fff;
+  font-size: 22px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.map-picker-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.map-picker-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.map-picker-search {
+  display: flex;
+  gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.map-picker-search input {
+  flex: 1;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+}
+.map-picker-container {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.map-picker-footer {
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+}
+.map-picker-coords {
+  flex: 1;
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.map-picker-confirm-btn:disabled,
+#map-picker-confirm[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+

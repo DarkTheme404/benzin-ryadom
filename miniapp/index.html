@@ -380,13 +380,19 @@
         <div class="route-fuel-form">
           <div class="route-fuel-point">
             <div class="route-fuel-point-label">📍 Точка A</div>
-            <input type="text" id="route-fuel-from" placeholder="Откуда (город, адрес)" class="route-fuel-input">
+            <div class="route-fuel-input-row">
+              <input type="text" id="route-fuel-from" placeholder="Откуда (город, адрес)" class="route-fuel-input">
+              <button class="btn btn-secondary route-fuel-pick-btn" data-pick="from" type="button">🗺</button>
+            </div>
             <div class="route-fuel-coords" id="route-fuel-from-coords"></div>
           </div>
           <div class="route-fuel-arrow">↓</div>
           <div class="route-fuel-point">
             <div class="route-fuel-point-label">📍 Точка B</div>
-            <input type="text" id="route-fuel-to" placeholder="Куда (город, адрес)" class="route-fuel-input">
+            <div class="route-fuel-input-row">
+              <input type="text" id="route-fuel-to" placeholder="Куда (город, адрес)" class="route-fuel-input">
+              <button class="btn btn-secondary route-fuel-pick-btn" data-pick="to" type="button">🗺</button>
+            </div>
             <div class="route-fuel-coords" id="route-fuel-to-coords"></div>
           </div>
           <div class="route-fuel-fuel">
@@ -637,6 +643,26 @@
       <div class="upsell-guarantee">
         🔒 Безопасная оплата через ЮMoney · Можно отменить в любой момент
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Map Picker Modal (выбор точек A/B на карте) -->
+<div class="map-picker-overlay" id="map-picker-overlay" style="display: none;" onclick="if(event.target===this)closeMapPicker()">
+  <div class="map-picker-modal">
+    <div class="map-picker-header">
+      <button class="map-picker-close" onclick="closeMapPicker()">×</button>
+      <div class="map-picker-title" id="map-picker-title">📍 Выбери точку A на карте</div>
+      <div class="map-picker-hint">Кликни по карте или найди адрес в поиске</div>
+    </div>
+    <div class="map-picker-search">
+      <input type="text" id="map-picker-search-input" placeholder="🔍 Поиск города или адреса...">
+      <button class="btn btn-primary" id="map-picker-search-btn">Найти</button>
+    </div>
+    <div id="map-picker-container" class="map-picker-container"></div>
+    <div class="map-picker-footer">
+      <div class="map-picker-coords" id="map-picker-coords">Кликни по карте...</div>
+      <button class="btn btn-primary" id="map-picker-confirm" disabled>✅ Подтвердить</button>
     </div>
   </div>
 </div>
