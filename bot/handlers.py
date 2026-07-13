@@ -84,7 +84,7 @@ from keyboards import (
     review_fuel_keyboard,
     BTN_FIND, BTN_REPORT, BTN_SUBSCRIBE, BTN_PROFILE,
     BTN_OWNER, BTN_MY_STATIONS, BTN_HELP, BTN_PREMIUM, BTN_HOME,
-    BTN_APP, BTN_BUG, BTN_IDEA, BTN_DONATE, BTN_ROUTE,
+    BTN_APP, BTN_BUG, BTN_IDEA, BTN_DONATE, BTN_ROUTE, BTN_LINK,
 )
 from utils import format_distance, format_fuel_status, format_station_card
 from config import settings
@@ -1149,47 +1149,46 @@ async def check_payment_callback(callback: CallbackQuery):
 # === /link — привязка аккаунта к VK / MiniApp ===
 
 async def cmd_link(message: Message):
-    """Привязка аккаунта: /link (создать код) или /link 123456 (использовать код)."""
+    """Привязка аккаунта: /link (создать код) или /link 123456 (использовать код).
+
+    Также обрабатывает текстовое нажатие кнопки «🔗 Привязать» — показывает меню.
+    """
     await get_or_create_user(message)
     telegram_id = _tg_id(message)
-    # Парсим код из текста команды
+    # Парсим код из текста команды (если есть)
     text = (message.text or "").strip()
     parts = text.split(maxsplit=1)
     code = parts[1].strip() if len(parts) >= 2 else ""
 
     if not code:
-        # Генерируем код
-        import aiohttp
-        backend = "https://benzin-ryadom.onrender.com"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{backend}/api/account/link/create",
-                    json={"telegram_id": telegram_id},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as r:
-                    data = await r.json()
-            if data.get("ok"):
-                code = data["code"]
-                await message.answer(
-                    f"🔗 <b>Код для привязки:</b> <code>{code}</code>\n\n"
-                    f"Этот код действует 10 минут.\n\n"
-                    f"<b>Чтобы привязать VK аккаунт:</b>\n"
-                    f"1. Открой наш VK бот @benzyn_ryadom\n"
-                    f"2. Напиши ему: <code>link {code}</code>\n\n"
-                    f"<b>Чтобы привязать Mini App:</b>\n"
-                    f"1. Открой приложение\n"
-                    f"2. В профиле нажми «Привязать»\n"
-                    f"3. Введи код <code>{code}</code>\n\n"
-                    f"После привязки Premium будет работать на всех площадках."
-                )
-                return
-        except Exception as e:
-            logger.exception(f"link create error: {e}")
-        await message.answer("❌ Ошибка при создании кода. Попробуй позже.")
+        # Меню привязки
+        from keyboards import BTN_LINK
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Создать код", callback_data="link:create")],
+            [InlineKeyboardButton(text="📥 Ввести код", callback_data="link:enter")],
+        ])
+        await message.answer(
+            f"🔗 <b>Привязка аккаунтов</b>\n\n"
+            f"Чтобы Premium работал и в TG, и в VK, и в Mini App — привяжи аккаунт.\n\n"
+            f"<b>Как привязать VK к TG:</b>\n"
+            f"1. Нажми <b>«📤 Создать код»</b> — получишь 6-значный код\n"
+            f"2. Открой VK бот @benzyn_ryadom\n"
+            f"3. Напиши ему: <code>link_use 123456</code>\n\n"
+            f"<b>Как привязать MiniApp к TG:</b>\n"
+            f"1. Создай код (кнопка выше)\n"
+            f"2. Открой Mini App → Профиль → Привязка аккаунта\n"
+            f"3. Введи код\n\n"
+            f"⏱ Код действует 10 минут.",
+            reply_markup=kb,
+        )
         return
 
     # Используем код
+    await _use_link_code(message, telegram_id, code)
+
+
+async def _use_link_code(message: Message, telegram_id: int, code: str) -> None:
+    """Применяет код привязки."""
     import aiohttp
     backend = "https://benzin-ryadom.onrender.com"
     try:
@@ -1217,6 +1216,62 @@ async def cmd_link(message: Message):
     except Exception as e:
         logger.exception(f"link use error: {e}")
         await message.answer("❌ Ошибка соединения. Попробуй позже.")
+
+
+async def link_create_callback(callback: CallbackQuery):
+    """Создаёт 6-значный код привязки (callback от кнопки)."""
+    await callback.answer()
+    uid = await _ensure_callback_user(callback)
+    if not uid:
+        await callback.message.answer("Ошибка: пользователь не найден.")
+        return
+    import aiohttp
+    backend = "https://benzin-ryadom.onrender.com"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{backend}/api/account/link/create",
+                json={"telegram_id": callback.from_user.id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+        if data.get("ok"):
+            code = data["code"]
+            await callback.message.answer(
+                f"🔗 <b>Код для привязки:</b> <code>{code}</code>\n\n"
+                f"⏱ Действует 10 минут.\n\n"
+                f"<b>Чтобы привязать VK аккаунт:</b>\n"
+                f"1. Открой VK бот @benzyn_ryadom\n"
+                f"2. Напиши ему: <code>link_use {code}</code>\n\n"
+                f"<b>Чтобы привязать Mini App:</b>\n"
+                f"1. Открой Mini App → Профиль → Привязка аккаунта\n"
+                f"2. Введи код <code>{code}</code>\n\n"
+                f"После привязки Premium будет работать везде."
+            )
+        else:
+            err = data.get("error", "Неизвестная ошибка")
+            await callback.message.answer(f"❌ Ошибка: {err}")
+    except Exception as e:
+        logger.exception(f"link create callback error: {e}")
+        await callback.message.answer("❌ Ошибка соединения. Попробуй позже.")
+
+
+async def link_enter_callback(callback: CallbackQuery):
+    """Просит юзера ввести код привязки."""
+    await callback.answer()
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.state import State, StatesGroup
+
+    class _LinkState(StatesGroup):
+        waiting_code = State()
+
+    state: FSMContext = callback.bot.get("fsm_context", None)  # заглушка
+    await callback.message.answer(
+        "📥 <b>Введи 6-значный код</b>\n\n"
+        "Отправь код одним сообщением (например: <code>123456</code>)\n\n"
+        "Код создаётся в VK боте (команда <code>link</code>) или в Mini App.\n"
+        "⏱ Действует 10 минут.",
+    )
 
 
 async def premium_trial_callback(callback: CallbackQuery):
@@ -1484,6 +1539,8 @@ async def handle_main_button(message: Message, state: FSMContext = None):
         await cmd_help(message)
     elif text == BTN_PREMIUM or text == "💎 Premium":
         await cmd_premium(message)
+    elif text == BTN_LINK or text == "🔗 Привязать":
+        await cmd_link(message)
     elif text == BTN_APP or text == "📱 Приложение":
         await cmd_open_app(message)
     elif text == BTN_DONATE or text == "❤️ Поддержать":
@@ -1602,6 +1659,8 @@ async def menu_callback(callback: CallbackQuery):
             await cmd_subscribe(msg, None)
         elif action == "premium":
             await cmd_premium(msg)
+        elif action == "link":
+            await cmd_link(msg)
         elif action == "owner":
             await cmd_register_owner(msg, None)
         elif action == "my_stations":
@@ -3526,6 +3585,8 @@ def register_all_handlers(dp: Dispatcher):
     # Premium
     dp.message.register(cmd_premium, Command("premium"))
     dp.message.register(cmd_link, Command("link"))
+    dp.callback_query.register(link_create_callback, F.data == "link:create")
+    dp.callback_query.register(link_enter_callback, F.data == "link:enter")
     dp.callback_query.register(buy_tier_callback, F.data.in_({"buy_economy", "buy_standard", "buy_elite"}))
     dp.callback_query.register(check_payment_callback, F.data.startswith("check_pay_"))
     dp.callback_query.register(buy_premium_callback, F.data == "buy_premium")

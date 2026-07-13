@@ -20,6 +20,7 @@ BTN_PROFILE = "👤 Профиль"
 BTN_MY_STATIONS = "🏪 Мои АЗС"
 BTN_HELP = "❓ Помощь"
 BTN_PREMIUM = "💎 Premium"
+BTN_LINK = "🔗 Привязать"
 BTN_DONATE = "❤️ Поддержать"
 BTN_BUG = "🐛 Ошибка"
 BTN_IDEA = "💡 Предложение"
@@ -35,7 +36,8 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_OWNER), KeyboardButton(text=BTN_APP)],
             [KeyboardButton(text=BTN_PROFILE), KeyboardButton(text=BTN_MY_STATIONS)],
             [KeyboardButton(text=BTN_HELP), KeyboardButton(text=BTN_PREMIUM)],
-            [KeyboardButton(text=BTN_DONATE), KeyboardButton(text=BTN_BUG)],
+            [KeyboardButton(text=BTN_LINK), KeyboardButton(text=BTN_DONATE)],
+            [KeyboardButton(text=BTN_BUG)],
         ],
         resize_keyboard=True,
     )
@@ -59,6 +61,9 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="💎 Premium", callback_data="menu:premium"),
+            InlineKeyboardButton(text="🔗 Привязать", callback_data="menu:link"),
+        ],
+        [
             InlineKeyboardButton(text="❤️ Поддержать", callback_data="menu:donate"),
         ],
     ]
