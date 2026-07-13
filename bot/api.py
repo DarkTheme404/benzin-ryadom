@@ -2039,6 +2039,57 @@ def setup_app() -> web.Application:
         return response
 
     app = web.Application(middlewares=[audit_middleware, cors_middleware])
+    # API routes
+    app.router.add_get("/api/health", handle_health)
+    app.router.add_get("/api/logs", handle_logs)
+    app.router.add_get("/api/admin/stats", handle_admin_stats)
+    app.router.add_get("/api/reverse-geocode", handle_reverse_geocode)
+    app.router.add_get("/api/stations", handle_stations)
+    app.router.add_get("/api/stations/by-city", handle_stations_by_city)
+    app.router.add_get("/api/stations/emergency", handle_emergency)
+    app.router.add_get("/api/search", handle_search)
+    app.router.add_get("/api/routes", handle_routes)
+    app.router.add_get("/api/routes/{id}/stations", handle_route_stations)
+    app.router.add_get("/api/cities", handle_cities)
+    app.router.add_get("/api/stations/{id}", handle_station_detail)
+    app.router.add_get("/api/stations/{id}/price-history", handle_price_history)
+    app.router.add_get("/api/stations/{id}/analytics", handle_station_analytics)
+    app.router.add_get("/api/stations/{id}/prices", handle_station_prices)
+    # Legacy /api/premium-status
+    async def legacy_premium_status(request):
+        return json_resp({"is_premium": False, "legacy": True, "use": "/api/premium/status"})
+    app.router.add_get("/api/premium-status", legacy_premium_status)
+    app.router.add_post("/api/reports", handle_create_report)
+    app.router.add_post("/api/reviews", handle_create_review)
+    app.router.add_post("/api/price-update", handle_price_update)
+    app.router.add_post("/api/import_prices", handle_import_prices)
+    app.router.add_post("/api/parse", handle_parse)
+    app.router.add_get("/api/parse", handle_parse)
+    app.router.add_get("/api/parse-benzin", handle_parse_benzin)
+    app.router.add_post("/api/vk/callback", handle_vk_callback)
+    app.router.add_get("/api/enrich", handle_enrich)
+    app.router.add_get("/api/import-osm", handle_import_osm)
+    # Premium
+    app.router.add_get("/api/premium/plans", handle_premium_plans)
+    app.router.add_get("/api/premium/status", handle_premium_status)
+    app.router.add_get("/api/premium/check", handle_premium_feature)
+    app.router.add_post("/api/premium/activate", handle_premium_activate)
+    app.router.add_post("/api/premium/cancel", handle_premium_cancel)
+    # Mini App static
+    miniapp_dir = Path(__file__).parent.parent / "miniapp"
+    if miniapp_dir.exists():
+        async def serve_index(request):
+            response = web.FileResponse(miniapp_dir / "index.html")
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
+        app.router.add_static("/app/", miniapp_dir, append_version=False)
+        for path in ("/miniapp", "/miniapp/", "/m", "/m/", "/v2", "/v2/"):
+            app.router.add_get(path, serve_index)
+    app.on_startup.append(_on_startup)
+    app.on_cleanup.append(_on_cleanup)
+    return app
 
 
 # === PREMIUM ===
@@ -2148,125 +2199,3 @@ async def handle_premium_feature(request):
     })
 
 
-def setup_app() -> web.Application:
-    """Создаёт и настраивает aiohttp приложение."""
-    # middleware
-    @web.middleware
-    async def cors_middleware(request, handler):
-        if request.method == "OPTIONS":
-            return web.Response(headers=_cors_headers())
-        try:
-            response = await handler(request)
-        except web.HTTPException as e:
-            response = e
-        for k, v in _cors_headers().items():
-            response.headers.setdefault(k, v)
-        return response
-
-    @web.middleware
-    async def audit_middleware(request, handler):
-        ip = request.remote or "?"
-        method = request.method
-        path = request.path
-        lower_path = path.lower()
-        suspicious = False
-        if method not in ("GET", "POST", "OPTIONS", "HEAD"):
-            suspicious = True
-        if "union" in lower_path and "select" in lower_path:
-            suspicious = True
-        if "script" in lower_path and "<" in lower_path:
-            suspicious = True
-        if "../" in path or "%2e%2e" in lower_path:
-            suspicious = True
-        if suspicious:
-            security_logger.error("BLOCKED: %s %s from %s", method, path, ip)
-            return json_resp({"error": "forbidden"}, status=403)
-
-        return await handler(request)
-
-    app = web.Application(middlewares=[audit_middleware, cors_middleware])
-    app.on_startup.append(_on_startup)
-    app.on_cleanup.append(_on_cleanup)
-    # API routes
-    app.router.add_get("/api/health", handle_health)
-    app.router.add_get("/api/logs", handle_logs)
-    app.router.add_get("/api/admin/stats", handle_admin_stats)
-    app.router.add_get("/api/reverse-geocode", handle_reverse_geocode)
-    app.router.add_get("/api/stations", handle_stations)
-    app.router.add_get("/api/stations/by-city", handle_stations_by_city)
-    app.router.add_get("/api/stations/emergency", handle_emergency)
-    app.router.add_get("/api/search", handle_search)
-    app.router.add_get("/api/routes", handle_routes)
-    app.router.add_get("/api/routes/{id}/stations", handle_route_stations)
-    app.router.add_get("/api/cities", handle_cities)
-    app.router.add_get("/api/stations/{id}", handle_station_detail)
-    app.router.add_get("/api/stations/{id}/price-history", handle_price_history)
-    app.router.add_get("/api/stations/{id}/analytics", handle_station_analytics)
-    app.router.add_get("/api/stations/{id}/prices", handle_station_prices)
-    # Legacy /api/premium-status — заглушка (используйте /api/premium/status)
-    async def legacy_premium_status(request):
-        return json_resp({"is_premium": False, "legacy": True, "use": "/api/premium/status"})
-    app.router.add_get("/api/premium-status", legacy_premium_status)
-    app.router.add_post("/api/reports", handle_create_report)
-    app.router.add_post("/api/reviews", handle_create_review)
-    app.router.add_post("/api/price-update", handle_price_update)
-    app.router.add_post("/api/import_prices", handle_import_prices)
-    app.router.add_post("/api/parse", handle_parse)
-    app.router.add_get("/api/parse", handle_parse)
-    app.router.add_get("/api/parse-benzin", handle_parse_benzin)
-    app.router.add_post("/api/vk/callback", handle_vk_callback)
-    app.router.add_post("/api/vk/test-event", handle_vk_test_event)
-    app.router.add_get("/api/enrich", handle_enrich)
-    app.router.add_get("/api/import-osm", handle_import_osm)
-    # Premium
-    app.router.add_get("/api/premium/plans", handle_premium_plans)
-    app.router.add_get("/api/premium/status", handle_premium_status)
-    app.router.add_get("/api/premium/check", handle_premium_feature)
-    app.router.add_post("/api/premium/activate", handle_premium_activate)
-    app.router.add_post("/api/premium/cancel", handle_premium_cancel)
-    # Mini App static files
-    miniapp_dir = Path(__file__).parent.parent / "miniapp"
-    if miniapp_dir.exists():
-        async def serve_index(request):
-            response = web.FileResponse(miniapp_dir / "index.html")
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
-            response.headers["Pragma"] = "no-cache"
-            response.headers["Expires"] = "0"
-            return response
-        # Serve static files under /app/ prefix (avoids conflicts with /miniapp/ route)
-        app.router.add_static("/app/", miniapp_dir, append_version=False)
-        # Routes
-        for path in ("/miniapp", "/miniapp/", "/m", "/m/", "/v2", "/v2/"):
-            app.router.add_get(path, serve_index)
-    return app
-
-
-async def handle_vk_test_event(request):
-    """POST /api/vk/test-event — ручной тест callback-кнопки (для отладки)."""
-    parse_key = os.environ.get("PARSE_API_KEY", "")
-    provided_key = request.headers.get("X-Parse-Key", "") or request.query.get("key", "")
-    if not parse_key or not provided_key or provided_key != parse_key:
-        return json_resp({"error": "unauthorized"}, status=401)
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    # Симулируем message_event
-    test_event = {
-        "type": "message_event",
-        "object": {
-            "event_id": f"test_{int(time.time()*1000)}",
-            "user_id": int(body.get("peer_id", 0)),
-            "peer_id": int(body.get("peer_id", 0)),
-            "payload": body.get("payload", {"a": "find"}),
-            "conversation_message_id": 0,
-        }
-    }
-    try:
-        from vk_callback import process_message_event
-        await process_message_event(test_event)
-        return json_resp({"ok": True, "test_event": test_event})
-    except Exception as e:
-        import traceback
-        return json_resp({"ok": False, "error": str(e), "traceback": traceback.format_exc()}, status=500)
