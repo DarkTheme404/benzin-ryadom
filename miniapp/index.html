@@ -648,7 +648,7 @@
 </div>
 
 <!-- Map Picker Modal (выбор точек A/B на карте) -->
-<div class="map-picker-overlay" id="map-picker-overlay" style="display: none;" onclick="if(event.target===this)closeMapPicker()">
+<div class="map-picker-overlay" id="map-picker-overlay" style="display: none;">
   <div class="map-picker-modal">
     <div class="map-picker-header">
       <button class="map-picker-close" onclick="closeMapPicker()">×</button>
@@ -660,6 +660,7 @@
       <button class="btn btn-primary" id="map-picker-search-btn">Найти</button>
     </div>
     <div id="map-picker-container" class="map-picker-container"></div>
+    <button class="map-picker-locate-btn" id="map-picker-locate-btn" type="button">📍 Моё местоположение</button>
     <div class="map-picker-footer">
       <div class="map-picker-coords" id="map-picker-coords">Кликни по карте...</div>
       <button class="btn btn-primary" id="map-picker-confirm" disabled>✅ Подтвердить</button>

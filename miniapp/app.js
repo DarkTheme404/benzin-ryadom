@@ -1804,6 +1804,7 @@
   let _pickerMarker = null;
   let _pickerTarget = 'from';  // 'from' или 'to'
   let _pickerCallback = null;
+  let _pickerEventsBound = false;
 
   function openMapPicker(target, callback) {
     _pickerTarget = target;
@@ -1812,7 +1813,23 @@
     const overlay = document.getElementById('map-picker-overlay');
     const title = document.getElementById('map-picker-title');
     if (title) title.textContent = target === 'from' ? '📍 Выбери точку A' : '📍 Выбери точку B';
-    if (overlay) overlay.style.display = 'flex';
+    if (overlay) {
+      overlay.style.display = 'flex';
+      // Закрытие по клику на фон
+      overlay.onclick = (e) => {
+        if (e.target === overlay) closeMapPicker();
+      };
+    }
+
+    // Сброс маркера
+    if (_pickerMarker && _pickerMap) {
+      _pickerMap.removeLayer(_pickerMarker);
+      _pickerMarker = null;
+    }
+    const confirmBtn = document.getElementById('map-picker-confirm');
+    if (confirmBtn) confirmBtn.disabled = true;
+    const coords = document.getElementById('map-picker-coords');
+    if (coords) coords.textContent = 'Кликни по карте или найди адрес в поиске';
 
     // Инициализация карты
     setTimeout(() => initPickerMap(), 100);
@@ -1828,60 +1845,124 @@
     const container = document.getElementById('map-picker-container');
     if (!container) return;
 
-    // Если карта уже создана — обновим размер
+    // Если карта уже создана — просто обновим размер
     if (_pickerMap) {
       _pickerMap.invalidateSize();
       return;
     }
 
     // Начальная позиция — Москва
-    const initialLat = _pickerMarker ? _pickerMarker.getLatLng().lat : 55.7558;
-    const initialLon = _pickerMarker ? _pickerMarker.getLatLng().lng : 37.6173;
-
     _pickerMap = L.map(container, {
       zoomControl: true,
       attributionControl: true,
-    }).setView([initialLat, initialLon], 10);
+    }).setView([55.7558, 37.6173], 5);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© OpenStreetMap',
     }).addTo(_pickerMap);
 
-    // Если уже есть координаты — показываем маркер
-    if (_pickerMarker) {
-      _pickerMarker.addTo(_pickerMap);
-      _pickerMap.setView([initialLat, initialLon], 12);
-    }
-
     // Клик по карте — установка маркера
     _pickerMap.on('click', (e) => {
       setPickerMarker(e.latlng.lat, e.latlng.lng);
     });
 
-    // Поиск
+    // Привязываем обработчики ОДИН раз
+    if (!_pickerEventsBound) {
+      bindPickerEvents();
+      _pickerEventsBound = true;
+    }
+
+    // Попробуем определить местоположение пользователя
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const userLat = pos.coords.latitude;
+          const userLon = pos.coords.longitude;
+          _pickerMap.setView([userLat, userLon], 11);
+          // Добавляем специальный маркер "Я"
+          const userIcon = L.divIcon({
+            className: 'user-location-marker',
+            html: '<div style="background:#3b82f6;width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 2px #3b82f6;"></div>',
+            iconSize: [16, 16],
+            iconAnchor: [8, 8],
+          });
+          L.marker([userLat, userLon], { icon: userIcon }).addTo(_pickerMap)
+            .bindPopup('📍 Вы здесь');
+        },
+        () => {
+          // Игнорируем — пользователь не дал доступ или ошибка
+        },
+        { timeout: 5000 }
+      );
+    }
+  }
+
+  function bindPickerEvents() {
     const searchBtn = document.getElementById('map-picker-search-btn');
     const searchInput = document.getElementById('map-picker-search-input');
+    const confirmBtn = document.getElementById('map-picker-confirm');
+    const locateBtn = document.getElementById('map-picker-locate-btn');
+
     if (searchBtn) {
-      searchBtn.addEventListener('click', () => doPickerSearch());
+      searchBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        doPickerSearch();
+      });
     }
     if (searchInput) {
       searchInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') doPickerSearch();
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          doPickerSearch();
+        }
       });
     }
-
-    // Кнопка "Подтвердить"
-    const confirmBtn = document.getElementById('map-picker-confirm');
     if (confirmBtn) {
-      confirmBtn.addEventListener('click', () => {
-        if (!_pickerMarker) return;
+      confirmBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!_pickerMarker) {
+          showToast('Сначала выбери точку на карте', 'error');
+          return;
+        }
         const ll = _pickerMarker.getLatLng();
-        const name = document.getElementById('map-picker-search-input')?.value || `${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)}`;
+        const name = (searchInput && searchInput.value) || `${ll.lat.toFixed(4)}, ${ll.lng.toFixed(4)}`;
         if (_pickerCallback) _pickerCallback({ lat: ll.lat, lon: ll.lng, name: name });
         closeMapPicker();
       });
     }
+    if (locateBtn) {
+      locateBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        locateUserInPicker();
+      });
+    }
+  }
+
+  function locateUserInPicker() {
+    if (!navigator.geolocation) {
+      showToast('Геолокация не поддерживается', 'error');
+      return;
+    }
+    showLoading();
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        hideLoading();
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        setPickerMarker(lat, lon);
+        if (_pickerMap) _pickerMap.setView([lat, lon], 13);
+        showToast('📍 Вы здесь', 'success');
+      },
+      (err) => {
+        hideLoading();
+        showToast('Не удалось определить местоположение: ' + err.message, 'error');
+      },
+      { timeout: 10000, enableHighAccuracy: true }
+    );
   }
 
   function setPickerMarker(lat, lon) {
@@ -1893,31 +1974,43 @@
     if (_pickerMarker) {
       _pickerMarker.setLatLng([lat, lon]);
     } else {
+      if (!_pickerMap) return;
       _pickerMarker = L.marker([lat, lon], { draggable: true }).addTo(_pickerMap);
       _pickerMarker.on('dragend', (e) => {
         const ll = e.target.getLatLng();
         setPickerMarker(ll.lat, ll.lng);
       });
     }
+    // Увеличиваем масштаб если слишком далеко
+    const currentZoom = _pickerMap.getZoom();
+    if (currentZoom < 10) {
+      _pickerMap.setView([lat, lon], 12);
+    } else {
+      _pickerMap.panTo([lat, lon]);
+    }
   }
 
   async function doPickerSearch() {
     const input = document.getElementById('map-picker-search-input');
     const q = input?.value?.trim();
-    if (!q) return;
+    if (!q) {
+      showToast('Введи название города', 'error');
+      return;
+    }
     showLoading();
     const coords = await geocode(q);
     hideLoading();
     if (!coords) {
-      showToast('Не нашёл: ' + q, 'error');
+      showToast('Не нашёл: ' + q + '\nПопробуй ввести с городом/областью', 'error');
       return;
     }
     setPickerMarker(coords.lat, coords.lon);
-    _pickerMap.setView([coords.lat, coords.lon], 12);
+    if (_pickerMap) _pickerMap.setView([coords.lat, coords.lon], 12);
   }
 
+  // === Улучшенный геокодинг: Nominatim OpenStreetMap ===
   async function geocode(query) {
-    // Используем /api/search для геокодинга
+    // Сначала пробуем /api/search (по АЗС)
     try {
       const data = await api(`/api/search?q=${encodeURIComponent(query)}&limit=1`);
       if (data && data.results && data.results.length > 0) {
@@ -1927,6 +2020,21 @@
         }
       }
     } catch (e) {}
+
+    // Если не нашли — пробуем Nominatim (OpenStreetMap)
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&accept-language=ru`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'BenzinRyadom/1.0' } });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.length > 0) {
+          const r = data[0];
+          return { lat: parseFloat(r.lat), lon: parseFloat(r.lon), name: r.display_name || query };
+        }
+      }
+    } catch (e) {
+      console.error('Nominatim geocode:', e);
+    }
     return null;
   }
 
