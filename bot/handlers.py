@@ -3555,7 +3555,6 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_limit, F.text)
     dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_queue, F.text)
     dp.message.register(handle_route_query, RouteSearchStates.waiting_route_query, F.text)
-    dp.message.register(handle_main_button, F.text)
 
     # Callback (кнопки)
     dp.callback_query.register(show_station_details, F.data.startswith("st:"))
@@ -3616,6 +3615,11 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(link_create_callback, F.data == "link:create")
     dp.callback_query.register(link_enter_callback, F.data == "link:enter")
     dp.message.register(link_code_input_handler, StateFilter(LinkStates.waiting_code))
+
+    # IMPORTANT: handle_main_button должен быть ПОСЛЕДНИМ —
+    # он перехватывает все текстовые сообщения.
+    # Все state-specific handlers (link_code_input и т.д.) должны быть зарегистрированы раньше.
+    dp.message.register(handle_main_button, F.text)
     dp.callback_query.register(buy_tier_callback, F.data.in_({"buy_economy", "buy_standard", "buy_elite"}))
     dp.callback_query.register(check_payment_callback, F.data.startswith("check_pay_"))
     dp.callback_query.register(buy_premium_callback, F.data == "buy_premium")
