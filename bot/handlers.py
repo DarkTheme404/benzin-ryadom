@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from aiogram import Dispatcher, F, Bot
-from aiogram.filters import BaseFilter, Command, CommandObject, CommandStart, StateFilter
+from aiogram.filters import BaseFilter, Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -1148,11 +1148,14 @@ async def check_payment_callback(callback: CallbackQuery):
 
 # === /link — привязка аккаунта к VK / MiniApp ===
 
-async def cmd_link(message: Message, command: CommandObject):
+async def cmd_link(message: Message):
     """Привязка аккаунта: /link (создать код) или /link 123456 (использовать код)."""
     await get_or_create_user(message)
     telegram_id = _tg_id(message)
-    code = (command.args or "").strip() if command.args else ""
+    # Парсим код из текста команды
+    text = (message.text or "").strip()
+    parts = text.split(maxsplit=1)
+    code = parts[1].strip() if len(parts) >= 2 else ""
 
     if not code:
         # Генерируем код

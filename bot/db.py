@@ -3523,17 +3523,19 @@ async def create_link_code(telegram_id: int) -> str:
     Возвращает 6-значный код, действующий 10 минут.
     """
     code = _gen_link_code()
-    expires = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    expires_dt = datetime.now(timezone.utc) + timedelta(minutes=10)
+    expires_str = expires_dt.isoformat()  # для SQLite (TEXT)
     if USE_SQLITE:
         await _execute(
             "UPDATE users SET link_code = ?, link_code_expires_at = ? WHERE telegram_id = ?",
-            code, expires, telegram_id,
+            code, expires_str, telegram_id,
         )
     else:
+        # PG: TIMESTAMPTZ требует datetime объект, не строку
         async with _db.acquire() as conn:
             await conn.execute(
                 "UPDATE users SET link_code = $1, link_code_expires_at = $2 WHERE telegram_id = $3",
-                code, expires, telegram_id,
+                code, expires_dt, telegram_id,
             )
     return code
 

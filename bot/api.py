@@ -2220,9 +2220,8 @@ async def handle_premium_pending_payments(request):
 async def handle_account_link_create(request):
     """POST /api/account/link/create — создать 6-значный код для привязки.
 
-    Тело: {"telegram_id": 12345}
+    Тело: {"telegram_id": 12345} ИЛИ {"vk_user_id": 12345}
     Возвращает: {"ok": true, "code": "123456", "expires_in": 600}
-    Используется когда юзер в TG хочет привязать свой аккаунт к VK/MiniApp.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
@@ -2230,14 +2229,18 @@ async def handle_account_link_create(request):
         body = await request.json()
     except Exception:
         return json_resp({"error": "invalid json"}, status=400)
-    tid = body.get("telegram_id")
+    tid = body.get("telegram_id") or body.get("vk_user_id")
     if not tid:
-        return json_resp({"error": "telegram_id required"}, status=400)
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
     from db import create_link_code, get_user_id_by_any, upsert_user
     uid = await get_user_id_by_any(int(tid))
     if not uid:
         await upsert_user(int(tid), username=None, first_name="User")
-    code = await create_link_code(int(tid))
+    try:
+        code = await create_link_code(int(tid))
+    except Exception as e:
+        logger.exception(f"create_link_code error: {e}")
+        return json_resp({"error": f"create_link_code failed: {e}"}, status=500)
     return json_resp({"ok": True, "code": code, "expires_in": 600})
 
 
