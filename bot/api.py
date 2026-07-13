@@ -1027,41 +1027,6 @@ async def handle_station_analytics(request):
     return json_resp(analytics)
 
 
-async def handle_premium_status(request):
-    """GET /api/premium-status?tg=<telegram_id> — статус Premium для Mini App."""
-    try:
-        tg = int(request.query.get("tg", "0"))
-    except (ValueError, TypeError):
-        return json_resp({"is_premium": False, "error": "invalid tg"}, status=400)
-    if not tg:
-        return json_resp({"is_premium": False})
-
-    uid = await get_user_id_by_telegram_id(tg)
-    if not uid:
-        return json_resp({"is_premium": False})
-
-    is_prem = await is_premium(uid)
-    info = await get_premium_info(uid) if is_prem else None
-    days_left = 0
-    if info and info.get("expires_at"):
-        try:
-            from datetime import datetime
-            exp = info["expires_at"]
-            if isinstance(exp, str):
-                exp_dt = datetime.fromisoformat(exp)
-            else:
-                exp_dt = exp
-            days_left = max(0, (exp_dt - datetime.now()).days)
-        except Exception:
-            pass
-
-    return json_resp({
-        "is_premium": is_prem,
-        "days_left": days_left,
-        "expires_at": str(info["expires_at"])[:10] if info else None,
-    })
-
-
 async def handle_station_prices(request):
     """GET /api/stations/{id}/prices — все цены по источникам с приоритетом.
 
@@ -2055,6 +2020,148 @@ def create_app() -> web.Application:
             security_logger.error("BLOCKED: %s %s from %s", method, path, ip)
             return json_resp({"error": "forbidden"}, status=403)
 
+
+# === PREMIUM ===
+
+async def handle_premium_plans(request):
+    """GET /api/premium/plans — все тарифы."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    from db import all_plans
+    return json_resp({"plans": all_plans()})
+
+
+async def handle_premium_status(request):
+    """GET /api/premium/status?telegram_id=... — статус подписки."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id required"}, status=400)
+    try:
+        from db import get_user_id_by_telegram_id, get_user_premium
+        uid = await get_user_id_by_telegram_id(int(tid))
+        if not uid:
+            return json_resp({"active": False, "tier": None, "expires_at": None})
+        sub = await get_user_premium(uid)
+        if not sub:
+            return json_resp({"active": False, "tier": None, "expires_at": None})
+        return json_resp({
+            "active": True,
+            "tier": sub.get("tier"),
+            "started_at": str(sub.get("started_at", "")),
+            "expires_at": str(sub.get("expires_at", "")),
+            "payment_method": sub.get("payment_method"),
+        })
+    except Exception as e:
+        logger.warning(f"premium_status: {e}")
+        return json_resp({"error": str(e)}, status=500)
+
+
+async def handle_premium_activate(request):
+    """POST /api/premium/activate — активировать (для тестов/ручного режима)."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    tid = body.get("telegram_id") or body.get("vk_user_id")
+    tier = body.get("tier")
+    if not tid or not tier:
+        return json_resp({"error": "telegram_id and tier required"}, status=400)
+    if tier not in ("economy", "standard", "elite"):
+        return json_resp({"error": "invalid tier"}, status=400)
+    from db import get_user_id_by_telegram_id, upsert_user, activate_premium, get_plan
+    uid = await get_user_id_by_telegram_id(int(tid))
+    if not uid:
+        # Создаём пользователя
+        await upsert_user(int(tid), username=None, first_name="Premium User")
+        uid = await get_user_id_by_telegram_id(int(tid))
+    plan = get_plan(tier)
+    sub = await activate_premium(uid, tier, days=plan["period_days"], payment_id=body.get("payment_id", f"manual_{tid}"), amount=plan["price"])
+    return json_resp({
+        "ok": True,
+        "tier": tier,
+        "expires_at": str(sub.get("expires_at", "")),
+        "message": f"Премиум '{plan['name']}' активирован на {plan['period_days']} дней",
+    })
+
+
+async def handle_premium_cancel(request):
+    """POST /api/premium/cancel — отменить подписку."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    tid = body.get("telegram_id") or body.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id required"}, status=400)
+    from db import get_user_id_by_telegram_id, cancel_premium
+    uid = await get_user_id_by_telegram_id(int(tid))
+    if not uid:
+        return json_resp({"ok": False, "error": "user not found"}, status=404)
+    await cancel_premium(uid)
+    return json_resp({"ok": True, "message": "Подписка отменена"})
+
+
+async def handle_premium_feature(request):
+    """GET /api/premium/check?feature=...&telegram_id=... — проверка доступа к фиче."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    feature = request.query.get("feature")
+    if not tid or not feature:
+        return json_resp({"error": "telegram_id and feature required"}, status=400)
+    from db import get_user_id_by_telegram_id, get_user_premium, has_feature, FEATURE_TIER
+    uid = await get_user_id_by_telegram_id(int(tid))
+    sub = None
+    if uid:
+        sub = await get_user_premium(uid)
+    tier = sub.get("tier") if sub else None
+    return json_resp({
+        "allowed": has_feature(tier, feature),
+        "tier": tier,
+        "required_tier": FEATURE_TIER.get(feature),
+    })
+
+
+def setup_app() -> web.Application:
+    """Создаёт и настраивает aiohttp приложение."""
+    # middleware
+    @web.middleware
+    async def cors_middleware(request, handler):
+        if request.method == "OPTIONS":
+            return web.Response(headers=_cors_headers())
+        try:
+            response = await handler(request)
+        except web.HTTPException as e:
+            response = e
+        for k, v in _cors_headers().items():
+            response.headers.setdefault(k, v)
+        return response
+
+    @web.middleware
+    async def audit_middleware(request, handler):
+        ip = request.remote or "?"
+        method = request.method
+        path = request.path
+        lower_path = path.lower()
+        suspicious = False
+        if method not in ("GET", "POST", "OPTIONS", "HEAD"):
+            suspicious = True
+        if "union" in lower_path and "select" in lower_path:
+            suspicious = True
+        if "script" in lower_path and "<" in lower_path:
+            suspicious = True
+        if "../" in path or "%2e%2e" in lower_path:
+            suspicious = True
+        if suspicious:
+            security_logger.error("BLOCKED: %s %s from %s", method, path, ip)
+            return json_resp({"error": "forbidden"}, status=403)
+
         return await handler(request)
 
     app = web.Application(middlewares=[audit_middleware, cors_middleware])
@@ -2076,7 +2183,10 @@ def create_app() -> web.Application:
     app.router.add_get("/api/stations/{id}/price-history", handle_price_history)
     app.router.add_get("/api/stations/{id}/analytics", handle_station_analytics)
     app.router.add_get("/api/stations/{id}/prices", handle_station_prices)
-    app.router.add_get("/api/premium-status", handle_premium_status)
+    # Legacy /api/premium-status — заглушка (используйте /api/premium/status)
+    async def legacy_premium_status(request):
+        return json_resp({"is_premium": False, "legacy": True, "use": "/api/premium/status"})
+    app.router.add_get("/api/premium-status", legacy_premium_status)
     app.router.add_post("/api/reports", handle_create_report)
     app.router.add_post("/api/reviews", handle_create_review)
     app.router.add_post("/api/price-update", handle_price_update)
@@ -2088,6 +2198,12 @@ def create_app() -> web.Application:
     app.router.add_post("/api/vk/test-event", handle_vk_test_event)
     app.router.add_get("/api/enrich", handle_enrich)
     app.router.add_get("/api/import-osm", handle_import_osm)
+    # Premium
+    app.router.add_get("/api/premium/plans", handle_premium_plans)
+    app.router.add_get("/api/premium/status", handle_premium_status)
+    app.router.add_get("/api/premium/check", handle_premium_feature)
+    app.router.add_post("/api/premium/activate", handle_premium_activate)
+    app.router.add_post("/api/premium/cancel", handle_premium_cancel)
     # Mini App static files
     miniapp_dir = Path(__file__).parent.parent / "miniapp"
     if miniapp_dir.exists():

@@ -203,6 +203,44 @@ async def _migrate_sqlite(db):
     except Exception as e:
         logger.warning(f"Could not add UNIQUE to subscriptions: {e}")
 
+    # Premium tables (13.07.2026)
+    await db.execute(
+        """CREATE TABLE IF NOT EXISTS premium_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tier TEXT NOT NULL CHECK (tier IN ('economy', 'standard', 'elite')),
+            started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL,
+            payment_id TEXT,
+            payment_amount INTEGER,
+            payment_method TEXT,
+            is_active INTEGER DEFAULT 1,
+            cancelled_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_user_id ON premium_users (user_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_active ON premium_users (user_id, is_active, expires_at)")
+
+    await db.execute(
+        """CREATE TABLE IF NOT EXISTS premium_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tier TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            currency TEXT DEFAULT 'RUB',
+            status TEXT NOT NULL CHECK (status IN ('pending', 'paid', 'failed', 'refunded')),
+            payment_method TEXT,
+            external_id TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            paid_at TEXT,
+            metadata TEXT
+        )"""
+    )
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_payments_user_id ON premium_payments (user_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_payments_external_id ON premium_payments (external_id)")
+
 
 async def _create_indexes_sqlite(db):
     """Создаёт индексы (можно безопасно вызывать повторно)."""
@@ -340,7 +378,49 @@ async def _create_schema_pg(pool):
                 if "already exists" not in str(e):
                     logger.warning(f"PG migration reports.{col_name}: {e}")
 
-        # 3. Автоимпорт из SQLite если PG пуста
+        # 3. Premium подписки (13.07.2026)
+        try:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS premium_users (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    tier TEXT NOT NULL CHECK (tier IN ('economy', 'standard', 'elite')),
+                    started_at TIMESTAMPTZ DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    payment_id TEXT,
+                    payment_amount INTEGER,
+                    payment_method TEXT,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    cancelled_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_user_id ON premium_users (user_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_active ON premium_users (user_id, is_active, expires_at)")
+
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS premium_payments (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    tier TEXT NOT NULL,
+                    amount INTEGER NOT NULL,
+                    currency TEXT DEFAULT 'RUB',
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'paid', 'failed', 'refunded')),
+                    payment_method TEXT,
+                    external_id TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    paid_at TIMESTAMPTZ,
+                    metadata JSONB
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_premium_payments_user_id ON premium_payments (user_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_premium_payments_external_id ON premium_payments (external_id)")
+            logger.info("PG migration premium: tables created")
+        except Exception as e:
+            logger.warning(f"PG migration premium: {e}")
+
+        # 4. Автоимпорт из SQLite если PG пуста
         try:
             cnt = await conn.fetchval("SELECT COUNT(*) FROM stations")
             if cnt == 0 and DB_PATH.exists():
@@ -3098,3 +3178,192 @@ async def search_cities(query: str = "", limit: int = 200) -> list[dict]:
             break
 
     return result
+
+
+# =====================================================
+# Premium подписки
+# =====================================================
+
+PREMIUM_PLANS = {
+    "economy": {
+        "code": "economy",
+        "name": "Эконом",
+        "price": 100,
+        "period_days": 30,
+        "features": [
+            "price_history",
+            "export_csv",
+            "offline_map",
+        ],
+        "icon": "📊",
+        "tagline": "История цен + оффлайн-карта",
+    },
+    "standard": {
+        "code": "standard",
+        "name": "Стандарт",
+        "price": 250,
+        "period_days": 30,
+        "features": [
+            "price_history", "export_csv", "offline_map",  # экономи
+            "route_fuel", "forecast_7d", "fuel_alarm",    # свои
+        ],
+        "icon": "🗺️",
+        "tagline": "Маршрут с гарантией топлива",
+    },
+    "elite": {
+        "code": "elite",
+        "name": "Элит",
+        "price": 500,
+        "period_days": 30,
+        "features": [
+            "price_history", "export_csv", "offline_map",  # экономи
+            "route_fuel", "forecast_7d", "fuel_alarm",    # стандарт
+            "anti_traffic", "sos_elite",                  # свои
+        ],
+        "icon": "👑",
+        "tagline": "Анти-пробка и SOS-режим",
+    },
+}
+
+FEATURE_TIER = {
+    "price_history": "economy",
+    "export_csv": "economy",
+    "offline_map": "economy",
+    "route_fuel": "standard",
+    "forecast_7d": "standard",
+    "fuel_alarm": "standard",
+    "anti_traffic": "elite",
+    "sos_elite": "elite",
+}
+
+TIER_RANK = {"economy": 1, "standard": 2, "elite": 3}
+
+
+def get_plan(tier: str) -> dict | None:
+    return PREMIUM_PLANS.get(tier)
+
+
+def all_plans() -> list[dict]:
+    return list(PREMIUM_PLANS.values())
+
+
+def has_feature(user_tier: str | None, feature: str) -> bool:
+    """Проверяет, доступна ли фича для тарифа пользователя."""
+    if not user_tier:
+        return False
+    required = FEATURE_TIER.get(feature)
+    if not required:
+        return False
+    return TIER_RANK.get(user_tier, 0) >= TIER_RANK.get(required, 99)
+
+
+async def get_user_premium(user_id: int) -> dict | None:
+    """Возвращает активную подписку пользователя или None."""
+    if USE_SQLITE:
+        row = await _fetch(
+            """SELECT * FROM premium_users
+               WHERE user_id = ? AND is_active = 1
+                 AND datetime(expires_at) > datetime('now')
+               ORDER BY expires_at DESC LIMIT 1""",
+            user_id, one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT * FROM premium_users
+                   WHERE user_id = $1 AND is_active = TRUE
+                     AND expires_at > NOW()
+                   ORDER BY expires_at DESC LIMIT 1""",
+                user_id,
+            )
+    if not row:
+        return None
+    return dict(row) if not USE_SQLITE else row
+
+
+async def activate_premium(user_id: int, tier: str, days: int = 30, payment_id: str = "manual", amount: int | None = None) -> dict:
+    """Активирует/продлевает премиум подписку."""
+    plan = get_plan(tier)
+    if not plan:
+        raise ValueError(f"Unknown tier: {tier}")
+    if amount is None:
+        amount = plan["price"]
+
+    current = await get_user_premium(user_id)
+    if current and current.get("tier") == tier:
+        # Продлеваем
+        if USE_SQLITE:
+            await _execute(
+                """UPDATE premium_users
+                   SET expires_at = datetime(expires_at, '+' || ? || ' days'),
+                       payment_id = ?, payment_amount = ?, updated_at = datetime('now')
+                   WHERE id = ?""",
+                days, payment_id, amount, current["id"],
+            )
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    """UPDATE premium_users
+                       SET expires_at = expires_at + ($2 || ' days')::INTERVAL,
+                           payment_id = $3, payment_amount = $4, updated_at = NOW()
+                       WHERE id = $1""",
+                    current["id"], str(days), payment_id, amount,
+                )
+    else:
+        # Создаём новую (деактивируем старые)
+        if USE_SQLITE:
+            await _execute("UPDATE premium_users SET is_active = 0 WHERE user_id = ?", user_id)
+            await _execute(
+                """INSERT INTO premium_users
+                   (user_id, tier, started_at, expires_at, payment_id, payment_amount, payment_method, is_active)
+                   VALUES (?, ?, datetime('now'), datetime('now', '+' || ? || ' days'), ?, ?, ?, 1)""",
+                user_id, tier, days, payment_id, amount, "manual",
+            )
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute("UPDATE premium_users SET is_active = FALSE WHERE user_id = $1", user_id)
+                await conn.execute(
+                    """INSERT INTO premium_users
+                       (user_id, tier, started_at, expires_at, payment_id, payment_amount, payment_method, is_active)
+                       VALUES ($1, $2, NOW(), NOW() + ($3 || ' days')::INTERVAL, $4, $5, $6, TRUE)""",
+                    user_id, tier, str(days), payment_id, amount, "manual",
+                )
+
+    # Логируем платёж
+    if USE_SQLITE:
+        await _execute(
+            """INSERT INTO premium_payments (user_id, tier, amount, status, payment_method, external_id, paid_at)
+               VALUES (?, ?, ?, 'paid', 'manual', ?, datetime('now'))""",
+            user_id, tier, amount, payment_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO premium_payments (user_id, tier, amount, status, payment_method, external_id, paid_at)
+                   VALUES ($1, $2, $3, 'paid', 'manual', $4, NOW())""",
+                user_id, tier, amount, payment_id,
+            )
+
+    return await get_user_premium(user_id) or {}
+
+
+async def cancel_premium(user_id: int) -> bool:
+    """Отменяет активную подписку."""
+    if USE_SQLITE:
+        cur = await _execute(
+            "UPDATE premium_users SET is_active = 0, cancelled_at = datetime('now') WHERE user_id = ? AND is_active = 1",
+            user_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE premium_users SET is_active = FALSE, cancelled_at = NOW() WHERE user_id = $1 AND is_active = TRUE",
+                user_id,
+            )
+    return True
+
+
+async def is_premium(user_id: int) -> bool:
+    """Проверяет, есть ли у пользователя активный премиум."""
+    sub = await get_user_premium(user_id)
+    return sub is not None
