@@ -205,9 +205,12 @@
 - **Элит (2)**: anti_traffic, sos_elite
 
 ## Known Issues
-1. **Render Free tier зависает** — иногда не рестартит после коммита. Нужен ручной рестарт через dashboard
-2. **VK group token** — `groups.search` API (error 27) не работает с group token, нужен user token для автопоиска VK-групп по городам
-3. **VK peer_id collision** — VK peer_id сохраняется в `telegram_id` колонку, коллизия с реальными TG ID. Требует миграции: добавить `vk_id` колонку
+1. **Render Free tier зависает** — иногда не рестартит после коммита. Нужен "Clear build cache & deploy" вручную
+2. **TelegramConflictError** при деплое — две инстанции бота пока старая не умрёт (30-60 сек). Само проходит
+3. **Push worker шлёт боту самому себе** — user с tg_id = bot.id (тестовая запись). Фильтруется в `push_worker.py` (commit cd215c9)
+4. **audit_middleware без return** — 500 на Render health check. Исправлено в commit cd215c9 (return await handler(request))
+5. **VK group token** — `groups.search` API (error 27) не работает с group token, нужен user token для автопоиска VK-групп по городам
+6. **VK peer_id collision** — VK peer_id сохраняется в `telegram_id` колонку, коллизия с реальными TG ID. Требует миграции: добавить `vk_id` колонку
 
 ## Исправления (12-13.07.2026)
 - **PG boolean = integer** — `s.is_active = 1` заменено на `COALESCE(s.is_active, TRUE) = TRUE` в search_cities
