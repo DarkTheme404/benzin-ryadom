@@ -47,7 +47,6 @@ from db import (
     get_pending_owner_applications,
     get_plan,
     get_premium_info,
-    get_premium_plans,
     get_station_by_id,
     get_station_current_status,
     get_station_rating,
