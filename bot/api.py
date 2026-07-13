@@ -2026,6 +2026,8 @@ def setup_app() -> web.Application:
             security_logger.error("BLOCKED: %s %s from %s", method, path, ip)
             return json_resp({"error": "forbidden"}, status=403)
 
+        return await handler(request)
+
     @web.middleware
     async def cors_middleware(request, handler):
         if request.method == "OPTIONS":

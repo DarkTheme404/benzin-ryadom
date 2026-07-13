@@ -107,13 +107,16 @@ async def _send_one_push(
     bot: Bot, tg_id: int, sub_id: int, uid: int, text: str
 ) -> tuple[bool, bool]:
     """Отправляет одно push-уведомление. Возвращает (success, blocked)."""
+    # Не шлём самому боту
+    if tg_id == (bot.id if hasattr(bot, "id") else None):
+        return False, True
     try:
         await bot.send_message(chat_id=tg_id, text=text, parse_mode="HTML")
         await db.mark_subscription_notified(sub_id)
         return True, False
     except TelegramAPIError as e:
         err_str = str(e).lower()
-        if "blocked" in err_str or "deactivated" in err_str or "chat not found" in err_str:
+        if "blocked" in err_str or "deactivated" in err_str or "chat not found" in err_str or "can't send messages to the bot" in err_str:
             await db.mark_user_blocked(tg_id)
             return False, True
         logger.warning("Push to %d failed: %s", tg_id, e)
@@ -127,6 +130,7 @@ async def _push_iteration(bot: Bot):
     """Одна итерация: собрать отчёты → подписчиков → отправить (параллельно)."""
     if not settings.bot:
         return
+    bot_id = bot.id if hasattr(bot, "id") else None
     reports = await db.get_recent_fuel_reports(minutes=SCAN_WINDOW_MINUTES)
     if not reports:
         return
@@ -183,6 +187,9 @@ async def _push_iteration(bot: Bot):
             distance_km = sub.get("distance_km", 0)
 
             if not tg_id or not sub_id:
+                continue
+            # Не шлём самому боту
+            if bot_id and tg_id == bot_id:
                 continue
             if (uid, station_id) in seen_pairs:
                 continue
