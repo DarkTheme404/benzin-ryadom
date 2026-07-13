@@ -1571,6 +1571,55 @@
         }
       }
     } catch (e) {}
+
+    // Load account info (TG ID, VK ID, link status)
+    try {
+      const tgId = getTgId();
+      if (tgId) {
+        const accRes = await api(`/api/account/info?telegram_id=${tgId}`).catch(() => null);
+        if (accRes && accRes.ok) {
+          const tgEl = document.getElementById('account-tg-id');
+          if (tgEl) tgEl.textContent = accRes.telegram_id || '—';
+
+          // Если VK привязан — показываем VK row
+          const vkRow = document.getElementById('account-vk-row');
+          const vkEl = document.getElementById('account-vk-id');
+          if (accRes.linked_via === 'vk' && accRes.linked_telegram_id) {
+            if (vkRow) vkRow.style.display = 'flex';
+            if (vkEl) vkEl.textContent = accRes.linked_telegram_id;
+          } else {
+            if (vkRow) vkRow.style.display = 'none';
+          }
+
+          // Если это TG-аккаунт, к которому привязан VK
+          const linkRow = document.getElementById('account-link-row');
+          const linkEl = document.getElementById('account-link-to');
+          if (accRes.linked_telegram_id && accRes.linked_telegram_id !== accRes.telegram_id) {
+            // Текущий TG ID — привязанный VK (нас привязали к TG)
+            // Не показываем "привязан к", потому что мы сами — привязанный
+            if (linkRow) linkRow.style.display = 'none';
+          } else if (accRes.linked_telegram_id) {
+            // У TG есть linked VK
+            if (linkRow) linkRow.style.display = 'flex';
+            if (linkEl) linkEl.textContent = `VK ID: ${accRes.linked_telegram_id}`;
+          } else {
+            if (linkRow) linkRow.style.display = 'none';
+          }
+
+          const statusEl = document.getElementById('accounts-status');
+          if (statusEl) {
+            if (accRes.linked_telegram_id) {
+              statusEl.textContent = '✅ Аккаунты привязаны — Premium работает везде';
+              statusEl.style.color = '#34d399';
+            } else {
+              statusEl.textContent = 'Привяжите VK аккаунт, чтобы Premium работал везде';
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('loadAccounts error:', e);
+    }
   }
 
   // ============= SEARCH =============
@@ -1841,6 +1890,8 @@
           if (res.ok) {
             if (status) status.textContent = `✅ Привязано к ${res.linked_to_name || 'пользователь'}`;
             showToast('Аккаунт привязан!', 'success');
+            // Обновляем секцию "Мои аккаунты"
+            await loadProfile();
           } else {
             if (status) status.textContent = '❌ ' + (res.error || 'Ошибка');
             showToast('Ошибка: ' + (res.error || 'код неверный'), 'error');

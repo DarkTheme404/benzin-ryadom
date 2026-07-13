@@ -1443,6 +1443,49 @@ img { max-width: 100%; display: block; }
   border-radius: 10px;
 }
 
+/* === Account linking display === */
+.accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.account-icon {
+  font-size: 22px;
+  width: 32px;
+  text-align: center;
+}
+
+.account-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.account-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-all;
+  font-family: monospace;
+}
+
 .tier-header {
   display: flex;
   align-items: center;

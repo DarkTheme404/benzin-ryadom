@@ -2103,6 +2103,7 @@ def setup_app() -> web.Application:
     # Account linking
     app.router.add_post("/api/account/link/create", handle_account_link_create)
     app.router.add_post("/api/account/link/use", handle_account_link_use)
+    app.router.add_get("/api/account/info", handle_account_info)
     # Mini App static
     miniapp_dir = Path(__file__).parent.parent / "miniapp"
     if miniapp_dir.exists():
@@ -2266,6 +2267,78 @@ async def handle_account_link_use(request):
     if result.get("ok"):
         return json_resp(result)
     return json_resp(result, status=400)
+
+
+async def handle_account_info(request):
+    """GET /api/account/info?telegram_id=... — информация о привязанных аккаунтах.
+
+    Возвращает:
+    {
+      "ok": true,
+      "telegram_id": 12345,
+      "linked_telegram_id": 67890,  // ID привязанного аккаунта (если есть)
+      "linked_via": "telegram" | "vk",
+      "is_premium": true,
+      "premium_tier": "economy",
+      "premium_expires_at": "2026-08-12 ..."
+    }
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id required"}, status=400)
+    try:
+        from db import get_user_id_by_any, get_user_premium, is_premium
+        uid = await get_user_id_by_any(int(tid))
+        if not uid:
+            return json_resp({
+                "ok": True,
+                "telegram_id": int(tid),
+                "linked_telegram_id": None,
+                "is_premium": False,
+            })
+        # Получаем telegram_id и linked_telegram_id
+        if USE_SQLITE:
+            row = await _fetch(
+                "SELECT telegram_id, linked_telegram_id, vk_id FROM users WHERE id = ?",
+                uid, one=True,
+            )
+            user_data = dict(row) if row else {}
+        else:
+            async with _db.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT telegram_id, linked_telegram_id, vk_id FROM users WHERE id = $1",
+                    uid,
+                )
+                user_data = dict(row) if row else {}
+
+        # Получаем premium статус
+        sub = await get_user_premium(uid)
+        is_prem = bool(sub and sub.get("tier"))
+
+        # Определяем linked_via
+        linked_via = None
+        if user_data.get("linked_telegram_id"):
+            # Если текущий tg_id != linked_telegram_id — это привязанный VK
+            if int(tid) != user_data.get("linked_telegram_id"):
+                linked_via = "vk"
+            else:
+                linked_via = "telegram"
+
+        return json_resp({
+            "ok": True,
+            "telegram_id": user_data.get("telegram_id"),
+            "linked_telegram_id": user_data.get("linked_telegram_id"),
+            "linked_via": linked_via,
+            "vk_id": user_data.get("vk_id"),
+            "is_premium": is_prem,
+            "premium_tier": sub.get("tier") if sub else None,
+            "premium_expires_at": str(sub.get("expires_at", "")) if sub else None,
+        })
+    except Exception as e:
+        logger.exception(f"account_info error: {e}")
+        return json_resp({"error": str(e)}, status=500)
 
 
 # VK Pay — настройки в bot/vkpay.py
