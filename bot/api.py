@@ -2000,6 +2000,12 @@ async def handle_import_osm(request):
 
 
 def create_app() -> web.Application:
+    """Алиас для setup_app (для совместимости с bot/main.py)."""
+    return setup_app()
+
+
+def setup_app() -> web.Application:
+    """Создаёт и настраивает aiohttp приложение."""
     @web.middleware
     async def audit_middleware(request, handler):
         ip = request.remote or "?"
@@ -2019,6 +2025,20 @@ def create_app() -> web.Application:
         if suspicious:
             security_logger.error("BLOCKED: %s %s from %s", method, path, ip)
             return json_resp({"error": "forbidden"}, status=403)
+
+    @web.middleware
+    async def cors_middleware(request, handler):
+        if request.method == "OPTIONS":
+            return web.Response(headers=_cors_headers())
+        try:
+            response = await handler(request)
+        except web.HTTPException as e:
+            response = e
+        for k, v in _cors_headers().items():
+            response.headers.setdefault(k, v)
+        return response
+
+    app = web.Application(middlewares=[audit_middleware, cors_middleware])
 
 
 # === PREMIUM ===
