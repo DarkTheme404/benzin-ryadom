@@ -1054,7 +1054,7 @@ async def cmd_premium(message: Message):
 
 
 async def buy_tier_callback(callback: CallbackQuery):
-    """Генерирует ссылку VK Pay для оплаты тарифа."""
+    """Генерирует ссылку VK Pay для оплаты тарифа (через /api/premium/create-payment)."""
     await callback.answer()
     tier = callback.data.replace("buy_", "")
     if tier not in ("economy", "standard", "elite"):
@@ -1066,29 +1066,37 @@ async def buy_tier_callback(callback: CallbackQuery):
     if not plan:
         return
 
-    # Создаём pending платёж
-    from db import create_payment_request
-    token = await create_payment_request(uid, tier, payment_method="vk_pay")
-
-    # Формируем ссылку VK Pay
-    import urllib.parse
+    # Вызываем наш API чтобы получить реальную подписанную ссылку VK Pay
+    import aiohttp
     backend = "https://benzin-ryadom.onrender.com"
-    callback_url = f"{backend}/api/premium/payment-callback?token={token}&paid=1"
-    success_url = "https://vk.com/benzyn_ryadom?pay=ok"
-    fail_url = "https://vk.com/benzyn_ryadom?pay=fail"
-    desc = f"Бензин рядом · Премиум {plan['name']} · {plan['price']}₽ / {plan['period_days']} дней"
-    params = {
-        "merchant_id": "benzin-ryadom",
-        "amount": str(plan["price"]),
-        "description": desc,
-        "currency": "RUB",
-        "extra": token,
-        "action": "pay-to-user",
-        "return_url": success_url,
-        "callback_url": callback_url,
-    }
-    vk_pay_url = "https://vk.com/pay?" + urllib.parse.urlencode(params)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{backend}/api/premium/create-payment",
+                json={"telegram_id": callback.from_user.id, "tier": tier},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                data = await r.json()
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка: {e}")
+        return
 
+    if not data.get("ok"):
+        # VK Pay не настроен на сервере
+        err = data.get("error", "unknown")
+        if not data.get("configured"):
+            await callback.message.answer(
+                f"⚠️ <b>VK Pay временно недоступен</b>\n\n"
+                f"Администратор ещё не настроил платёжный шлюз.\n"
+                f"Ошибка: <code>{err}</code>\n\n"
+                f"Пока можно оплатить через <b>@benzyn_ryadom</b> напрямую — напишите в ЛС."
+            )
+        else:
+            await callback.message.answer(f"❌ Ошибка: {err}")
+        return
+
+    token = data.get("payment_token")
+    vk_pay_url = data.get("vk_pay_url")
     plan_features = "\n".join([f"  ✅ {f}" for f in plan["features"]])
     text = (
         f"💳 <b>Оплата Премиум '{plan['name']}'</b>\n\n"

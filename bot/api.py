@@ -2194,14 +2194,13 @@ async def handle_premium_cancel(request):
     return json_resp({"ok": True, "message": "Подписка отменена"})
 
 
-# VK Pay настройки (заглушка — без реального merchant_id)
-VK_PAY_MERCHANT_ID = os.environ.get("VK_PAY_MERCHANT_ID", "benzin-ryadom-merchant")
-
+# VK Pay — настройки в bot/vkpay.py
 
 async def handle_premium_create_payment(request):
     """POST /api/premium/create-payment — создаёт платёж и возвращает ссылку VK Pay.
 
     Универсальный endpoint для TG, VK, Mini App.
+    Использует модуль bot.vkpay для генерации подписанной ссылки.
     После успешной оплаты VK Pay вызывает callback на /api/premium/payment-callback.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
@@ -2235,66 +2234,86 @@ async def handle_premium_create_payment(request):
 
     token = await create_payment_request(uid, tier, payment_method="vk_pay")
 
-    # URL бэкенда для callback
+    # Callback URL
     backend = str(request.url).split("/api/")[0]
-    callback_url = f"{backend}/api/premium/payment-callback?token={token}"
-    success_url = body.get("success_url", "https://vk.com/benzyn_ryadom")
-    fail_url = body.get("fail_url", "https://vk.com/benzyn_ryadom")
+    callback_url = f"{backend}/api/premium/payment-callback"
+    success_url = body.get("success_url", "https://vk.com/benzyn_ryadom?pay=ok")
+    fail_url = body.get("fail_url", "https://vk.com/benzyn_ryadom?pay=fail")
 
-    # VK Pay ссылка
-    import urllib.parse
+    # Используем модуль vkpay
+    from vkpay import create_payment as vkpay_create, is_configured
     desc = f"Бензин рядом · Премиум {plan['name']} · {plan['price']}₽ / {plan['period_days']} дней"
-    params = {
-        "merchant_id": VK_PAY_MERCHANT_ID,
-        "amount": str(plan["price"]),
-        "description": desc,
-        "currency": "RUB",
-        "extra": token,
-        "action": "pay-to-user",
-        "sig": _vk_pay_sig(plan["price"], desc, token),
-        "return_url": success_url,
-        "callback_url": callback_url,
-    }
-    vk_pay_url = "https://vk.com/pay?" + urllib.parse.urlencode(params)
+    result = vkpay_create(
+        amount=plan["price"],
+        description=desc,
+        payment_token=token,
+        callback_url=callback_url,
+        success_url=success_url,
+        fail_url=fail_url,
+    )
+
+    if not result.get("ok"):
+        # VK Pay не настроен — возвращаем ошибку, чтобы UI показал инструкцию
+        return json_resp({
+            "ok": False,
+            "error": result.get("error", "VK Pay not configured"),
+            "configured": is_configured(),
+            "payment_token": token,
+            "tier": tier,
+            "amount": plan["price"],
+        }, status=503)
 
     return json_resp({
         "ok": True,
         "payment_token": token,
-        "vk_pay_url": vk_pay_url,
+        "vk_pay_url": result["payment_url"],
         "amount": plan["price"],
         "tier": tier,
         "description": desc,
         "method": "vk_pay",
+        "callback_url": callback_url,
     })
 
 
-def _vk_pay_sig(amount: int, desc: str, token: str) -> str:
-    """Простая HMAC-подпись для VK Pay (заглушка)."""
-    import hmac, hashlib
-    secret = os.environ.get("VK_PAY_SECRET", "benzin-pay-secret-change-me").encode()
-    msg = f"{amount}|{desc}|{token}".encode()
-    return hmac.new(secret, msg, hashlib.sha256).hexdigest()[:32]
-
-
 async def handle_premium_payment_callback(request):
-    """GET /api/premium/payment-callback?token=... — VK Pay вызывает после оплаты.
+    """POST/GET /api/premium/payment-callback — VK Pay callback после оплаты.
 
-    Если token валиден — активируем подписку. Если нет — возвращаем fail_url.
+    VK Pay отправляет POST с form-encoded body и подписью в X-Signature header.
     """
-    token = request.query.get("token")
-    if not token:
-        return web.Response(status=400, text="missing token")
     from db import get_payment_by_token, confirm_payment
+
+    # Проверяем подпись VK Pay
+    from vkpay import parse_callback, verify_signature
+    raw_body = await request.text() if request.method == "POST" else ""
+    sig_header = request.headers.get("X-Signature", "")
+
+    if request.method == "POST" and sig_header:
+        # Реальный callback от VK Pay
+        if not verify_signature(raw_body, sig_header):
+            logger.warning("Invalid VK Pay callback signature")
+            return web.Response(status=403, text="invalid signature")
+        data = parse_callback(raw_body)
+        if not data:
+            return web.Response(status=400, text="invalid payload")
+        if data.get("status") != "paid":
+            return web.Response(status=200, text="ok")  # acknowledged
+        # extra — наш payment_token
+        token = data.get("extra")
+        if not token:
+            return web.Response(status=400, text="missing extra")
+    else:
+        # Manual callback (для тестов или редиректа после оплаты)
+        token = request.query.get("token")
+        if not token:
+            return web.Response(status=400, text="missing token")
+
     payment = await get_payment_by_token(token)
     if not payment:
         return web.Response(status=404, text="payment not found")
     if payment.get("status") == "paid":
-        # Уже оплачен — редирект на success
-        return web.Response(status=302, headers={"Location": "https://vk.com/benzyn_ryadom"})
-    # VK Pay должен передавать ?paid=1 при успехе
-    paid = request.query.get("paid", "0") == "1"
-    if not paid:
-        return web.Response(status=302, headers={"Location": "https://vk.com/benzyn_ryadom?pay=fail"})
+        # Уже активирован — редирект на success
+        return web.Response(status=302, headers={"Location": "https://vk.com/benzyn_ryadom?pay=ok"})
+
     await confirm_payment(token)
     return web.Response(status=302, headers={"Location": "https://vk.com/benzyn_ryadom?pay=ok"})
 
