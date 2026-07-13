@@ -169,6 +169,10 @@ def vk_main_menu() -> str:
         else _button(VK_BTN_OWNER),
     ])
     rows.append([
+        _callback_button(VK_BTN_PREMIUM, {"a": "premium"}, "positive") if use_callback
+        else _button(VK_BTN_PREMIUM, "positive"),
+    ])
+    rows.append([
         _callback_button(VK_BTN_PROFILE, {"a": "profile"}) if use_callback
         else _button(VK_BTN_PROFILE),
         _callback_button(VK_BTN_HELP, {"a": "help"}) if use_callback
@@ -415,11 +419,18 @@ VK_DONATE_URL = "https://vk.com/donut/benzyn_ryadom"
 
 
 def vk_premium_keyboard() -> str:
-    """Кнопки Premium — ссылка на VK Донат."""
-    return vk_keyboard([
-        [_link_button("💎 Поддержать 99₽", VK_DONATE_URL)],
-        [_callback_button("◀️ Назад", {"a": "home"}, "secondary")],
-    ])
+    """Кнопки Premium — ссылка на Mini App для оплаты."""
+    import os
+    rows = []
+    # Ссылка на Mini App
+    app_id = os.getenv("VK_MINI_APP_ID", "")
+    if app_id and app_id.isdigit():
+        rows.append([_vkapp_button("💎 Купить Premium", int(app_id))])
+    else:
+        # Fallback — на основную страницу
+        rows.append([_link_button("💎 Купить Premium", "https://vk.com/benzyn_ryadom")])
+    rows.append([_callback_button("◀️ Назад", {"a": "home"}, "secondary")])
+    return vk_keyboard(rows)
 
 
 def vk_donate_keyboard() -> str:

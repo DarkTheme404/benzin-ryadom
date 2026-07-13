@@ -424,6 +424,41 @@ async def handle_profile(peer_id: int) -> None:
     await _vk_send(peer_id, text, vk_main_menu())
 
 
+async def handle_premium(peer_id: int) -> None:
+    """Показать 3 тарифа Premium со ссылкой на Mini App для оплаты."""
+    from db import PREMIUM_PLANS, is_premium, get_premium_info
+    from datetime import datetime
+
+    uid = await get_user_id_by_telegram_id(peer_id)
+    if uid and await is_premium(uid):
+        info = await get_premium_info(uid)
+        if info:
+            days_left = (info["expires_at"] - datetime.now()).days if isinstance(info["expires_at"], datetime) else 30
+            text = (
+                f"💎 <b>Premium активен</b>\n\n"
+                f"📅 Осталось дней: <b>{max(days_left, 0)}</b>\n\n"
+                f"🔔 Push о завозе — каждый час\n"
+                f"💎 Premium-бейдж\n"
+            )
+            await _vk_send(peer_id, text, vk_main_menu())
+            return
+
+    plans = PREMIUM_PLANS
+    lines = ["💎 <b>Бензин рядом · Premium</b>\n"]
+    for t in ["economy", "standard", "elite"]:
+        p = plans[t]
+        icon = {"economy": "🥈", "standard": "🥇", "elite": "👑"}[t]
+        lines.append(f"{icon} <b>{p['name']}</b> — {p['price']}₽/мес")
+        for f in p["features"]:
+            lines.append(f"  ✅ {f}")
+        lines.append("")
+
+    lines.append("👇 Открой Мини-приложение для оплаты:")
+    text = "\n".join(lines)
+    from vk_keyboards import vk_premium_keyboard
+    await _vk_send(peer_id, text, vk_premium_keyboard())
+
+
 async def handle_donate(peer_id: int) -> None:
     text = (
         "❤️ <b>Поддержать проект</b>\n\n"
@@ -1114,6 +1149,8 @@ async def process_message_new(event: dict) -> None:
         await handle_profile(peer_id)
     elif low in ("/donate", "donate", "донат", "поддержать"):
         await handle_donate(peer_id)
+    elif low in ("/premium", "premium", "премиум"):
+        await handle_premium(peer_id)
     elif low in ("/owner", "owner", "владелец", "я владелец"):
         await handle_owner_info(peer_id)
     elif low in ("/home", "home", "в начало", "главное меню"):
@@ -1227,6 +1264,9 @@ async def process_message_event(event: dict) -> None:
 
     elif action == "profile":
         await handle_profile(peer_id)
+
+    elif action == "premium":
+        await handle_premium(peer_id)
 
     elif action == "donate":
         await handle_donate(peer_id)

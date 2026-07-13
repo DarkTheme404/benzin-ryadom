@@ -1838,7 +1838,11 @@
 
   async function buyPremiumTier(tier) {
     try {
-      const uid = state.userId || 0;
+      const uid = getTgId();
+      if (!uid) {
+        showToast('Не удалось определить ID пользователя', 'error');
+        return;
+      }
       const res = await api('/api/premium/create-payment', {
         method: 'POST',
         body: JSON.stringify({ telegram_id: uid, tier: tier }),
@@ -1850,7 +1854,8 @@
         showToast('Ошибка: ' + (res.error || 'YooMoney не настроен'), 'error');
       }
     } catch (e) {
-      showToast('Ошибка соединения', 'error');
+      console.error('buyPremiumTier error:', e);
+      showToast('Ошибка: ' + (e.message || 'соединения'), 'error');
     }
   }
 
