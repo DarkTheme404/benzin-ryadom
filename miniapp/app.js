@@ -1572,7 +1572,7 @@
       }
     } catch (e) {}
 
-    // Load account info (TG ID, VK ID, link status)
+    // Load account info (TG ID, VK ID, link status, premium)
     try {
       const tgId = getTgId();
       if (tgId) {
@@ -1595,15 +1595,39 @@
           const linkRow = document.getElementById('account-link-row');
           const linkEl = document.getElementById('account-link-to');
           if (accRes.linked_telegram_id && accRes.linked_telegram_id !== accRes.telegram_id) {
-            // Текущий TG ID — привязанный VK (нас привязали к TG)
-            // Не показываем "привязан к", потому что мы сами — привязанный
             if (linkRow) linkRow.style.display = 'none';
           } else if (accRes.linked_telegram_id) {
-            // У TG есть linked VK
             if (linkRow) linkRow.style.display = 'flex';
             if (linkEl) linkEl.textContent = `VK ID: ${accRes.linked_telegram_id}`;
           } else {
             if (linkRow) linkRow.style.display = 'none';
+          }
+
+          // Premium статус
+          const premRow = document.getElementById('account-premium-row');
+          const premEl = document.getElementById('account-premium');
+          if (accRes.is_premium && accRes.premium_tier) {
+            if (premRow) premRow.style.display = 'flex';
+            // Красиво форматируем
+            const tierNames = {
+              'economy': '📊 Эконом',
+              'standard': '🗺️ Стандарт',
+              'elite': '👑 Элит',
+            };
+            const tierName = tierNames[accRes.premium_tier] || accRes.premium_tier;
+            let expDate = '';
+            if (accRes.premium_expires_at) {
+              const d = new Date(accRes.premium_expires_at);
+              if (!isNaN(d.getTime())) {
+                expDate = ` до ${d.toLocaleDateString('ru-RU')}`;
+              }
+            }
+            if (premEl) {
+              premEl.textContent = `${tierName} ✅${expDate}`;
+              premEl.style.color = '#fbbf24';
+            }
+          } else {
+            if (premRow) premRow.style.display = 'none';
           }
 
           const statusEl = document.getElementById('accounts-status');
@@ -1611,8 +1635,10 @@
             if (accRes.linked_telegram_id) {
               statusEl.textContent = '✅ Аккаунты привязаны — Premium работает везде';
               statusEl.style.color = '#34d399';
+            } else if (accRes.is_premium) {
+              statusEl.textContent = 'Premium активен. Привяжите VK, чтобы работал там тоже.';
             } else {
-              statusEl.textContent = 'Привяжите VK аккаунт, чтобы Premium работал везде';
+              statusEl.textContent = 'Привяжите VK аккаунт и купите Premium';
             }
           }
         }
