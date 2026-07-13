@@ -1083,28 +1083,32 @@ async def buy_tier_callback(callback: CallbackQuery):
 
     if not data.get("ok"):
         err = data.get("error", "unknown")
-        if not data.get("configured"):
-            await callback.message.answer(
-                f"⚠️ <b>Оплата временно недоступна</b>\n\n"
-                f"Администратор ещё не настроил приём СБП.\n"
-                f"Ошибка: <code>{err}</code>\n\n"
-                f"Пока можно оплатить через <b>@benzyn_ryadom</b> напрямую — напишите в ЛС."
-            )
-        else:
-            await callback.message.answer(f"❌ Ошибка: {err}")
+        await callback.message.answer(
+            f"⚠️ <b>Оплата временно недоступна</b>\n\n"
+            f"Администратор ещё не настроил YooMoney.\n"
+            f"Ошибка: <code>{err}</code>\n\n"
+            f"Пока можно оплатить через <b>@benzyn_ryadom</b> напрямую — напишите в ЛС."
+        )
         return
 
     token = data.get("payment_token")
     plan_features = "\n".join([f"  ✅ {f}" for f in plan["features"]])
+    pay_url = data.get("payment_url", "")
 
-    # Показываем инструкцию СБП
-    text = data.get("instructions", "Инструкция недоступна")
-    text += f"\n\n🎁 <b>Доступные фичи:</b>\n{plan_features}"
-
+    text = (
+        f"💳 <b>Оплата Премиум '{plan['name']}' через ЮMoney</b>\n\n"
+        f"💰 Сумма: {plan['price']}₽ / {plan['period_days']} дней\n"
+        f"📋 Получатель: <code>{data.get('receiver', '41001...')}</code>\n"
+        f"💬 В комментарии: <code>{data.get('label', '')}</code>\n\n"
+        f"🎁 <b>Доступные фичи:</b>\n{plan_features}\n\n"
+        f"👇 Нажми кнопку для оплаты:"
+    )
     kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💳 Оплатить {plan['price']}₽ через ЮMoney", url=pay_url)],
         [InlineKeyboardButton(text="✅ Я оплатил — проверить", callback_data=f"check_pay_{token}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="cmd_premium")],
     ])
+
     await callback.message.answer(text, reply_markup=kb)
 
 

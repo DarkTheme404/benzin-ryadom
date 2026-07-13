@@ -1920,6 +1920,14 @@ async def _on_startup(app: web.Application) -> None:
 
     logger.info("API started, DB initialized")
 
+    # YooMoney polling worker
+    try:
+        from yoomoney_worker import yoomoney_polling_loop
+        asyncio.create_task(yoomoney_polling_loop())
+        logger.info("YooMoney polling worker started")
+    except Exception as e:
+        logger.warning(f"YooMoney polling not started: {e}")
+
 
 async def _on_cleanup(app: web.Application) -> None:
     """Закрытие БД при остановке API."""
@@ -2089,7 +2097,6 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/premium/activate", handle_premium_activate)
     app.router.add_post("/api/premium/cancel", handle_premium_cancel)
     app.router.add_post("/api/premium/create-payment", handle_premium_create_payment)
-    app.router.add_post("/api/premium/confirm-sbp", handle_premium_confirm_sbp)
     app.router.add_get("/api/premium/payment-callback", handle_premium_payment_callback)
     app.router.add_get("/api/premium/payment-status", handle_premium_payment_status)
     app.router.add_get("/api/premium/pending", handle_premium_pending_payments)
@@ -2196,44 +2203,6 @@ async def handle_premium_cancel(request):
     return json_resp({"ok": True, "message": "Подписка отменена"})
 
 
-async def handle_premium_confirm_sbp(request):
-    """POST /api/premium/confirm-sbp — админ подтверждает СБП-перевод.
-
-    Тело: {"payment_token": "...", "admin_key": "..."}
-    Ищет платёж по токену, активирует подписку.
-    """
-    try:
-        body = await request.json()
-    except Exception:
-        return json_resp({"error": "invalid json"}, status=400)
-
-    # Простая авторизация: PARSE_API_KEY или ADMIN_USERNAMES
-    admin_key = body.get("admin_key", "")
-    parse_key = os.environ.get("PARSE_API_KEY", "")
-    if not parse_key or admin_key != parse_key:
-        return json_resp({"error": "unauthorized"}, status=401)
-
-    payment_token = body.get("payment_token")
-    if not payment_token:
-        return json_resp({"error": "payment_token required"}, status=400)
-
-    from db import get_payment_by_token, confirm_payment
-    payment = await get_payment_by_token(payment_token)
-    if not payment:
-        return json_resp({"error": "payment not found"}, status=404)
-    if payment.get("status") == "paid":
-        return json_resp({"ok": True, "message": "уже оплачен"})
-
-    sub = await confirm_payment(payment_token)
-    return json_resp({
-        "ok": True,
-        "message": "Премиум активирован",
-        "tier": payment.get("tier"),
-        "user_id": payment.get("user_id"),
-        "expires_at": str(sub.get("expires_at", "")),
-    })
-
-
 async def handle_premium_pending_payments(request):
     """GET /api/premium/pending — список ожидающих оплаты (для админа)."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
@@ -2281,12 +2250,22 @@ async def handle_premium_create_payment(request):
     if not plan:
         return json_resp({"error": "invalid plan"}, status=400)
 
-    token = await create_payment_request(uid, tier, payment_method="sbp")
+    token = await create_payment_request(uid, tier, payment_method="yoomoney")
 
-    # Используем модуль СБП
-    from sbp import create_payment as sbp_create, is_configured
+    from yoomoney_pay import create_payment as yoomoney_create, is_configured as ym_configured
+
     desc = f"Бензин рядом · Премиум {plan['name']} · {plan['price']}₽ / {plan['period_days']} дней"
-    result = sbp_create(
+
+    if not ym_configured():
+        return json_resp({
+            "ok": False,
+            "error": "YooMoney not configured. Установите YOOMONEY_TOKEN и YOOMONEY_RECEIVER в env.",
+            "payment_token": token,
+            "tier": tier,
+            "amount": plan["price"],
+        }, status=503)
+
+    result = yoomoney_create(
         amount=plan["price"],
         description=desc,
         payment_token=token,
@@ -2295,8 +2274,7 @@ async def handle_premium_create_payment(request):
     if not result.get("ok"):
         return json_resp({
             "ok": False,
-            "error": result.get("error", "SBP not configured"),
-            "configured": is_configured(),
+            "error": result.get("error", "YooMoney error"),
             "payment_token": token,
             "tier": tier,
             "amount": plan["price"],
@@ -2305,15 +2283,13 @@ async def handle_premium_create_payment(request):
     return json_resp({
         "ok": True,
         "payment_token": token,
-        "method": "sbp",
+        "method": "yoomoney",
         "amount": plan["price"],
         "tier": tier,
         "description": desc,
-        "phone": result["phone"],
-        "bank": result["bank"],
-        "recipient": result["recipient"],
-        "comment": result["comment"],
-        "instructions": result["instructions"],
+        "payment_url": result["payment_url"],
+        "label": result["label"],
+        "receiver": result["receiver"],
     })
 
 

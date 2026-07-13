@@ -1410,6 +1410,92 @@ img { max-width: 100%; display: block; }
   margin-top: 2px;
 }
 
+/* ==== Premium Tiers ==== */
+.premium-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.premium-tier {
+  background: var(--bg-card);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  position: relative;
+}
+
+.premium-tier.tier-featured {
+  border-color: rgba(251, 191, 36, 0.5);
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.08) 0%, rgba(245, 158, 11, 0.04) 100%);
+}
+
+.tier-badge {
+  position: absolute;
+  top: -8px;
+  right: 12px;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #000;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.tier-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tier-icon {
+  font-size: 20px;
+}
+
+.tier-name {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+}
+
+.tier-price {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tier-features {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px 0;
+}
+
+.tier-features li {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 3px 0;
+}
+
+.btn-tier {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-economy { background: #6b7280; color: #fff; }
+.btn-standard { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #000; }
+.btn-elite { background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: #fff; }
+
+.btn-tier:active { transform: scale(0.97); }
+
 .profile-actions {
   display: flex;
   flex-direction: column;

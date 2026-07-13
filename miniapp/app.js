@@ -1556,6 +1556,21 @@
         // No dedicated stats endpoint — use reports count via admin
       }
     } catch (e) {}
+
+    // Check premium status
+    try {
+      const tgId = getTgId();
+      if (tgId) {
+        const premRes = await api(`/api/premium/status?telegram_id=${tgId}`).catch(() => null);
+        if (premRes && premRes.active) {
+          const premCard = document.getElementById('premium-card');
+          if (premCard) {
+            premCard.querySelector('.premium-subtitle').textContent = `Активен до ${premRes.expires_at || ''}`;
+            premCard.querySelector('.btn-premium').textContent = 'Управление';
+          }
+        }
+      }
+    } catch (e) {}
   }
 
   // ============= SEARCH =============
@@ -1805,8 +1820,38 @@
     });
     $('#btn-premium').addEventListener('click', () => {
       haptic('medium');
-      showToast('Premium пока в боте', 'info');
+      const tiers = document.getElementById('premium-tiers');
+      if (tiers) {
+        tiers.style.display = tiers.style.display === 'none' ? 'flex' : 'none';
+      }
     });
+
+    // Premium tier buttons
+    document.querySelectorAll('.btn-tier').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const tier = btn.dataset.tier;
+        haptic('heavy');
+        await buyPremiumTier(tier);
+      });
+    });
+  }
+
+  async function buyPremiumTier(tier) {
+    try {
+      const uid = state.userId || 0;
+      const res = await api('/api/premium/create-payment', {
+        method: 'POST',
+        body: JSON.stringify({ telegram_id: uid, tier: tier }),
+      });
+      if (res.ok && res.payment_url) {
+        window.open(res.payment_url, '_blank');
+        showToast('Перейдите по ссылке для оплаты', 'info');
+      } else {
+        showToast('Ошибка: ' + (res.error || 'YooMoney не настроен'), 'error');
+      }
+    } catch (e) {
+      showToast('Ошибка соединения', 'error');
+    }
   }
 
   // ============= INIT =============

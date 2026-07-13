@@ -204,7 +204,54 @@
           <div class="premium-title">Premium</div>
           <div class="premium-subtitle">Push без задержек + расширенная аналитика</div>
         </div>
-        <button class="btn btn-premium" id="btn-premium">Купить</button>
+        <button class="btn btn-premium" id="btn-premium">Подробнее</button>
+      </div>
+
+      <!-- Premium Tiers -->
+      <div class="premium-tiers" id="premium-tiers" style="display:none">
+        <div class="premium-tier" data-tier="economy">
+          <div class="tier-header">
+            <span class="tier-icon">🥈</span>
+            <span class="tier-name">Экономия</span>
+            <span class="tier-price">100₽/мес</span>
+          </div>
+          <ul class="tier-features">
+            <li>📊 График цен за 30 дней</li>
+            <li>📥 Экспорт данных в CSV</li>
+            <li>🗺️ Офлайн-карта АЗС</li>
+          </ul>
+          <button class="btn btn-tier btn-economy" data-tier="economy">Выбрать</button>
+        </div>
+        <div class="premium-tier tier-featured" data-tier="standard">
+          <div class="tier-badge">Популярный</div>
+          <div class="tier-header">
+            <span class="tier-icon">🥇</span>
+            <span class="tier-name">Стандарт</span>
+            <span class="tier-price">250₽/мес</span>
+          </div>
+          <ul class="tier-features">
+            <li>📊 График цен за 30 дней</li>
+            <li>📥 Экспорт данных в CSV</li>
+            <li>🗺️ Офлайн-карта АЗС</li>
+            <li>🛣️ Маршрут А→Б с ценами</li>
+            <li>🔮 Прогноз цен на 7 дней</li>
+            <li>🔔 Топливный дозор</li>
+          </ul>
+          <button class="btn btn-tier btn-standard" data-tier="standard">Выбрать</button>
+        </div>
+        <div class="premium-tier" data-tier="elite">
+          <div class="tier-header">
+            <span class="tier-icon">👑</span>
+            <span class="tier-name">Элита</span>
+            <span class="tier-price">500₽/мес</span>
+          </div>
+          <ul class="tier-features">
+            <li>Всё из Стандарта</li>
+            <li>🚗 Антипробковый маршрут</li>
+            <li>🆘 SOS-режим</li>
+          </ul>
+          <button class="btn btn-tier btn-elite" data-tier="elite">Выбрать</button>
+        </div>
       </div>
 
       <!-- Subscriptions -->

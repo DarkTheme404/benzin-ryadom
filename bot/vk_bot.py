@@ -386,15 +386,25 @@ async def cmd_premium(msg: Message):
             )
             await _send(msg, text, vk_main_menu())
             return
-    text = (
-        f"💎 Бензин рядом · Premium\n\n"
-        f"🔔 Push о завозе — каждый час\n"
-        f"💎 Premium-бейдж\n"
-        f"📊 Расширенная аналитика\n\n"
-        f"💰 Цена: 99₽\n\n"
-        f"👇 Нажми кнопку ниже для поддержки:"
-    )
-    await _send(msg, text, vk_premium_keyboard())
+
+    from db import PREMIUM_PLANS
+    plans = PREMIUM_PLANS
+
+    lines = ["💎 <b>Бензин рядом · Premium</b>\n"]
+    for t in ["economy", "standard", "elite"]:
+        p = plans[t]
+        lines.append(f"{'🥈' if t == 'economy' else '🥇' if t == 'standard' else '👑'} <b>{p['name']}</b> — {p['price']}₽/мес")
+        for f in p["features"]:
+            lines.append(f"  ✅ {f}")
+        lines.append("")
+
+    lines.append("👇 Открой Мини-приложение для оплаты:")
+    text = "\n".join(lines)
+    kb = vk_keyboard([
+        [_link_button("💎 Купить Premium", "https://vk.com/benzyn_ryadom?w=app6259441_-229452472#/premium")],
+        [_callback_button("◀️ Назад", {"a": "home"}, "secondary")],
+    ])
+    await _send(msg, text, kb)
 
 
 async def cmd_donate(msg: Message):

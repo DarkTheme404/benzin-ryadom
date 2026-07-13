@@ -184,31 +184,35 @@
 
 ## Premium подписки — 13.07.2026
 - **3 тарифа**: Эконом 100₽, Стандарт 250₽, Элит 500₽ (все /мес)
-- **Оплата**: VK Pay (реальная интеграция, не заглушка)
-- **Модуль `bot/vkpay.py`**: HMAC-SHA256 подпись, проверка callback'ов
+- **Оплата**: YooMoney P2P (Quickpay формы)
+- **Модуль `bot/yoomoney_pay.py`**: Quickpay URL, operation_history polling
+- **Polling worker `bot/yoomoney_worker.py`**: каждые 5 сек проверяет pending payments
 - **Таблицы**: `premium_users`, `premium_payments` (PG + SQLite)
 - **API**:
   - `GET /api/premium/plans` — список тарифов
   - `GET /api/premium/status?telegram_id=` — статус
   - `GET /api/premium/check?feature=&telegram_id=` — проверка фичи
-  - `POST /api/premium/create-payment` — создаёт pending платёж, возвращает VK Pay URL с подписью
-  - `POST /api/premium/payment-callback` — VK Pay callback (с X-Signature проверкой)
-  - `GET /api/premium/payment-callback?token=` — manual callback (для тестов)
-  - `GET /api/premium/payment-status?token=` — проверка статуса
+  - `POST /api/premium/create-payment` — создаёт pending платёж, возвращает YooMoney URL
+  - `GET /api/premium/pending` — список ожидающих оплаты
   - `POST /api/premium/activate` — ручная активация (тесты)
   - `POST /api/premium/cancel` — отмена
-- **TG бот**: `/premium` → 3 кнопки → вызов API → inline URL на VK Pay → кнопка «Я оплатил — проверить»
-- **VK Pay ENV**:
-  - `VK_PAY_MERCHANT_ID` — ID магазина (по умолчанию `benzin-ryadom-merchant` — заглушка)
-  - `VK_PAY_SECRET_KEY` — секретный ключ для HMAC
-  - `VK_PAY_CALLBACK_URL` — URL для уведомлений (наш `/api/premium/payment-callback`)
-  - `VK_PAY_SUCCESS_URL` / `VK_PAY_FAIL_URL` — редиректы
-- **Для включения реального VK Pay**: зарегистрировать магазин на https://vk.com/pay/business, получить merchant_id и secret_key, добавить в Render env
+- **TG бот**: `/premium` → 3 тарифа → кнопка «Купить» → YooMoney URL → «Я оплатил»
+- **VK бот**: `/premium` → ссылка на Mini App для оплаты
+- **Mini App**: Premium tab с 3 тирами → YooMoney Quickpay URL
+- **YooMoney ENV**:
+  - `YOOMONEY_TOKEN` — OAuth access token
+  - `YOOMONEY_RECEIVER` — номер кошелька (41001...)
+- **Для включения**: зарегистрировать кошелёк на yoomoney.ru, создать приложение, получить token
 
 ### Фичи по тарифам:
 - **Эконом (3)**: price_history, export_csv, offline_map
 - **Стандарт (3)**: route_fuel, forecast_7d, fuel_alarm
 - **Элит (2)**: anti_traffic, sos_elite
+
+## Посты для соцсетей — 13.07.2026
+- **Файл поста**: `context/update_post.md` — полный текст для VK/TG
+- **Визуал**: `context/update_post_visual.html` — скриншот 1200×1350px, тёмная тема
+- **Содержание**: 39 трасс, 4 288 городов, все федеральные округа с перечислением
 
 ## Known Issues
 1. **Render Free tier зависает** — иногда не рестартит после коммита. Нужен "Clear build cache & deploy" вручную
