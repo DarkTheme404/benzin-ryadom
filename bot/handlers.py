@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from aiogram import Dispatcher, F, Bot
-from aiogram.filters import BaseFilter, Command, CommandStart, StateFilter
+from aiogram.filters import BaseFilter, Command, CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
