@@ -182,9 +182,32 @@
 - **API**: `GET /api/enrich?key=benzin-parse&limit=500` (max 5000, default 500)
 - **Запуск**: Render API в фоне через `asyncio.create_task`
 
+## Premium подписки — 13.07.2026
+- **3 тарифа**: Эконом 100₽, Стандарт 250₽, Элит 500₽ (все /мес)
+- **Оплата**: VK Pay (единый метод для TG/VK/MiniApp)
+- **Таблицы**: `premium_users`, `premium_payments` (PG + SQLite)
+- **API**:
+  - `GET /api/premium/plans` — список тарифов
+  - `GET /api/premium/status?telegram_id=` — статус
+  - `GET /api/premium/check?feature=&telegram_id=` — проверка фичи
+  - `POST /api/premium/create-payment` — создаёт pending платёж, возвращает VK Pay URL
+  - `GET /api/premium/payment-callback?token=&paid=1` — VK Pay callback
+  - `GET /api/premium/payment-status?token=` — проверка статуса для Mini App
+  - `POST /api/premium/activate` — ручная активация (тесты)
+  - `POST /api/premium/cancel` — отмена
+- **TG бот**: `/premium` → 3 кнопки → inline URL на VK Pay → кнопка «Я оплатил — проверить»
+- **VK Pay secret**: `benzin-pay-secret-change-me` (env VK_PAY_SECRET)
+- **Merchant ID**: `benzin-ryadom` (env VK_PAY_MERCHANT_ID)
+
+### Фичи по тарифам:
+- **Эконом (3)**: price_history, export_csv, offline_map
+- **Стандарт (3)**: route_fuel, forecast_7d, fuel_alarm
+- **Элит (2)**: anti_traffic, sos_elite
+
 ## Known Issues
-1. **VK group token** — `groups.search` API (error 27) не работает с group token, нужен user token для автопоиска VK-групп по городам
-2. **VK peer_id collision** — VK peer_id сохраняется в `telegram_id` колонку, коллизия с реальными TG ID. Требует миграции: добавить `vk_id` колонку
+1. **Render Free tier зависает** — иногда не рестартит после коммита. Нужен ручной рестарт через dashboard
+2. **VK group token** — `groups.search` API (error 27) не работает с group token, нужен user token для автопоиска VK-групп по городам
+3. **VK peer_id collision** — VK peer_id сохраняется в `telegram_id` колонку, коллизия с реальными TG ID. Требует миграции: добавить `vk_id` колонку
 
 ## Исправления (12-13.07.2026)
 - **PG boolean = integer** — `s.is_active = 1` заменено на `COALESCE(s.is_active, TRUE) = TRUE` в search_cities
