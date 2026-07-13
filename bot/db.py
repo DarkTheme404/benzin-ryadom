@@ -3455,3 +3455,31 @@ async def confirm_payment(token: str) -> dict | None:
         amount=payment["amount"],
     )
     return sub
+
+
+async def get_pending_payments(limit: int = 50) -> list[dict]:
+    """Возвращает список ожидающих оплаты (для админ-панели)."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT pp.*, u.telegram_id, u.username, u.first_name
+               FROM premium_payments pp
+               LEFT JOIN users u ON u.id = pp.user_id
+               WHERE pp.status = 'pending'
+               ORDER BY pp.created_at DESC LIMIT ?""",
+            limit,
+        )
+    else:
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT pp.*, u.telegram_id, u.username, u.first_name
+                   FROM premium_payments pp
+                   LEFT JOIN users u ON u.id = pp.user_id
+                   WHERE pp.status = 'pending'
+                   ORDER BY pp.created_at DESC LIMIT $1""",
+                limit,
+            )
+    result = []
+    for r in (rows if not USE_SQLITE else rows):
+        d = dict(r) if not USE_SQLITE else r
+        result.append(d)
+    return result
