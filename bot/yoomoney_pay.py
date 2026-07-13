@@ -19,9 +19,15 @@ Polling:
 """
 import logging
 import os
+import ssl
+import certifi
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# SSL fix — некоторые окружения (macOS, Render) имеют проблемы с SSL handshake
+# к yoomoney.ru. Используем certifi для корректного CA bundle.
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 
 # === Конфигурация ===
@@ -54,8 +60,9 @@ def create_payment(
             "error": "YooMoney not configured. Set YOOMONEY_TOKEN and YOOMONEY_RECEIVER env vars.",
         }
 
-    # label = payment_token (для идентификации платежа)
-    label = f"benzin-{payment_token[:12]}"
+    # label = полный payment_token (для однозначной идентификации платежа)
+    # В URL label не должен превышать ~250 символов, у нас обычно 32
+    label = f"benzin-{payment_token}"
 
     # URL для Quickpay формы
     import urllib.parse
@@ -98,7 +105,7 @@ async def check_payment_status(payment_token: str, expected_amount: int) -> dict
 
     try:
         client = Client(YOOMONEY_TOKEN)
-        label = f"benzin-{payment_token[:12]}"
+        label = f"benzin-{payment_token}"
         # Получаем историю операций (последние 30 дней)
         history = client.operation_history(label=label, records=20)
 
