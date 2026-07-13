@@ -193,6 +193,11 @@ class ReviewStates(StatesGroup):
     waiting_comment = State()
 
 
+# === FSM: ввод кода привязки ===
+class LinkStates(StatesGroup):
+    waiting_code = State()
+
+
 # === Проверка подписки на канал ===
 _SUBSCRIBE_CACHE: dict[int, bool] = {}
 _SUBSCRIBE_CACHE_TTL = 300  # 5 минут
@@ -1220,8 +1225,10 @@ async def _use_link_code(message: Message, telegram_id: int, code: str) -> None:
 
 async def link_create_callback(callback: CallbackQuery):
     """Создаёт 6-значный код привязки (callback от кнопки)."""
+    logger.info(f"link_create_callback: user={callback.from_user.id}")
     await callback.answer()
     uid = await _ensure_callback_user(callback)
+    logger.info(f"link_create_callback: uid={uid}")
     if not uid:
         await callback.message.answer("Ошибка: пользователь не найден.")
         return
@@ -1234,6 +1241,8 @@ async def link_create_callback(callback: CallbackQuery):
                 json={"telegram_id": callback.from_user.id},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
+                text = await r.text()
+                logger.info(f"link_create_callback: API response status={r.status} body={text[:200]}")
                 data = await r.json()
         if data.get("ok"):
             code = data["code"]
@@ -1250,28 +1259,40 @@ async def link_create_callback(callback: CallbackQuery):
             )
         else:
             err = data.get("error", "Неизвестная ошибка")
+            logger.warning(f"link_create_callback: API error {err}")
             await callback.message.answer(f"❌ Ошибка: {err}")
     except Exception as e:
         logger.exception(f"link create callback error: {e}")
         await callback.message.answer("❌ Ошибка соединения. Попробуй позже.")
 
 
-async def link_enter_callback(callback: CallbackQuery):
+async def link_enter_callback(callback: CallbackQuery, state: FSMContext):
     """Просит юзера ввести код привязки."""
     await callback.answer()
-    from aiogram.fsm.context import FSMContext
-    from aiogram.fsm.state import State, StatesGroup
-
-    class _LinkState(StatesGroup):
-        waiting_code = State()
-
-    state: FSMContext = callback.bot.get("fsm_context", None)  # заглушка
+    await state.set_state(LinkStates.waiting_code)
     await callback.message.answer(
         "📥 <b>Введи 6-значный код</b>\n\n"
         "Отправь код одним сообщением (например: <code>123456</code>)\n\n"
         "Код создаётся в VK боте (команда <code>link</code>) или в Mini App.\n"
-        "⏱ Действует 10 минут.",
+        "⏱ Действует 10 минут.\n\n"
+        "Чтобы отменить — напиши /cancel",
     )
+
+
+async def link_code_input_handler(message: Message, state: FSMContext):
+    """Обрабатывает ввод кода после нажатия 'Ввести код'."""
+    code = (message.text or "").strip()
+    # Проверяем что это похоже на код
+    if not code or len(code) < 4:
+        await message.answer("❌ Введи корректный код (минимум 4 символа)")
+        return
+    # Если юзер прислал команду — отменяем
+    if code.startswith("/"):
+        await state.clear()
+        return
+    telegram_id = _tg_id(message)
+    await state.clear()
+    await _use_link_code(message, telegram_id, code)
 
 
 async def premium_trial_callback(callback: CallbackQuery):
@@ -3587,6 +3608,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(cmd_link, Command("link"))
     dp.callback_query.register(link_create_callback, F.data == "link:create")
     dp.callback_query.register(link_enter_callback, F.data == "link:enter")
+    dp.message.register(link_code_input_handler, StateFilter(LinkStates.waiting_code))
     dp.callback_query.register(buy_tier_callback, F.data.in_({"buy_economy", "buy_standard", "buy_elite"}))
     dp.callback_query.register(check_payment_callback, F.data.startswith("check_pay_"))
     dp.callback_query.register(buy_premium_callback, F.data == "buy_premium")
