@@ -444,16 +444,24 @@ async def handle_premium(peer_id: int) -> None:
             return
 
     plans = PREMIUM_PLANS
-    lines = ["💎 <b>Бензин рядом · Premium</b>\n"]
+    from premium_texts import format_tier_text
+
+    lines = [
+        "💎 <b>Премиум «Бензин рядом»</b>\n",
+        "🔥 <b>Зачем подключать:</b>",
+        "• Экономия до 3000₽/мес на топливе",
+        "• Знаешь заранее, где будет бензин по пути",
+        "• SOS-режим — если застрял, помогут другие премиум",
+        "• Чем больше премиум-пользователей, тем точнее данные",
+        "• Поддерживаешь развитие сервиса — мы остаёмся бесплатными для остальных\n",
+        "<b>Выбери тариф:</b>\n",
+    ]
+
     for t in ["economy", "standard", "elite"]:
-        p = plans[t]
-        icon = {"economy": "🥈", "standard": "🥇", "elite": "👑"}[t]
-        lines.append(f"{icon} <b>{p['name']}</b> — {p['price']}₽/мес")
-        for f in p["features"]:
-            lines.append(f"  ✅ {f}")
+        lines.append(format_tier_text(t, plans[t], show_features=True))
         lines.append("")
 
-    lines.append("👇 Открой Мини-приложение для оплаты:")
+    lines.append("👇 Нажми кнопку для оплаты в Мини-приложении:")
     text = "\n".join(lines)
     from vk_keyboards import vk_premium_keyboard
     await _vk_send(peer_id, text, vk_premium_keyboard())
