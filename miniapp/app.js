@@ -2269,6 +2269,28 @@
   }
 
   function bindEvents() {
+    // Глобальный обработчик data-action (включая back)
+    document.body.addEventListener('click', (e) => {
+      const target = e.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.dataset.action;
+      if (action === 'back') {
+        e.preventDefault();
+        e.stopPropagation();
+        // Определяем откуда возвращаться
+        const currentScreen = state.screen;
+        if (currentScreen === 'route-fuel') {
+          showScreen('home');
+        } else if (currentScreen === 'cities' || currentScreen === 'pick-station') {
+          showScreen('home');
+        } else if (currentScreen === 'map') {
+          showScreen('home');
+        } else {
+          showScreen('home');
+        }
+      }
+    });
+
     // Nav items
     $$('.nav-item').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
 
