@@ -236,7 +236,7 @@ async def _check_vk_subscription(user_id: int) -> bool:
 
 def _vk_subscribe_keyboard() -> str:
     return vk_keyboard([
-        [_link_button("📢 Подписаться", "https://vk.com/benzyn_ryadom")],
+        [_link_button("📢 Подписаться на сообщество", "https://vk.ru/benzyn_ryadom")],
         [_callback_button("✅ Я подписался", {"a": "check_sub"}, "positive")],
     ])
 
@@ -1365,15 +1365,15 @@ async def process_message_new(event: dict) -> None:
     first_name = user_info.get("first_name", "VK")
     await _ensure_user(peer_id, first_name)
 
-    # Проверка подписки (пропускаем /start)
-    if text.lower() not in ("/start", "start", "начать"):
-        is_sub = await _check_vk_subscription(peer_id)
-        if not is_sub:
-            await _vk_send(peer_id,
-                "📢 <b>Подпишись на сообщество, чтобы пользоваться ботом!</b>\n\n"
-                "Бот бесплатный. Взамен — подпишись на наше сообщество с новостями о топливе.",
-                _vk_subscribe_keyboard())
-            return
+    # Проверка подписки на сообщество (для ВСЕХ сообщений)
+    is_sub = await _check_vk_subscription(peer_id)
+    if not is_sub:
+        await _vk_send(peer_id,
+            "📢 <b>Чтобы пользоваться ботом — подпишись на наше сообщество</b>\n\n"
+            "Бот бесплатный. Взамен — подпишись на сообщество с новостями о ценах на топливо.\n\n"
+            "👇 Нажми кнопку ниже, подпишись, затем нажми «✅ Я подписался»",
+            _vk_subscribe_keyboard())
+        return
 
     # Geo
     if geo:
