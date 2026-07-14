@@ -351,25 +351,39 @@ async def handle_public_stats(request):
         total_users = await db._fetch("SELECT COUNT(*) as c FROM users", one=True)
         tg_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE telegram_id IS NOT NULL AND telegram_id > 0 AND vk_id IS NULL", one=True)
         vk_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE vk_id IS NOT NULL", one=True)
-        linked_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL", one=True)
-        premium_users = await db._fetch("SELECT COUNT(*) as c FROM premium_users WHERE is_active = 1 AND expires_at > NOW()", one=True)
+        try:
+            linked_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL", one=True)
+        except Exception:
+            linked_users = {"c": 0}
+        try:
+            premium_users = await db._fetch("SELECT COUNT(*) as c FROM premium_users WHERE is_active = 1", one=True)
+        except Exception:
+            premium_users = {"c": 0}
         total_stations = await db._fetch("SELECT COUNT(*) as c FROM stations", one=True)
-        total_reports = await db._fetch("SELECT COUNT(*) as c FROM reports", one=True)
+        try:
+            total_reports = await db._fetch("SELECT COUNT(*) as c FROM reports", one=True)
+        except Exception:
+            total_reports = {"c": 0}
+
+        def _c(r):
+            if r is None: return 0
+            if isinstance(r, dict): return r.get("c", 0)
+            return r["c"] if hasattr(r, 'keys') else r[0]
 
         return json_resp({
             "users": {
-                "total": total_users["c"] if total_users else 0,
-                "telegram": tg_users["c"] if tg_users else 0,
-                "vk": vk_users["c"] if vk_users else 0,
-                "linked": linked_users["c"] if linked_users else 0,
-                "premium": premium_users["c"] if premium_users else 0,
+                "total": _c(total_users),
+                "telegram": _c(tg_users),
+                "vk": _c(vk_users),
+                "linked": _c(linked_users),
+                "premium": _c(premium_users),
             },
-            "stations": total_stations["c"] if total_stations else 0,
-            "reports": total_reports["c"] if total_reports else 0,
+            "stations": _c(total_stations),
+            "reports": _c(total_reports),
         })
     except Exception as e:
         logger.exception(f"public_stats error: {e}")
-        return json_resp({"error": "internal error"}, status=500)
+        return json_resp({"error": f"internal error: {type(e).__name__}"}, status=500)
 
 
 async def get_source_stats() -> list[dict]:
