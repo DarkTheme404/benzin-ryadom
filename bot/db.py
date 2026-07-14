@@ -197,6 +197,27 @@ async def _migrate_sqlite(db):
     except Exception:
         pass
 
+    # SQLite: пересоздаём таблицу без UNIQUE constraint на telegram_id
+    # SQLite не поддерживает DROP CONSTRAINT, нужно пересоздать таблицу
+    # Но проще: создать уникальный partial index (он заменяет UNIQUE constraint)
+    try:
+        # Проверяем, есть ли уже UNIQUE constraint на telegram_id
+        cursor = await db.execute("PRAGMA index_list(users)")
+        rows = await cursor.fetchall()
+        # Если есть autoindex на telegram_id — удаляем его
+        for row in rows:
+            idx_name = row[1] if isinstance(row, tuple) else row["name"]
+            if idx_name and "telegram_id" in idx_name.lower() and "autoindex" in idx_name.lower():
+                # Это auto UNIQUE index — нужно пересоздать таблицу
+                # Для SQLite просто создаём partial unique index который заменит поведение
+                await db.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_telegram_id_positive
+                    ON users (telegram_id) WHERE telegram_id > 0
+                """)
+                break
+    except Exception:
+        pass
+
     # Создаём owner_stations если её нет
     await db.execute(
         """CREATE TABLE IF NOT EXISTS owner_stations (
@@ -429,6 +450,15 @@ async def _create_schema_pg(pool):
             """)
         except Exception as e:
             logger.warning(f"PG migration partial indexes: {e}")
+
+        # 3c. Drop old UNIQUE constraint on telegram_id (он блокирует VK юзеров с telegram_id=0)
+        try:
+            # PG: constraint name обычно users_telegram_id_key
+            await conn.execute("""
+                ALTER TABLE users DROP CONSTRAINT IF EXISTS users_telegram_id_key
+            """)
+        except Exception as e:
+            logger.warning(f"PG drop telegram_id constraint: {e}")
 
         # 2b. Reports: новые колонки для качеств/очередей/лимитов
         new_report_cols = [
@@ -1676,13 +1706,12 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") 
                 new_row = await conn.fetchrow(
                     """INSERT INTO users (vk_id, telegram_id, first_name, last_name, last_active_at)
                        VALUES ($1, 0, $2, $3, NOW())
-                       ON CONFLICT (vk_id) DO UPDATE SET first_name = $2, last_active_at = NOW()
                        RETURNING id""",
                     vk_id, first_name, last_name,
                 )
                 if new_row:
                     return new_row["id"]
-                # ON CONFLICT не сработал (vk_id=NULL для старых записей) — ищем ещё раз
+                # INSERT не вернул id — ищем запись
                 row = await conn.fetchrow(
                     "SELECT id FROM users WHERE vk_id = $1", vk_id,
                 )
@@ -1694,8 +1723,9 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") 
                     return row["id"]
                 raise Exception("upsert_user_vk: row not found after insert")
             except Exception as e:
-                # Race: telegram_id=0 уже занят другим VK юзером → ищем по vk_id
-                if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                err_str = str(e).lower()
+                # Race: telegram_id=0 уже занят другим VK юзером
+                if "unique" in err_str or "duplicate" in err_str or "constraint" in err_str:
                     row = await conn.fetchrow(
                         "SELECT id FROM users WHERE vk_id = $1", vk_id,
                     )
@@ -1706,8 +1736,7 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") 
                         )
                         return row["id"]
                     # Последний fallback: обновляем telegram_id=0 запись → ставим уникальный telegram_id
-                    # Находим запись с telegram_id=0 и обновляем её
-                    placeholder_id = -abs(vk_id) % 2147483647  # уникальный negative int из vk_id
+                    placeholder_id = -abs(vk_id) % 2147483647
                     row = await conn.fetchrow(
                         "SELECT id FROM users WHERE telegram_id = $1", placeholder_id,
                     )
