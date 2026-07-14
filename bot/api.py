@@ -42,9 +42,9 @@ security_logger = logging.getLogger("security")
 # === Rate limit (in-memory, на IP) ===
 # Строже: 30 GET / 10 POST в минуту на IP
 _rate_limit: dict[str, list[float]] = defaultdict(list)
-RATE_LIMIT_GET = 30
-RATE_LIMIT_POST = 10
-RATE_LIMIT_ADMIN = 5  # для admin endpoints
+RATE_LIMIT_GET = 120
+RATE_LIMIT_POST = 60
+RATE_LIMIT_ADMIN = 10  # для admin endpoints
 RATE_LIMIT_PER_MIN = RATE_LIMIT_GET  # legacy alias
 
 # === Request size limits ===
