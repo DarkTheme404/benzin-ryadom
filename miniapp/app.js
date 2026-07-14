@@ -2251,7 +2251,7 @@
             </div>
             <div class="route-fuel-result-actions">
               <a href="${yandexUrl}" target="_blank" class="route-fuel-result-btn">🗺 Маршрут</a>
-              <button class="route-fuel-result-btn" onclick="showStation(${s.id})">📊 Детали</button>
+              <button class="route-fuel-result-btn" data-station-id="${s.id}" data-action="show-station-detail">📊 Детали</button>
             </div>
           </div>
         `;
@@ -2269,7 +2269,7 @@
   }
 
   function bindEvents() {
-    // Глобальный обработчик data-action (включая back)
+    // Глобальный обработчик data-action (включая back, show-station-detail и т.д.)
     document.body.addEventListener('click', (e) => {
       const target = e.target.closest('[data-action]');
       if (!target) return;
@@ -2277,17 +2277,18 @@
       if (action === 'back') {
         e.preventDefault();
         e.stopPropagation();
-        // Определяем откуда возвращаться
-        const currentScreen = state.screen;
-        if (currentScreen === 'route-fuel') {
-          showScreen('home');
-        } else if (currentScreen === 'cities' || currentScreen === 'pick-station') {
-          showScreen('home');
-        } else if (currentScreen === 'map') {
-          showScreen('home');
-        } else {
-          showScreen('home');
+        showScreen('home');
+        return;
+      }
+      if (action === 'show-station-detail') {
+        e.preventDefault();
+        e.stopPropagation();
+        const sid = parseInt(target.dataset.stationId, 10);
+        if (sid) {
+          // Минимальные данные — загрузим полные
+          openStationDetail({ id: sid });
         }
+        return;
       }
     });
 
