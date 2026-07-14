@@ -2,7 +2,6 @@
 API-сервер для Mini App.
 Работает рядом с ботом в одном процессе (порт 8080).
 """
-import asyncio
 import json
 import logging
 import os
@@ -2040,8 +2039,22 @@ async def handle_vk_callback(request):
       - VK IP whitelist (апдейт VK: 185.195.232.0/22, 77.88.21.0/24, 93.184.216.0/24, 95.142.128.0/24, 87.240.128.0/20, 91.218.228.0/22)
       - VK_CALLBACK_SECRET (если задан)
     """
-    # IP whitelist ОТКЛЮЧЁН — Render proxy не передаёт реальный IP VK
-    # Секрет ниже — достаточная защита
+    # === IP whitelist (VK API серверы) ===
+    VK_IP_PREFIXES = (
+        "185.195.232.", "77.88.21.", "93.184.216.", "95.142.128.",
+        "87.240.128.", "91.218.228.", "87.240.13.", "5.45.192.",
+    )
+    remote = request.remote or ""
+    # Разрешаем localhost для health checks и Render proxy
+    is_vk_ip = any(remote.startswith(p) for p in VK_IP_PREFIXES)
+    is_local = remote in ("127.0.0.1", "::1", "10.0.0.0", "")
+    # Render proxy: реальный IP в X-Real-IP
+    x_real = request.headers.get("X-Real-IP", "")
+    is_vk_xreal = any(x_real.startswith(p) for p in VK_IP_PREFIXES)
+
+    if not (is_vk_ip or is_local or is_vk_xreal):
+        logger.warning("VK callback: rejected from non-VK IP %s (X-Real-IP: %s)", remote, x_real)
+        return json_resp({"error": "forbidden"}, status=403)
 
     try:
         event = await request.json()
@@ -2542,25 +2555,18 @@ async def handle_account_info(request):
             })
         # Получаем telegram_id и linked данные
         if USE_SQLITE:
-            row = await db._fetch(
-                "SELECT * FROM users WHERE id = ?",
+            row = await _fetch(
+                "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = ?",
                 uid, one=True,
             )
             user_data = dict(row) if row else {}
         else:
-            async with db._db.acquire() as conn:
-                try:
-                    row = await conn.fetchrow(
-                        "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = $1",
-                        uid,
-                    )
-                    user_data = dict(row) if row else {}
-                except Exception:
-                    row = await conn.fetchrow(
-                        "SELECT telegram_id, linked_telegram_id, vk_id FROM users WHERE id = $1",
-                        uid,
-                    )
-                    user_data = dict(row) if row else {}
+            async with _db.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = $1",
+                    uid,
+                )
+                user_data = dict(row) if row else {}
 
         # Получаем premium статус
         sub = await get_user_premium(uid)
