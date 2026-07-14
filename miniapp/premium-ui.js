@@ -87,7 +87,7 @@
       featuresEl.innerHTML = renderFeatures([opts.feature]);
       // Скроллим до нужного тарифа
       const tier = f.tier;
-      tiersEl.innerHTML = renderTiers(tier);
+      tiersEl.innerHTML = renderTiers(tier) + renderTrialButton();
     }
     // === Если открыли для набора (bundle) ===
     else if (opts.bundle) {
@@ -105,7 +105,7 @@
       featuresEl.innerHTML = renderFeatures(b.features);
       // Минимальный тариф из набора
       const minTier = getMinTier(b.features);
-      tiersEl.innerHTML = renderTiers(minTier);
+      tiersEl.innerHTML = renderTiers(minTier) + renderTrialButton();
     }
     // === Полный список тарифов ===
     else {
@@ -119,7 +119,48 @@
         </div>
       `;
       featuresEl.innerHTML = renderFeatures(['price_history', 'forecast_7d', 'route_fuel', 'fuel_alarm']);
-      tiersEl.innerHTML = renderTiers('standard');
+      tiersEl.innerHTML = renderTiers('standard') + renderTrialButton();
+    }
+  }
+
+  function renderTrialButton() {
+    return `
+      <div style="text-align:center; margin: 16px 0 8px;">
+        <div style="font-size:13px; color: #fbbf24; margin-bottom: 8px;">💡 Не уверен? Попробуй бесплатно</div>
+        <button class="btn btn-trial" onclick="activateTrial()" style="background: linear-gradient(135deg, #22c55e, #16a34a); color: white; padding: 12px 24px; border-radius: 10px; font-weight: 600; border: none; width: 100%; cursor: pointer;">
+          🎁 Активировать 3 дня бесплатно
+        </button>
+        <div style="font-size:11px; color: var(--text-secondary); margin-top: 6px;">Без оплаты. Доступ ко всем фичам Standard на 3 дня.</div>
+      </div>
+    `;
+  }
+
+  async function activateTrial() {
+    haptic && haptic('medium');
+    const uid = getTgId();
+    if (!uid) {
+      showToast('Не удалось определить ID', 'error');
+      return;
+    }
+    showLoading();
+    try {
+      const res = await api('/api/premium/trial', {
+        method: 'POST',
+        body: JSON.stringify({ telegram_id: uid, tier: 'standard', days: 3 }),
+      });
+      if (res.ok) {
+        showToast('🎁 Trial активирован на 3 дня!', 'success');
+        closeUpsell();
+        setTimeout(() => loadProfile(), 500);
+      } else if (res.error === 'already_used') {
+        showToast('Ты уже использовал trial раньше', 'info');
+      } else {
+        showToast('Ошибка: ' + (res.error || 'неизвестно'), 'error');
+      }
+    } catch (e) {
+      showToast('Ошибка соединения: ' + e.message, 'error');
+    } finally {
+      hideLoading();
     }
   }
 
@@ -297,5 +338,6 @@
     renderLockedCard: renderLockedCard,
     renderUnlockedCard: renderUnlockedCard,
     renderHeroCTA: renderHeroCTA,
+    activateTrial: activateTrial,
   };
 })();

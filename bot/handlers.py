@@ -1583,6 +1583,39 @@ async def premium_trial_callback(callback: CallbackQuery):
     await log_event(uid, "premium_trial_activated")
 
 
+async def cmd_trial(message: Message):
+    """Команда /trial — выдать 3 дня Premium Standard (1 раз на юзера)."""
+    await get_or_create_user(message)
+    telegram_id = _tg_id(message)
+    uid = await get_user_id_by_telegram_id(telegram_id)
+    if not uid:
+        await message.answer("Сначала нажми /start")
+        return
+    from db import activate_trial
+    result = await activate_trial(uid, tier="standard", days=3)
+    if result.get("ok"):
+        await message.answer(
+            f"🎁 <b>Trial Premium активирован!</b>\n\n"
+            f"📅 На 3 дня (до {str(result.get('expires_at', ''))[:10]})\n"
+            f"💎 Тариф: Стандарт\n\n"
+            f"<b>Что попробовать:</b>\n"
+            f"1️⃣ Маршрут A→B с ценами\n"
+            f"2️⃣ Прогноз цен на 7 дней\n"
+            f"3️⃣ Топливный будильник\n\n"
+            f"Если понравится — /premium для оплаты.\n"
+            f"Если нет — через 3 дня вернёшься на Free.",
+        )
+        await log_event(uid, "trial_activated")
+    elif result.get("error") == "already_used":
+        await message.answer(
+            "⚠️ <b>Ты уже использовал trial раньше.</b>\n\n"
+            "Trial доступен только 1 раз.\n"
+            "Оформи Premium через /premium — 250₽/мес."
+        )
+    else:
+        await message.answer(f"❌ Ошибка: {result.get('error', 'неизвестно')}")
+
+
 async def buy_premium_callback(callback: CallbackQuery):
     await _ensure_callback_user(callback)
     prices = [LabeledPrice(label=f"Premium · {settings.PREMIUM_DURATION_DAYS} дней", amount=settings.PREMIUM_PRICE_STARS)]
@@ -3875,6 +3908,7 @@ def register_all_handlers(dp: Dispatcher):
 
     # Premium
     dp.message.register(cmd_premium, Command("premium"))
+    dp.message.register(cmd_trial, Command("trial"))
     dp.message.register(cmd_link, Command("link"))
     dp.message.register(cmd_alarm, Command("alarm"))
     dp.message.register(cmd_referral, Command("referral"))

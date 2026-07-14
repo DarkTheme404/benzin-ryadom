@@ -275,6 +275,19 @@ async def _migrate_sqlite(db):
     await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_user_id ON premium_users (user_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_active ON premium_users (user_id, is_active, expires_at)")
 
+    # premium_trials — трекинг trial активаций (1 раз на юзера)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS premium_trials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            tier TEXT NOT NULL,
+            days INTEGER NOT NULL,
+            started_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )
+    """)
+    await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_premium_trials_user_id ON premium_trials (user_id)")
+
     await db.execute(
         """CREATE TABLE IF NOT EXISTS premium_payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -515,6 +528,18 @@ async def _create_schema_pg(pool):
             """)
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_user_id ON premium_users (user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_active ON premium_users (user_id, is_active, expires_at)")
+
+            # premium_trials — трекинг trial активаций (1 раз на юзера)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS premium_trials (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                    tier TEXT NOT NULL,
+                    days INTEGER NOT NULL,
+                    started_at TIMESTAMPTZ DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL
+                )
+            """)
 
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS premium_payments (
@@ -3555,6 +3580,78 @@ async def activate_premium(user_id: int, tier: str, days: int = 30, payment_id: 
             )
 
     return await get_user_premium(user_id) or {}
+
+
+async def has_used_trial(user_id: int) -> bool:
+    """Проверяет, использовал ли юзер trial раньше."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT id FROM premium_trials WHERE user_id = ?",
+            (user_id,), one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id FROM premium_trials WHERE user_id = $1",
+                user_id,
+            )
+    return row is not None
+
+
+async def activate_trial(user_id: int, tier: str = "standard", days: int = 3) -> dict:
+    """Активирует trial Premium (1 раз на юзера).
+
+    Returns:
+        {"ok": True, "expires_at": "2026-07-17", "tier": "standard"}
+        или {"ok": False, "error": "already_used" | "unknown_tier"}
+    """
+    if get_plan(tier) is None:
+        return {"ok": False, "error": "unknown_tier"}
+
+    # Проверяем, использовал ли trial раньше
+    if await has_used_trial(user_id):
+        return {"ok": False, "error": "already_used"}
+
+    # Сначала записываем trial (UNIQUE constraint защитит от race)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(days=days)
+
+    try:
+        if USE_SQLITE:
+            await _execute(
+                """INSERT INTO premium_trials (user_id, tier, days, started_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                user_id, tier, days, now.isoformat(), expires.isoformat(),
+            )
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    """INSERT INTO premium_trials (user_id, tier, days, started_at, expires_at)
+                       VALUES ($1, $2, $3, $4, $5)""",
+                    user_id, tier, days, now, expires,
+                )
+    except Exception as e:
+        # Race: другой запрос уже создал trial
+        err_str = str(e).lower()
+        if "unique" in err_str or "duplicate" in err_str:
+            return {"ok": False, "error": "already_used"}
+        raise
+
+    # Активируем premium (тот же механизм что и обычная активация)
+    sub = await activate_premium(
+        user_id=user_id,
+        tier=tier,
+        days=days,
+        payment_id=f"trial_{tier}_{days}d",
+        amount=0,
+    )
+    return {
+        "ok": True,
+        "tier": tier,
+        "days": days,
+        "expires_at": sub.get("expires_at", ""),
+    }
 
 
 async def cancel_premium(user_id: int) -> bool:

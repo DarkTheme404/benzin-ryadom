@@ -2378,6 +2378,7 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/premium/check", handle_premium_feature)
     app.router.add_post("/api/premium/activate", handle_premium_activate)
     app.router.add_post("/api/premium/cancel", handle_premium_cancel)
+    app.router.add_post("/api/premium/trial", handle_premium_trial)
     app.router.add_post("/api/premium/create-payment", handle_premium_create_payment)
     app.router.add_get("/api/premium/payment-callback", handle_premium_payment_callback)
     app.router.add_get("/api/premium/payment-status", handle_premium_payment_status)
@@ -2575,6 +2576,44 @@ async def handle_account_link_use(request):
     result = await link_accounts(int(tid), str(code).strip())
     if result.get("ok"):
         return json_resp(result)
+    return json_resp(result, status=400)
+
+
+async def handle_premium_trial(request):
+    """POST /api/premium/trial — активирует trial Premium (1 раз на юзера).
+
+    Body: {telegram_id или vk_user_id, tier="standard", days=3}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    tid = body.get("telegram_id") or body.get("vk_user_id")
+    tier = body.get("tier", "standard")
+    days = body.get("days", 3)
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+    if tier not in ("economy", "standard", "elite"):
+        return json_resp({"error": "invalid tier"}, status=400)
+    if not isinstance(days, int) or days < 1 or days > 30:
+        return json_resp({"error": "invalid days (1-30)"}, status=400)
+
+    from db import get_user_id_by_any, activate_trial
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+
+    result = await activate_trial(uid, tier=tier, days=days)
+    if result.get("ok"):
+        return json_resp({
+            "ok": True,
+            "tier": result["tier"],
+            "days": result["days"],
+            "expires_at": str(result.get("expires_at", "")),
+            "message": f"Trial Premium активирован на {days} дня!",
+        })
     return json_resp(result, status=400)
 
 
