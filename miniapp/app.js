@@ -700,6 +700,8 @@
 
       // Загружаем price history (Premium)
       await loadStationPriceHistory(s.id);
+      // Загружаем forecast (Premium Стандарт)
+      await loadStationForecast(s.id);
     } catch (e) {
       console.error('openStationDetail error:', e);
       showToast('Не удалось загрузить: ' + e.message, 'error');
@@ -780,6 +782,79 @@
     `;
 
     container.insertAdjacentHTML('afterbegin', historyHtml);
+  }
+
+  async function loadStationForecast(stationId) {
+    // Загружает прогноз цен на 7 дней (Premium Стандарт).
+    const tgId = getTgId();
+    if (!tgId) return;
+    const url = `/api/stations/${stationId}/forecast?days=7&fuel=95&telegram_id=${tgId}`;
+    const data = await api(url).catch(() => null);
+    if (!data || !data.ok) return;
+
+    const container = document.getElementById('station-premium-features');
+    if (!container) return;
+
+    const forecast = data.forecast || [];
+    if (forecast.length === 0) return;
+
+    // Рисуем SVG-график прогноза
+    const w = 320, h = 80, pad = 6;
+    const prices = forecast.map(f => f.price);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const range = max - min || 1;
+    const stepX = (w - pad * 2) / Math.max(forecast.length - 1, 1);
+    const points = forecast.map((f, i) => {
+      const x = pad + i * stepX;
+      const y = pad + (f.price - min) / range * (h - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+
+    // Найдём сегодняшнюю точку
+    const todayIdx = 0;
+
+    const trend = data.trend || {};
+    const best = data.best_day || {};
+    const worst = data.worst_day || {};
+
+    const forecastHtml = `
+      <div class="feature-card" onclick="showUpsell({feature:'forecast_7d'})" style="cursor:default;">
+        <div class="feature-card-header">
+          <div class="feature-card-icon">🔮</div>
+          <div class="feature-card-title">Прогноз цен на 7 дней</div>
+          <div class="feature-card-save" style="color:#34d399;background:rgba(52,211,153,0.15);">✅ Активно</div>
+        </div>
+        <svg viewBox="0 0 ${w} ${h}" style="width:100%;height:80px;background:rgba(255,255,255,0.02);border-radius:8px;margin-top:8px;">
+          <line x1="${pad + todayIdx * stepX}" y1="${pad}" x2="${pad + todayIdx * stepX}" y2="${h - pad}" stroke="#fbbf24" stroke-width="1" stroke-dasharray="3,2" opacity="0.5"/>
+          <polyline points="${points}" fill="none" stroke="#34d399" stroke-width="2" stroke-dasharray="4,3"/>
+          <circle cx="${pad + todayIdx * stepX}" cy="${pad + (forecast[0].price - min) / range * (h - pad * 2)}" r="4" fill="#fbbf24"/>
+        </svg>
+        <div class="feature-card-tagline" style="margin-top:6px;">
+          ${trend.label} <span style="color:${trend.delta > 0 ? '#f87171' : trend.delta < 0 ? '#34d399' : 'var(--text-secondary)'};">(${trend.delta > 0 ? '+' : ''}${trend.delta}₽, ${trend.delta_pct > 0 ? '+' : ''}${trend.delta_pct}%)</span>
+        </div>
+        <div class="feature-card-urgency" style="color:#34d399;">
+          💡 ${trend.advice}
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px;font-size:11px;">
+          <div style="flex:1;background:rgba(52,211,153,0.1);padding:6px;border-radius:6px;text-align:center;">
+            <div style="color:#34d399;font-weight:700;">📉 ${best.label || best.date}</div>
+            <div>${best.price}₽</div>
+            <div style="opacity:0.7;">экономия ${best.savings}₽</div>
+          </div>
+          <div style="flex:1;background:rgba(248,113,113,0.1);padding:6px;border-radius:6px;text-align:center;">
+            <div style="color:#f87171;font-weight:700;">📈 ${worst.label || worst.date}</div>
+            <div>${worst.price}₽</div>
+            <div style="opacity:0.7;">переплата ${worst.loss}₽</div>
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--text-secondary);margin-top:6px;text-align:center;">
+          ${data.accuracy_note || ''}
+        </div>
+      </div>
+    `;
+
+    container.insertAdjacentHTML('beforeend', forecastHtml);
   }
 
   function renderStationDetail(detail, pricesData) {
