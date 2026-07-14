@@ -215,8 +215,8 @@ async def _check_subscription(bot: Bot, user_id: int) -> bool:
         is_sub = member.status in ("member", "administrator", "creator")
         logger.info("_check_subscription: user=%d channel=%s status=%s is_sub=%s", user_id, chat_id, member.status, is_sub)
     except Exception as e:
-        logger.warning("_check_subscription FAILED: user=%d channel=%s error=%s", user_id, channel, e)
-        is_sub = False  # блокируем пока бот не станет админом канала
+        logger.warning("_check_subscription FAILED (allowing user): user=%d channel=%s error=%s", user_id, channel, e)
+        is_sub = True  # при ошибке API НЕ блокируем юзера — пусть пользуется
 
     _SUBSCRIBE_CACHE[user_id] = (is_sub, now)
     return is_sub
@@ -1037,10 +1037,18 @@ async def cmd_find_raw(message: Message):
 # === /premium ===
 async def cmd_premium(message: Message):
     """Показать 3 тарифа премиума — красивый формат."""
-    await get_or_create_user(message)
+    try:
+        await get_or_create_user(message)
+    except Exception as e:
+        logger.exception(f"cmd_premium: get_or_create_user failed: {e}")
     telegram_id = _tg_id(message)
-    uid = await get_user_id_by_telegram_id(telegram_id)
-    sub = await get_user_premium(uid) if uid else None
+    try:
+        uid = await get_user_id_by_telegram_id(telegram_id)
+        sub = await get_user_premium(uid) if uid else None
+    except Exception as e:
+        logger.exception(f"cmd_premium: premium check failed: {e}")
+        uid = None
+        sub = None
 
     if sub:
         from datetime import datetime as _dt
