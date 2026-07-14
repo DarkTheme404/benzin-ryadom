@@ -19,7 +19,6 @@ Polling:
 """
 import logging
 import os
-import ssl
 import certifi
 from typing import Optional
 

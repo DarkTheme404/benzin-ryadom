@@ -240,3 +240,271 @@
 - **9** писали отчёты (конверсия ~6.6%)
 - **24** отчёта от пользователей всего
 - Разделение TG/VK невозможно — нет колонки `vk_id` (VK peer_id в `telegram_id`)
+
+---
+
+## Premium UX/UI — 14.07.2026 (полная реализация)
+
+### Архитектура Premium
+
+**Слой 1: Backend API (bot/api.py)**
+- `GET /api/premium/plans` — список тарифов
+- `GET /api/premium/status` — статус подписки (с `get_user_id_by_any` — поддержка linked_id)
+- `GET /api/premium/check` — проверка доступа к фиче
+- `POST /api/premium/activate` — ручная активация (для тестов/админа)
+- `POST /api/premium/cancel` — отмена подписки
+- `POST /api/premium/create-payment` — создание платежа YooMoney (с SBP убран)
+- `GET /api/premium/pending` — список ожидающих оплат
+- `GET /api/account/info` — инфо о linked аккаунтах
+- `POST /api/account/link/create` — генерация 6-значного кода
+- `POST /api/account/link/use` — использование кода
+- `GET /api/stations/{id}/price-history` — **Free: 3 дня/10 точек, Premium: 30+ дней/50 точек + прогноз**
+- `GET /api/route/fuel` — **Free: 2 АЗС, Premium: до 30 АЗС + гарантия наличия + рекомендация**
+- `GET /api/export/csv` — **Premium only** (HTTP 402 без Premium), CSV с разделителем `;`
+
+**Слой 2: Mini App (JS-модули)**
+- `miniapp/premium-catalog.js` — словарь из **8 фич** с icon, name, tagline, savings, urgency
+- `miniapp/premium-ui.js` — `PremiumUI` namespace: `loadStatus`, `isFeatureLocked`, `requireFeature`, `showUpsell`, `closeUpsell`, `showToast`, `renderBadge`, `renderBlock`, `renderLockedCard`, `renderUnlockedCard`, `renderHeroCTA`
+- `miniapp/app.js` — интеграция: `init()` загружает `PremiumUI`, `loadStationPriceHistory` рисует SVG-график, `loadProfile` показывает tier badge
+
+**Слой 3: UI-компоненты (miniapp/style.css)**
+- `.premium-badge` — золотой бейдж с градиентом
+- `.feature-locked` — карточка с замочком 🔒
+- `.upsell-overlay/.modal` — модальное окно с hero, фичами, тарифами
+- `.upsell-feature` — карточка фичи с иконкой, savings, urgency
+- `.upsell-tier` — карточка тарифа (featured с золотой рамкой)
+- `.upsell-hero` — hero с градиентом `fbbf24 → f59e0b → d97706`
+- `.upsell-tier-badge` — "Популярный" бейдж на рекомендуемом тарифе
+- `.premium-toast` — всплывающее уведомление о заблокированной фиче
+- `.hero-premium-cta` — CTA на главном экране для Free юзеров
+- `.feature-card-locked` / `.feature-card` — locked/unlocked варианты
+- `.route-fuel-form` / `.route-fuel-result` / `.route-fuel-result-guaranteed` — A→B UI
+- `.map-picker-overlay/.modal` — модалка с Leaflet картой
+
+### Каталог фич (8 штук)
+
+| Фича | Тариф | Иконка | Savings | Питч |
+|------|-------|--------|---------|------|
+| `price_history` | Эконом | 📈 | До 500₽/мес | Видь когда выгоднее заправляться |
+| `export_csv` | Эконом | 📊 | 5 часов/мес | Экспорт в Excel |
+| `offline_map` | Эконом | 🗺️ | Не потеряешься | Карта без интернета |
+| `route_fuel` | Стандарт | 🛣️ | До 1 200₽ на поездку | Маршрут A→B с гарантией топлива |
+| `forecast_7d` | Стандарт | 🔮 | До 800₽/мес | Прогноз цен на 7 дней |
+| `fuel_alarm` | Стандарт | 🔔 | До 30 мин/день | Топливный будильник (push) |
+| `anti_traffic` | Элит | 🚗 | До 3 000₽/мес | Анти-пробка |
+| `sos_elite` | Элит | 🆘 | Жизнь | SOS-режим |
+
+### Тарифы (PREMIUM_TIERS_DISPLAY)
+
+| Тариф | Цена | Headline | Pitch | Цвет |
+|-------|------|----------|-------|------|
+| Эконом | 100₽/мес | Для ежедневных поездок | Экономия до 1 000₽ | #6b7280 |
+| Стандарт | 250₽/мес | Для дальних поездок | Экономия до 3 000₽ | #fbbf24 |
+| Элит | 500₽/мес | Максимум возможностей | Безопасность + экономия | #8b5cf6 |
+
+### Принципы UX (как заставить купить)
+
+1. **Hero CTA** на главном экране Free-юзера: "💎 Premium: экономь до 3 000₽/мес"
+2. **Lock-иконка** 🔒 на каждой заблокированной фиче
+3. **Gold-градиент** для всех Premium-элементов (#fbbf24 → #f59e0b)
+4. **Social proof**: "2 400+ водителей", "1 800₽ экономия в месяц"
+5. **Urgency-тексты**: "Без Premium рискуешь не найти АЗС", "73% Premium юзеров заправляются дешевле"
+6. **Savings callouts**: "💰 до 1 200₽ на поездку", "💎 5 часов/мес"
+7. **Гарантия** внизу: "🔒 Безопасная оплата через ЮMoney · Можно отменить в любой момент"
+8. **Рекомендация** для Premium: "⭐ Лучший выбор" с золотой плашкой
+9. **Inline-кнопки** в карточке АЗС с призывом "Купить Premium — от 100₽/мес"
+
+### Оплата: только YooMoney (СБП удалён 13.07.2026)
+
+- `bot/yoomoney_pay.py` — Quickpay формы, operation_history
+- `bot/yoomoney_worker.py` — polling каждые 5 сек, автоактивация по `label=benzin-{token}`
+- `requirements.txt`: `yoomoney>=2.0.0`
+- Env: `YOOMONEY_TOKEN`, `YOOMONEY_RECEIVER`
+- Тестовый платёж 100₽ прошёл 13.07.2026, polling активировал premium автоматически
+
+### Привязка аккаунтов TG ↔ VK ↔ MiniApp (14.07.2026)
+
+**db.py:**
+- Миграция: `users.linked_telegram_id`, `users.vk_id`, `users.link_code`, `users.link_code_expires_at`
+- `create_link_code(telegram_id)` — генерирует 6-значный код (10 мин TTL)
+- `get_link_code_info(code)` — получает инфо о коде
+- `link_accounts(telegram_id, code)` — привязывает аккаунты
+- `get_user_id_by_any(telegram_id)` — ищет по `telegram_id` ИЛИ `linked_telegram_id` (используется всеми premium endpoints)
+
+**API:**
+- `POST /api/account/link/create` — принимает `telegram_id` ИЛИ `vk_user_id`
+- `POST /api/account/link/use` — принимает `telegram_id` ИЛИ `vk_user_id`
+- `GET /api/account/info` — возвращает `telegram_id`, `linked_telegram_id`, `linked_via` (vk/telegram), `vk_id`, `is_premium`, `premium_tier`
+
+**TG бот:**
+- `/link` — показывает меню с inline-кнопками (Создать код / Ввести код)
+- `/link <code>` — применить код (от VK/MiniApp)
+- FSM `LinkStates.waiting_code` для ввода кода
+- Кнопка "🔗 Привязать" в нижнем меню
+
+**VK бот:**
+- Текст: `link` — создать 6-значный код
+- Текст: `link_use <code>` — применить код
+- Текст: `link_create` — сразу создать код
+- Inline callback: `action="link"` → меню, `action="link_create"`, `action="link_use_prompt"` (FSM)
+- Кнопка "🔗 Привязать" в главном меню
+
+**Mini App:**
+- В Профиле секция "📱 Мои аккаунты"
+- Поля для ввода кода + "✅ Применить код"
+- "📱 Telegram ID", "💬 VK ID", "🔗 Привязан к", "💎 Premium" (статус с датой)
+- Статус: "✅ Аккаунты привязаны — Premium работает везде"
+
+### Map Picker — выбор точек A/B на карте (14.07.2026)
+
+**Новый модуль в Mini App:**
+- `openMapPicker(target, callback)` — открывает модалку с Leaflet картой
+- `initPickerMap()` — создаёт карту с draggable маркером
+- `setPickerMarker(lat, lon)` — устанавливает/перемещает маркер
+- `doPickerSearch()` — геокодинг через Nominatim OpenStreetMap (для всех городов мира)
+- `locateUserInPicker()` — определение текущего местоположения через `navigator.geolocation`
+- `geocode()` — **двойной fallback**: 1) `/api/search` (по АЗС в базе), 2) **Nominatim OSM** (все города)
+
+**UI:**
+- Кнопка "🗺" рядом с каждым полем A/B
+- Map Picker Modal: поиск + Leaflet карта + кнопка "Подтвердить"
+- Кнопка "📍 Моё местоположение" в правом нижнем углу карты
+- Синий маркер "Я" при определении геолокации
+- Маркер можно перетаскивать — координаты обновляются
+
+**Маршрут A→B (route_fuel) flow:**
+1. Mini App → "🅰️ A→B" в нижней навигации
+2. Введи "Москва" в "Откуда" ИЛИ нажми 🗺 → карта → кликни
+3. То же для "Куда"
+4. Выбери топливо (АИ-95 по умолчанию)
+5. "🔍 Найти АЗС по маршруту"
+6. Free: 2 АЗС + upsell CTA
+7. Premium: 30 АЗС + guaranteed (зелёные) + рекомендация ⭐ + экономия
+
+### Архитектурные решения
+
+- **Единый источник истины** для premium: `bot/db.py` (`PREMIUM_PLANS`, `FEATURE_TIER`, `has_feature()`)
+- **Общий модуль** для текстов: `bot/premium_texts.py` (FEATURE_NAMES — human-readable)
+- **Один JS namespace** для premium UI: `window.PremiumUI` (с методами)
+- **API проверяет premium на сервере** — клиент не может обойти проверку
+- **Все premium-функции** в Mini App работают через проверку `PremiumUI.getStatus()`
+- **Polling-активация** подписки через `yoomoney_worker.py` каждые 5 сек
+
+---
+
+## Известные проблемы и TODO
+
+### TODO (по приоритету):
+
+1. **TG бот: красивый /premium** — заменить текущий текст на rich UI с фичами
+2. **VK бот: красивый /premium** — то же самое
+3. **Welcome-экран** с premium teaser (открывается при первом запуске)
+4. **Счётчик экономии/streak** в профиле (для мотивации продолжать)
+5. **forecast_7d виджет** (прогноз цен на 7 дней) — backend есть (price_history с forecast), нужно UI
+6. **fuel_alarm** (push при появлении топлива) — расширить push_worker для premium-only событий
+7. **SOS-режим (elite)** — кнопка 🆘, broadcast premium-юзерам в радиусе 50 км
+8. **anti_traffic (elite)** — маршрут с учётом пробок (нужен внешний API)
+9. **Оффлайн-карта** — кеширование tiles в ServiceWorker
+
+### Известные баги:
+
+- Render Free tier иногда не подхватывает изменения — нужен "Clear build cache & deploy"
+- VK peer_id может пересекаться с TG ID в `telegram_id` колонке (legacy)
+- `BTN_*` константы разбросаны между `keyboards.py` и `vk_keyboards.py`
+
+---
+
+## Структура Mini App
+
+```
+miniapp/
+├── index.html              # 683 строки — все экраны
+│   ├── screen-home         # Главный экран + hero-premium-cta
+│   ├── screen-station      # Карточка АЗС + premium features
+│   ├── screen-profile      # Профиль + premium tiers + accounts
+│   ├── screen-cities       # Выбор города
+│   ├── screen-pick-station # Выбор АЗС
+│   ├── screen-route-fuel   # 🆕 Маршрут A→B
+│   └── screen-map          # Карта всех АЗС
+├── style.css               # 3057 строк — premium UI
+├── app.js                  # 2515 строк — основная логика
+├── premium-catalog.js      # 8 фич каталог
+└── premium-ui.js           # PremiumUI namespace
+```
+
+### Структура Backend
+
+```
+bot/
+├── main.py                 # Точка входа
+├── handlers.py             # TG бот (~3600 строк)
+├── vk_callback.py          # VK бот callback (~1600 строк)
+├── vk_bot.py               # VK бот longpoll
+├── vk_keyboards.py         # VK клавиатуры
+├── keyboards.py            # TG клавиатуры
+├── db.py                   # БД слой (~3700 строк, premium helpers)
+├── api.py                  # HTTP API (~2700 строк, premium endpoints)
+├── utils.py                # Форматирование
+├── messages.py             # Тексты сообщений
+├── config.py               # Настройки
+├── push_worker.py          # Push-уведомления
+├── channel_poster.py       # Постинг в канал
+├── yoomoney_pay.py         # YooMoney оплата
+├── yoomoney_worker.py      # Polling worker
+├── premium_texts.py        # Тексты фич (FEATURE_NAMES)
+└── .env                    # Секреты (не в git)
+```
+
+### Структура context/
+
+```
+context/
+├── PROJECT_CONTEXT.md     # Этот файл (главный)
+├── update_post.md          # Текст поста для соцсетей
+├── update_post.png         # Визуал поста (скриншот)
+├── update_post_visual.html # HTML визуала
+├── plan.md                 # План доработок (TODO)
+└── project_state.json      # Машиночитаемое состояние (для ИИ)
+```
+
+### Ключевые ENV переменные
+
+| Переменная | Описание | Обязательно? |
+|------------|----------|--------------|
+| `BOT_TOKEN` | Telegram bot token | ✅ |
+| `VK_TOKEN` | VK group token | ✅ |
+| `PARSE_API_KEY` | Ключ для /api/parse | ✅ |
+| `DATABASE_URL` | PostgreSQL connection (Supabase) | ✅ для prod |
+| `YOOMONEY_TOKEN` | OAuth access token | ✅ для premium |
+| `YOOMONEY_RECEIVER` | Номер кошелька (41001...) | ✅ для premium |
+| `SUBSCRIBE_CHANNEL_TG` | @benzyn_ryadom | опционально |
+| `SUBSCRIBE_COMMUNITY_VK` | 239975253 | опционально |
+| `ADMIN_USERNAMES` | darkt30 | опционально |
+| `USE_SQLITE` | true (dev) / false (prod) | ✅ |
+
+---
+
+## Метрики (на 14.07.2026)
+
+- **Premium юзеров**: 1 (economy) — нужен marketing
+- **Активных TG юзеров**: 137 (с 11.07.2026)
+- **Активных VK юзеров**: 5-10 (вручную считал)
+- **API endpoints**: 50+
+- **Парсеры**: 12 источников
+- **Mini App фич реализовано**: 5 из 8 (price_history ✅, export_csv ✅, route_fuel ✅, map_picker ✅, offline_map ❌, forecast_7d partial, fuel_alarm ❌, anti_traffic ❌, sos_elite ❌)
+- **Premium tier conversions**: 0.7% (1 из 137) — нужно увеличивать
+
+---
+
+## Связанные документы
+
+- `context/update_post.md` — пост для соцсетей (по обновлениям)
+- `context/update_post_visual.html` — визуал поста
+- `context/plan.md` — TODO план
+- `context/project_state.json` — машиночитаемое состояние
+- `bot/premium_texts.py` — тексты фич
+- `miniapp/premium-catalog.js` — каталог фич
+- `miniapp/premium-ui.js` — UI namespace
+- `bot/yoomoney_pay.py` — модуль оплаты
+- `db/migrations/2026_07_13_premium.sql` — миграции
+

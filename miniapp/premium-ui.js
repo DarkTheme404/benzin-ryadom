@@ -34,10 +34,17 @@
 
   function isFeatureLocked(featureId) {
     const status = getPremiumStatus();
-    if (status.active) return false;  // Premium — все открыто
     const feature = window.PREMIUM_CATALOG[featureId];
     if (!feature) return false;
-    return true;  // Free — заблокировано
+    if (!status.active) return true;  // Free — все заблокировано
+    // Проверяем уровень тарифа
+    const tierOrder = { economy: 1, standard: 2, elite: 3 };
+    const requiredTier = feature.tier || 'economy';
+    const userTier = status.tier || 'economy';
+    if ((tierOrder[userTier] || 0) < (tierOrder[requiredTier] || 0)) {
+      return true;  // Тариф недостаточный
+    }
+    return false;
   }
 
   function requireFeature(featureId, callback) {

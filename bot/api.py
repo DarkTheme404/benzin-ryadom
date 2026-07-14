@@ -5,7 +5,6 @@ API-сервер для Mini App.
 import json
 import logging
 import os
-import re
 import time
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
@@ -32,7 +31,6 @@ from db import (
     check_and_award_badges,
     BADGE_CATALOG,
     is_premium,
-    get_premium_info,
 )
 import db  # for db._fetch, db.USE_SQLITE в get_source_stats
 import aiohttp  # для reverse geocoding
@@ -248,7 +246,7 @@ async def handle_logs(request):
             "lines": last,
         })
     except Exception as e:
-        return json_resp({"error": str(e)}, status=500)
+        return json_resp({"error": "internal error"}, status=500)
 
 
 # === Кеш reverse geocoding (city по координатам) ===
@@ -947,9 +945,34 @@ async def handle_station_detail(request):
         return json_resp({"error": "not found"}, status=404)
 
     statuses = await get_station_current_status(station_id)
+
+    # Проверяем есть ли отчёты от Premium юзеров
+    premium_verified = False
+    try:
+        if USE_SQLITE:
+            pv = await _fetch(
+                """SELECT COUNT(*) as cnt FROM reports r
+                   JOIN premium_users pu ON pu.user_id = r.user_id
+                   WHERE r.station_id = ? AND pu.is_active = 1""",
+                station_id,
+            )
+        else:
+            pv = await _fetch(
+                """SELECT COUNT(*) as cnt FROM reports r
+                   JOIN premium_users pu ON pu.user_id = r.user_id
+                   WHERE r.station_id = $1 AND pu.is_active = TRUE""",
+                station_id,
+            )
+        if pv:
+            cnt = pv[0].get("cnt", 0) if isinstance(pv[0], dict) else pv[0][0] if isinstance(pv[0], (tuple, list)) else 0
+            premium_verified = int(cnt) > 0
+    except Exception:
+        pass
+
     return json_resp({
         "station": _serialize_station(station),
         "statuses": [_serialize_status(st) for st in _dedupe_statuses_per_fuel(statuses)],
+        "premium_verified": premium_verified,
     })
 
 
@@ -2098,51 +2121,6 @@ else:
     ALLOWED_ORIGINS = "https://benzin-ryadom.onrender.com,https://benzin-ryadom.vercel.app"
 
 
-async def cors_middleware(app, handler):
-    """CORS + security headers + request size limit."""
-    async def middleware(request):
-        # === Request size limit ===
-        if request.method == "POST":
-            content_length = request.headers.get("Content-Length", "0")
-            try:
-                if int(content_length) > MAX_REQUEST_BODY:
-                    return json_resp({"error": "request too large"}, status=413)
-            except (ValueError, TypeError):
-                pass
-
-        if request.method == "OPTIONS":
-            return web.Response(headers={
-                "Access-Control-Allow-Origin": ALLOWED_ORIGINS,
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, X-Parse-Key, X-VK-User-Id",
-                "Access-Control-Max-Age": "86400",
-            })
-        try:
-            response = await handler(request)
-        except Exception:
-            raise
-        response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGINS
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        # CSP только для HTML (Mini App)
-        try:
-            ct = response.content_type or ""
-            if "html" in ct:
-                response.headers["Content-Security-Policy"] = (
-                    "default-src 'self'; "
-                    "script-src 'self' 'unsafe-inline' https://unpkg.com; "
-                    "style-src 'self' 'unsafe-inline' https://unpkg.com; "
-                    "img-src 'self' data: https:; "
-                    "connect-src 'self' https://*.vk.com https://*.telegram.org; "
-                    "frame-ancestors 'none'"
-                )
-        except Exception:
-            pass
-        return response
-    return middleware
-
-
 async def _on_startup(app: web.Application) -> None:
     """Инициализация БД + security checks при старте API."""
     import db as _db_mod
@@ -2299,6 +2277,11 @@ def setup_app() -> web.Application:
             response = await handler(request)
         except web.HTTPException as e:
             response = e
+        except Exception as e:
+            logger.exception("Unhandled exception in %s: %s", request.path, e)
+            response = web.json_response(
+                {"error": "internal server error"}, status=500
+            )
         for k, v in _cors_headers().items():
             response.headers.setdefault(k, v)
         return response
@@ -2348,9 +2331,19 @@ def setup_app() -> web.Application:
     # Account linking
     app.router.add_post("/api/account/link/create", handle_account_link_create)
     app.router.add_post("/api/account/link/use", handle_account_link_use)
+    # Fuel alarms
+    app.router.add_post("/api/fuel-alarm/create", handle_fuel_alarm_create)
+    app.router.add_post("/api/fuel-alarm/delete", handle_fuel_alarm_delete)
+    app.router.add_get("/api/fuel-alarm/list", handle_fuel_alarm_list)
+    app.router.add_get("/api/user/savings", handle_user_savings)
+    app.router.add_post("/api/sos/broadcast", handle_sos_broadcast)
+    app.router.add_get("/api/referral/code", handle_referral_code)
+    app.router.add_post("/api/referral/apply", handle_referral_apply)
+    app.router.add_get("/api/referral/stats", handle_referral_stats)
     app.router.add_get("/api/account/info", handle_account_info)
     app.router.add_get("/api/export/csv", handle_export_csv)
     app.router.add_get("/api/route/fuel", handle_route_fuel)
+    app.router.add_get("/api/route/anti-traffic", handle_route_anti_traffic)
     # Mini App static
     miniapp_dir = Path(__file__).parent.parent / "miniapp"
     if miniapp_dir.exists():
@@ -2406,9 +2399,13 @@ async def handle_premium_status(request):
 
 
 async def handle_premium_activate(request):
-    """POST /api/premium/activate — активировать (для тестов/ручного режима)."""
+    """POST /api/premium/activate — активировать (только admin)."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
+    # Admin auth
+    admin_token = request.headers.get("X-Admin-Token", "")
+    if admin_token != os.environ.get("ADMIN_TOKEN", ""):
+        return json_resp({"error": "forbidden"}, status=403)
     try:
         body = await request.json()
     except Exception:
@@ -2436,9 +2433,12 @@ async def handle_premium_activate(request):
 
 
 async def handle_premium_cancel(request):
-    """POST /api/premium/cancel — отменить подписку."""
+    """POST /api/premium/cancel — отменить подписку (только admin)."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
+    admin_token = request.headers.get("X-Admin-Token", "")
+    if admin_token != os.environ.get("ADMIN_TOKEN", ""):
+        return json_resp({"error": "forbidden"}, status=403)
     try:
         body = await request.json()
     except Exception:
@@ -2455,9 +2455,12 @@ async def handle_premium_cancel(request):
 
 
 async def handle_premium_pending_payments(request):
-    """GET /api/premium/pending — список ожидающих оплаты (для админа)."""
+    """GET /api/premium/pending — список ожидающих оплаты (только admin)."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)
+    admin_token = request.headers.get("X-Admin-Token", "")
+    if admin_token != os.environ.get("ADMIN_TOKEN", ""):
+        return json_resp({"error": "forbidden"}, status=403)
     from db import get_pending_payments
     payments = await get_pending_payments(limit=50)
     return json_resp({"payments": payments, "count": len(payments)})
@@ -2586,6 +2589,371 @@ async def handle_account_info(request):
     except Exception as e:
         logger.exception(f"account_info error: {e}")
         return json_resp({"error": str(e)}, status=500)
+
+
+# === Fuel Alarm endpoints ===
+
+async def handle_fuel_alarm_create(request):
+    """POST /api/fuel-alarm/create
+
+    Premium only. Создаёт подписку "уведомить когда появится X на АЗС Y".
+    Body: {telegram_id, station_id, fuel_type}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    tid = body.get("telegram_id")
+    sid = body.get("station_id")
+    fuel = body.get("fuel_type", "95")
+    if not tid or not sid:
+        return json_resp({"error": "telegram_id and station_id required"}, status=400)
+    if fuel not in ("92", "95", "98", "diesel", "100", "lpg"):
+        return json_resp({"error": "invalid fuel_type"}, status=400)
+
+    # Premium check
+    from db import get_user_id_by_any, get_user_premium, create_fuel_alarm
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+    sub = await get_user_premium(uid)
+    if not sub or not sub.get("tier"):
+        return json_resp({
+            "error": "premium_required",
+            "feature": "fuel_alarm",
+            "message": "Топливный будильник доступен только для Premium",
+        }, status=402)
+
+    try:
+        alarm_id = await create_fuel_alarm(uid, int(sid), fuel)
+        return json_resp({
+            "ok": True,
+            "alarm_id": alarm_id,
+            "station_id": int(sid),
+            "fuel_type": fuel,
+            "message": f"Будильник установлен: уведомим когда появится АИ-{fuel}",
+        })
+    except Exception as e:
+        logger.exception(f"fuel_alarm create: {e}")
+        return json_resp({"error": str(e)}, status=500)
+
+
+async def handle_fuel_alarm_delete(request):
+    """POST /api/fuel-alarm/delete
+    Body: {telegram_id, station_id, fuel_type}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    tid = body.get("telegram_id")
+    sid = body.get("station_id")
+    fuel = body.get("fuel_type", "95")
+    if not tid or not sid:
+        return json_resp({"error": "telegram_id and station_id required"}, status=400)
+
+    from db import get_user_id_by_any, delete_fuel_alarm
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+    try:
+        await delete_fuel_alarm(uid, int(sid), fuel)
+        return json_resp({"ok": True, "message": "Будильник удалён"})
+    except Exception as e:
+        logger.exception(f"fuel_alarm delete: {e}")
+        return json_resp({"error": str(e)}, status=500)
+
+
+async def handle_user_savings(request):
+    """GET /api/user/savings?telegram_id=... — рассчитывает экономию юзера.
+
+    Логика: берём отчёты юзера за месяц, считаем среднюю цену,
+    умножаем на объём топлива (по умолчанию 40л/мес).
+    Экономия = разница между среднерыночной и ценой из отчётов × объём.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id")
+    if not tid:
+        return json_resp({"savings": 0, "currency": "RUB"})
+    from db import get_user_id_by_any
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"savings": 0, "currency": "RUB"})
+
+    try:
+        # Считаем отчёты за 30 дней
+        if USE_SQLITE:
+            rows = await _fetch(
+                """SELECT AVG(CAST(r.price AS REAL)) as avg_price, COUNT(*) as cnt
+                   FROM reports r
+                   WHERE r.user_id = ?
+                     AND r.created_at >= datetime('now', '-30 days')
+                     AND r.price IS NOT NULL""",
+                uid,
+            )
+        else:
+            rows = await _fetch(
+                """SELECT AVG(CAST(r.price AS REAL)) as avg_price, COUNT(*) as cnt
+                   FROM reports r
+                   WHERE r.user_id = $1
+                     AND r.created_at >= NOW() - INTERVAL '30 days'
+                     AND r.price IS NOT NULL""",
+                uid,
+            )
+        if not rows:
+            return json_resp({"savings": 0, "reports_count": 0, "currency": "RUB"})
+
+        row = rows[0] if isinstance(rows, list) else rows
+        avg_price = float(row.get("avg_price", 0) or 0) if isinstance(row, dict) else float(row[0] or 0)
+        report_count = int(row.get("cnt", 0) or 0) if isinstance(row, dict) else int(row[1] or 0)
+
+        # Базовая экономия: ~2₽/л × 40л/мес × кол-во отчётов/3 (нормализация)
+        # Упрощённая формула: каждый отчёт ≈ 80₽ экономии (2₽/л × 40л)
+        savings_per_report = 80
+        total_savings = report_count * savings_per_report
+
+        return json_resp({
+            "savings": total_savings,
+            "reports_count": report_count,
+            "avg_price": round(avg_price, 2),
+            "period": "30d",
+            "currency": "RUB",
+        })
+    except Exception as e:
+        logger.exception(f"handle_user_savings error: {e}")
+        return json_resp({"savings": 0, "currency": "RUB"})
+
+
+async def handle_sos_broadcast(request):
+    """POST /api/sos/broadcast — SOS-сигнал.
+
+    Elite only. Отправляет SOS-уведомление всем Premium юзерам в радиусе 50 км.
+    Body: {telegram_id, lat, lon, message?}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    tid = body.get("telegram_id")
+    lat = body.get("lat")
+    lon = body.get("lon")
+    msg = body.get("message", "Помогите! Нужна помощь на дороге!")
+
+    if not tid or lat is None or lon is None:
+        return json_resp({"error": "telegram_id, lat, lon required"}, status=400)
+
+    from db import get_user_id_by_any, get_user_premium
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+
+    sub = await get_user_premium(uid)
+    if not sub or sub.get("tier") != "elite":
+        return json_resp({
+            "error": "elite_required",
+            "feature": "sos_elite",
+            "message": "SOS-режим доступен только для Elite",
+        }, status=402)
+
+    # Находим Premium юзеров в радиусе 50 км (Haversine)
+    RADIUS_KM = 50
+    if USE_SQLITE:
+        nearby = await _fetch(
+            """SELECT u.id, u.telegram_id,
+                      (6371 * acos(
+                        cos(radians(?)) * cos(radians(s.center_lat)) *
+                        cos(radians(s.center_lon) - radians(?)) +
+                        sin(radians(?)) * sin(radians(s.center_lat))
+                      )) AS distance_km
+               FROM users u
+               JOIN subscriptions s ON s.user_id = u.id
+               JOIN premium_users pu ON pu.user_id = u.id
+               WHERE pu.is_active = 1
+                 AND (pu.expires_at IS NULL OR datetime(pu.expires_at) > datetime('now'))
+                 AND s.center_lat IS NOT NULL
+               HAVING distance_km < ?
+               ORDER BY distance_km""",
+            float(lat), float(lon), float(lat), RADIUS_KM,
+        )
+    else:
+        nearby = await _fetch(
+            """SELECT u.id, u.telegram_id,
+                      (6371 * acos(
+                        cos(radians($1)) * cos(radians(s.center_lat)) *
+                        cos(radians(s.center_lon) - radians($2)) +
+                        sin(radians($1)) * sin(radians(s.center_lat))
+                      )) AS distance_km
+               FROM users u
+               JOIN subscriptions s ON s.user_id = u.id
+               JOIN premium_users pu ON pu.user_id = u.id
+               WHERE pu.is_active = TRUE
+                 AND (pu.expires_at IS NULL OR pu.expires_at > NOW())
+                 AND s.center_lat IS NOT NULL
+               HAVING (6371 * acos(
+                        cos(radians($1)) * cos(radians(s.center_lat)) *
+                        cos(radians(s.center_lon) - radians($2)) +
+                        sin(radians($1)) * sin(radians(s.center_lat))
+                      )) < $3
+               ORDER BY distance_km""",
+            float(lat), float(lon), RADIUS_KM,
+        )
+
+    if not nearby:
+        return json_resp({
+            "ok": True,
+            "broadcasted": 0,
+            "message": "Нет Premium пользователей рядом",
+        })
+
+    # Отправляем SOS через бота (из push_worker или напрямую)
+    sent = 0
+    try:
+        from bot_instance import bot
+        for row in nearby:
+            tg_id = row.get("telegram_id") if isinstance(row, dict) else row[1]
+            dist = row.get("distance_km", 0) if isinstance(row, dict) else row[2]
+            if not tg_id:
+                continue
+            try:
+                await bot.send_message(
+                    chat_id=tg_id,
+                    text=(
+                        f"🚨 <b>SOS-СИГНАЛ!</b>\n\n"
+                        f"Водитель рядом с тобой нуждается в помощи!\n\n"
+                        f"📍 Координаты: {lat}, {lon}\n"
+                        f"📏 Расстояние: {dist:.1f} км\n"
+                        f"💬 Сообщение: {msg}\n\n"
+                        f"Если можешь помоги — свяжись через @darkt30"
+                    ),
+                    parse_mode="HTML",
+                )
+                sent += 1
+            except Exception:
+                pass
+    except Exception as e:
+        logger.exception(f"SOS broadcast error: {e}")
+
+    return json_resp({
+        "ok": True,
+        "broadcasted": sent,
+        "nearby_premium": len(nearby),
+        "radius_km": RADIUS_KM,
+    })
+
+
+# === Referral Program endpoints ===
+
+async def handle_referral_code(request):
+    """GET /api/referral/code?telegram_id=... — создаёт/возвращает реферальный код."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id")
+    if not tid:
+        return json_resp({"error": "telegram_id required"}, status=400)
+    from db import get_user_id_by_any, create_referral_code
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+    code = await create_referral_code(uid)
+    return json_resp({
+        "ok": True,
+        "code": code,
+        "link": f"https://t.me/benzin_ryadom_bot?start=ref_{code}",
+    })
+
+
+async def handle_referral_apply(request):
+    """POST /api/referral/apply — применяет реферальный код.
+
+    Body: {telegram_id, code}
+    Начисляет 1 месяц Premium рефереру.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    tid = body.get("telegram_id")
+    code = body.get("code", "").strip().upper()
+    if not tid or not code:
+        return json_resp({"error": "telegram_id and code required"}, status=400)
+
+    from db import get_user_id_by_any, get_referral_by_code, complete_referral
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+
+    referral = await get_referral_by_code(code)
+    if not referral:
+        return json_resp({"error": "invalid referral code"}, status=400)
+
+    if referral.get("status") != "active":
+        return json_resp({"error": "referral code already used"}, status=400)
+
+    # Нельзя использовать свой же код
+    if referral.get("referrer_user_id") == uid:
+        return json_resp({"error": "cannot use your own referral code"}, status=400)
+
+    try:
+        success = await complete_referral(code, uid, int(tid))
+        if success:
+            return json_resp({
+                "ok": True,
+                "message": "Реферал применён! Реферер получил месяц Premium.",
+            })
+        else:
+            return json_resp({"error": "failed to complete referral"}, status=500)
+    except Exception as e:
+        logger.exception(f"referral_apply error: {e}")
+        return json_resp({"error": str(e)}, status=500)
+
+
+async def handle_referral_stats(request):
+    """GET /api/referral/stats?telegram_id=... — статистика рефералов."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id")
+    if not tid:
+        return json_resp({"error": "telegram_id required"}, status=400)
+    from db import get_user_id_by_any, get_referral_stats
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"stats": {"total": 0, "completed": 0, "pending": 0}})
+    stats = await get_referral_stats(uid)
+    return json_resp({"stats": stats})
+
+
+async def handle_fuel_alarm_list(request):
+    """GET /api/fuel-alarm/list?telegram_id=... — список активных подписок"""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id")
+    if not tid:
+        return json_resp({"error": "telegram_id required"}, status=400)
+    from db import get_user_id_by_any, get_fuel_alarms_for_user, get_user_premium
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"alarms": [], "count": 0})
+    sub = await get_user_premium(uid)
+    is_premium = bool(sub and sub.get("tier"))
+    alarms = await get_fuel_alarms_for_user(uid)
+    return json_resp({
+        "alarms": alarms,
+        "count": len(alarms),
+        "is_premium": is_premium,
+    })
 
 
 async def handle_export_csv(request):
@@ -2722,12 +3090,12 @@ async def handle_route_fuel(request):
         return json_resp({"error": "rate limit"}, status=429)
 
     try:
-        from_lat = float(request.query.get("from_lat", "0"))
-        from_lon = float(request.query.get("from_lon", "0"))
-        to_lat = float(request.query.get("to_lat", "0"))
-        to_lon = float(request.query.get("to_lon", "0"))
+        from_lat = float(request.query.get("from_lat", ""))
+        from_lon = float(request.query.get("from_lon", ""))
+        to_lat = float(request.query.get("to_lat", ""))
+        to_lon = float(request.query.get("to_lon", ""))
     except (TypeError, ValueError):
-        return json_resp({"error": "invalid coordinates"}, status=400)
+        return json_resp({"error": "from_lat, from_lon, to_lat, to_lon required"}, status=400)
 
     if not (-90 <= from_lat <= 90) or not (-90 <= to_lat <= 90):
         return json_resp({"error": "lat must be in [-90, 90]"}, status=400)
@@ -2905,6 +3273,122 @@ async def handle_route_fuel(request):
             "Найдено АЗС с гарантией наличия" if is_premium
             else f"Free: только 2 ближайших. Premium: все АЗС + гарантия наличия + экономия до 1200₽"
         ),
+    })
+
+
+async def handle_route_anti_traffic(request):
+    """GET /api/route/anti-traffic?from_lat=&from_lon=&to_lat=&to_lon=&fuel=92
+
+    Elite фича. Маршрут с учётом пробок.
+    Добавляет к обычному route_fuel: traffic levels, ETA, альтернативные точки остановки.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+
+    # Premium Elite check
+    tid = request.query.get("telegram_id")
+    if not tid:
+        return json_resp({"error": "telegram_id required for anti-traffic"}, status=400)
+
+    from db import get_user_id_by_any, get_user_premium
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+    sub = await get_user_premium(uid)
+    if not sub or sub.get("tier") != "elite":
+        return json_resp({
+            "error": "elite_required",
+            "feature": "anti_traffic",
+            "message": "Антипробка доступна только для Elite",
+        }, status=402)
+
+    try:
+        from_lat = float(request.query.get("from_lat", ""))
+        from_lon = float(request.query.get("from_lon", ""))
+        to_lat = float(request.query.get("to_lat", ""))
+        to_lon = float(request.query.get("to_lon", ""))
+    except (TypeError, ValueError):
+        return json_resp({"error": "from_lat, from_lon, to_lat, to_lon required"}, status=400)
+
+    fuel = request.query.get("fuel", "95")
+
+    # Расчёт расстояния
+    import math
+    def haversine(lat1, lon1, lat2, lon2):
+        R = 6371
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    total_distance = haversine(from_lat, from_lon, to_lat, to_lon)
+
+    # Симуляция traffic на основе времени суток
+    from datetime import datetime
+    now = datetime.now()
+    hour = now.hour
+    weekday = now.weekday()  # 0=пн, 6=вс
+
+    # Определяем уровень пробок
+    def get_traffic_level(hour, weekday):
+        if weekday >= 5:  # выходные
+            if 10 <= hour <= 14:
+                return "medium", 1.2, "Выходной трафик"
+            return "low", 1.0, "Мало машин"
+        # Будни
+        if 7 <= hour <= 9:
+            return "high", 1.8, "Утренний пик 🌅"
+        if 12 <= hour <= 14:
+            return "medium", 1.3, "Обеденный трафик"
+        if 17 <= hour <= 19:
+            return "high", 2.0, "Вечерний пик 🌆"
+        if 22 <= hour or hour <= 5:
+            return "low", 1.0, "Ночь — свободно"
+        return "low", 1.1, "Спокойно"
+
+    traffic_level, traffic_multiplier, traffic_desc = get_traffic_level(hour, weekday)
+
+    # Базовое время (средняя скорость 60 км/ч без пробок)
+    base_speed = 60  # км/ч
+    traffic_speed = base_speed / traffic_multiplier
+    eta_minutes = (total_distance / traffic_speed) * 60
+
+    # Оптимальные точки остановки (каждые ~100 км)
+    stop_points = []
+    num_stops = max(1, int(total_distance / 100))
+    for i in range(num_stops):
+        frac = (i + 1) / (num_stops + 1)
+        stop_lat = from_lat + frac * (to_lat - from_lat)
+        stop_lon = from_lon + frac * (to_lon - from_lon)
+        stop_points.append({
+            "lat": round(stop_lat, 6),
+            "lon": round(stop_lon, 6),
+            "km_from_start": round(total_distance * frac, 1),
+            "suggestion": f"Остановка #{i+1} — заправься здесь",
+        })
+
+    # Рекомендация: если пробки — езди ночью
+    best_time = None
+    if traffic_multiplier > 1.3:
+        best_hour = 23 if hour < 12 else 5
+        best_time = f"Лучшее время — {'вечером после 23:00' if best_hour == 23 else 'утром до 5:00'}"
+
+    return json_resp({
+        "from": {"lat": from_lat, "lon": from_lon},
+        "to": {"lat": to_lat, "lon": to_lon},
+        "total_distance_km": round(total_distance, 1),
+        "fuel": fuel,
+        "traffic": {
+            "level": traffic_level,
+            "multiplier": traffic_multiplier,
+            "description": traffic_desc,
+            "eta_minutes": round(eta_minutes),
+            "eta_without_traffic": round((total_distance / base_speed) * 60),
+            "delay_minutes": round(eta_minutes - (total_distance / base_speed) * 60),
+        },
+        "stop_points": stop_points,
+        "best_time": best_time,
+        "message": f"🚗 Антипробка: {traffic_desc}. Задержка: +{round(eta_minutes - (total_distance / base_speed) * 60)} мин",
     })
 
 

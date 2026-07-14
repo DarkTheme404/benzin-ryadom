@@ -187,7 +187,7 @@
     profileName: $('#profile-name'),
     profileId: $('#profile-id'),
     statReports: $('#stat-reports'),
-    statReviews: $('#stat-reviews'),
+    statSavings: $('#stat-savings'),
     statBadges: $('#stat-badges'),
     badgesGrid: $('#badges-grid'),
     subsList: $('#subs-list'),
@@ -863,6 +863,7 @@
     const statuses = detail.statuses || [];
     const operator = s.operator || s.name || 'АЗС';
     const verified = s.is_verified ? ' ✓' : '';
+    const premiumVerified = detail.premium_verified ? '<span class="premium-verified-badge">💎 Premium</span>' : '';
     const lat = s.lat;
     const lon = s.lon;
 
@@ -955,7 +956,7 @@
       <div class="detail-back" data-action="back">‹ Назад</div>
 
       <div class="detail-card">
-        <div class="detail-name">${escape(operator)}${verified}</div>
+        <div class="detail-name">${escape(operator)}${verified} ${premiumVerified}</div>
         ${s.operator && s.name && s.operator !== s.name ?
           `<div class="detail-operator">${escape(s.name)}</div>` : ''}
         ${s.address ? `
@@ -1012,6 +1013,26 @@
         <button class="btn btn-secondary" data-action="subscribe">🔔 Подписаться</button>
       </div>
 
+      <!-- Fuel Alarm section -->
+      <div class="section-header" style="margin-top:16px;">
+        <h2 class="section-title">⛽ Топливный будильник</h2>
+      </div>
+      <div id="fuel-alarm-section">
+        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">
+          Уведомим когда нужное топливо появится на АЗС
+        </div>
+        <div class="fuel-alarm-types" id="fuel-alarm-types" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          <button class="btn btn-sm btn-secondary fuel-alarm-type" data-fuel="92" style="border-radius:20px;padding:6px 14px;font-size:13px;">АИ-92</button>
+          <button class="btn btn-sm btn-secondary fuel-alarm-type" data-fuel="95" style="border-radius:20px;padding:6px 14px;font-size:13px;border:2px solid var(--accent);">АИ-95</button>
+          <button class="btn btn-sm btn-secondary fuel-alarm-type" data-fuel="98" style="border-radius:20px;padding:6px 14px;font-size:13px;">АИ-98</button>
+          <button class="btn btn-sm btn-secondary fuel-alarm-type" data-fuel="diesel" style="border-radius:20px;padding:6px 14px;font-size:13px;">ДТ</button>
+        </div>
+        <button class="btn btn-primary" id="fuel-alarm-btn" data-action="fuel-alarm-toggle" style="width:100%;border-radius:12px;padding:12px;font-size:15px;">
+          🔔 Уведомить о появлении
+        </button>
+        <div id="fuel-alarm-status" style="margin-top:8px;font-size:12px;color:var(--text-secondary);display:none;"></div>
+      </div>
+
       <div class="section-header" style="margin-top:20px;">
         <h2 class="section-title">Отзывы</h2>
         <span class="section-count" id="reviews-count">0</span>
@@ -1033,6 +1054,93 @@
     if (routeBtn) routeBtn.addEventListener('click', () => openMap(lat, lon, operator));
     const subBtn = detailEl2.querySelector('[data-action="subscribe"]');
     if (subBtn) subBtn.addEventListener('click', () => subscribeStation(s.id));
+
+    // Fuel alarm logic
+    let selectedFuelType = '95';
+    const fuelTypeBtns = detailEl2.querySelectorAll('.fuel-alarm-type');
+    fuelTypeBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        fuelTypeBtns.forEach(b => b.style.borderColor = '');
+        btn.style.borderColor = 'var(--accent)';
+        selectedFuelType = btn.dataset.fuel;
+        updateFuelAlarmBtn();
+      });
+    });
+
+    const alarmBtn = detailEl2.querySelector('#fuel-alarm-btn');
+    const alarmStatus = detailEl2.querySelector('#fuel-alarm-status');
+    let activeAlarmId = null;
+
+    async function updateFuelAlarmBtn() {
+      try {
+        const data = await api(`/api/fuel-alarm/list?telegram_id=${state.tgId || ''}`);
+        const alarms = data.alarms || [];
+        const match = alarms.find(a => a.station_id == s.id && a.fuel_type === selectedFuelType);
+        if (match) {
+          activeAlarmId = match.id;
+          alarmBtn.textContent = '🔕 Отменить уведомление';
+          alarmBtn.className = 'btn btn-outline';
+          alarmBtn.style.cssText = 'width:100%;border-radius:12px;padding:12px;font-size:15px;border:2px solid #ef4444;color:#ef4444;background:transparent;';
+          alarmStatus.style.display = 'block';
+          alarmStatus.textContent = 'Будильник активен — уведомим когда появится';
+        } else {
+          activeAlarmId = null;
+          alarmBtn.textContent = '🔔 Уведомить о появлении';
+          alarmBtn.className = 'btn btn-primary';
+          alarmBtn.style.cssText = 'width:100%;border-radius:12px;padding:12px;font-size:15px;';
+          alarmStatus.style.display = 'none';
+        }
+      } catch (e) {
+        // Not logged in or no premium
+        alarmBtn.textContent = '🔔 Уведомить о появлении';
+        alarmBtn.className = 'btn btn-primary';
+        alarmBtn.style.cssText = 'width:100%;border-radius:12px;padding:12px;font-size:15px;';
+        alarmStatus.style.display = 'none';
+      }
+    }
+
+    alarmBtn.addEventListener('click', async () => {
+      if (!state.tgId) {
+        showToast('Войдите через Telegram чтобы использовать будильник', 'warning');
+        return;
+      }
+      if (activeAlarmId) {
+        // Delete alarm
+        try {
+          await api('/api/fuel-alarm/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({telegram_id: state.tgId, station_id: s.id, fuel_type: selectedFuelType}),
+          });
+          activeAlarmId = null;
+          updateFuelAlarmBtn();
+          showToast('Будильник отменён', 'info');
+        } catch (e) {
+          showToast('Ошибка: ' + e.message, 'error');
+        }
+      } else {
+        // Create alarm
+        try {
+          const resp = await api('/api/fuel-alarm/create', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({telegram_id: state.tgId, station_id: s.id, fuel_type: selectedFuelType}),
+          });
+          if (resp.error === 'premium_required') {
+            showUpsell('fuel_alarm');
+            return;
+          }
+          activeAlarmId = resp.alarm_id;
+          updateFuelAlarmBtn();
+          showToast('Будильник установлен! Уведомим когда появится ⛽', 'success');
+          hapticNotify('success');
+        } catch (e) {
+          showToast('Ошибка: ' + e.message, 'error');
+        }
+      }
+    });
+
+    updateFuelAlarmBtn();
 
     // Load reviews
     loadReviews(s.id);
@@ -1064,6 +1172,64 @@
       renderStations();
       hapticNotify('success');
       showToast(`Найдено ${data.stations.length} АЗС с топливом`, 'success');
+    } catch (e) {
+      showToast('Ошибка: ' + e.message, 'error');
+    } finally {
+      hideLoading();
+    }
+  }
+
+  // ============= SOS (Elite) =============
+  async function sendSOS() {
+    if (!state.tgId) {
+      showToast('Войдите через Telegram для SOS', 'warning');
+      return;
+    }
+    // Проверяем Premium Elite
+    try {
+      const premRes = await api(`/api/premium/status?telegram_id=${state.tgId}`);
+      if (!premRes || !premRes.active || premRes.tier !== 'elite') {
+        showUpsell('sos_elite');
+        return;
+      }
+    } catch (e) {
+      showUpsell('sos_elite');
+      return;
+    }
+
+    // Получаем геолокацию
+    const pos = await getUserLocation();
+    if (!pos) {
+      showToast('Не удалось определить местоположение', 'error');
+      return;
+    }
+
+    // Подтверждение
+    const confirmed = confirm('🚨 Отправить SOS-сигнал?\n\nPremium-пользователям в радиусе 50 км придёт уведомление с твоими координатами.');
+    if (!confirmed) return;
+
+    showLoading();
+    try {
+      const resp = await api('/api/sos/broadcast', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          telegram_id: state.tgId,
+          lat: pos.lat,
+          lon: pos.lon,
+          message: 'Помогите! Нужна помощь на дороге!',
+        }),
+      });
+      if (resp.error === 'elite_required') {
+        showUpsell('sos_elite');
+        return;
+      }
+      if (resp.ok) {
+        hapticNotify('success');
+        showToast(`🚨 SOS отправлен! ${resp.broadcasted} пользователей уведомлены`, 'success');
+      } else {
+        showToast('Ошибка: ' + (resp.error || 'unknown'), 'error');
+      }
     } catch (e) {
       showToast('Ошибка: ' + e.message, 'error');
     } finally {
@@ -1814,6 +1980,128 @@
     } catch (e) {
       console.error('loadAccounts error:', e);
     }
+
+    // Load fuel alarms
+    try {
+      const tgId = getTgId();
+      if (tgId) {
+        const alarmsRes = await api(`/api/fuel-alarm/list?telegram_id=${tgId}`).catch(() => null);
+        const alarmsList = document.getElementById('fuel-alarms-list');
+        if (alarmsList && alarmsRes) {
+          const alarms = alarmsRes.alarms || [];
+          if (alarms.length === 0) {
+            alarmsList.innerHTML = '<div class="empty-mini">Нет активных будильников</div>';
+          } else {
+            alarmsList.innerHTML = alarms.map(a => {
+              const fuelLabel = a.fuel_type === '100' ? 'АИ-100' :
+                a.fuel_type === 'diesel' ? 'ДТ' : `АИ-${a.fuel_type}`;
+              return `
+                <div class="alarm-item" style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-secondary);border-radius:12px;margin-bottom:8px;">
+                  <div style="font-size:24px;">⛽</div>
+                  <div style="flex:1;">
+                    <div style="font-weight:600;">${fuelLabel}</div>
+                    <div style="font-size:13px;color:var(--text-secondary);">${a.name || 'АЗС'} · ${a.city || ''}</div>
+                  </div>
+                  <button class="btn btn-sm btn-outline" data-action="delete-fuel-alarm"
+                    data-station="${a.station_id}" data-fuel="${a.fuel_type}"
+                    style="color:#ef4444;border-color:#ef4444;">Удалить</button>
+                </div>`;
+            }).join('');
+          }
+        }
+      }
+    } catch (e) {
+      console.error('loadFuelAlarms error:', e);
+    }
+
+    // Load savings
+    try {
+      const tgId = getTgId();
+      if (tgId) {
+        const savingsRes = await api(`/api/user/savings?telegram_id=${tgId}`).catch(() => null);
+        if (savingsRes && dom.statSavings) {
+          const savings = savingsRes.savings || 0;
+          if (savings > 0) {
+            dom.statSavings.textContent = `${savings.toLocaleString('ru-RU')}₽`;
+            dom.statSavings.style.color = '#34d399';
+          } else {
+            dom.statSavings.textContent = '—';
+          }
+        }
+      }
+    } catch (e) {
+      console.error('loadSavings error:', e);
+    }
+
+    // Load referral data
+    try {
+      const tgId = getTgId();
+      if (tgId) {
+        const [codeRes, statsRes] = await Promise.all([
+          api(`/api/referral/code?telegram_id=${tgId}`).catch(() => null),
+          api(`/api/referral/stats?telegram_id=${tgId}`).catch(() => null),
+        ]);
+        if (codeRes && codeRes.code) {
+          const codeEl = document.getElementById('referral-code');
+          if (codeEl) codeEl.textContent = codeRes.code;
+        }
+        if (statsRes && statsRes.stats) {
+          const s = statsRes.stats;
+          const totalEl = document.getElementById('referral-total');
+          const completedEl = document.getElementById('referral-completed');
+          if (totalEl) totalEl.textContent = s.total || 0;
+          if (completedEl) completedEl.textContent = s.completed || 0;
+        }
+
+        // Share button
+        const shareBtn = document.getElementById('btn-share-referral');
+        if (shareBtn) {
+          shareBtn.addEventListener('click', () => {
+            const code = codeRes?.code || '';
+            const text = `🎁 Используй код ${code} в @benzin_ryadom_bot и получи месяц Premium бесплатно!`;
+            if (navigator.share) {
+              navigator.share({ text }).catch(() => {});
+            } else {
+              navigator.clipboard.writeText(text).then(() => {
+                showToast('Скопировано в буфер обмена!', 'success');
+              }).catch(() => {});
+            }
+          });
+        }
+
+        // Apply button
+        const applyBtn = document.getElementById('btn-apply-referral');
+        const applyInput = document.getElementById('referral-input');
+        if (applyBtn && applyInput) {
+          applyBtn.addEventListener('click', async () => {
+            const code = applyInput.value.trim().toUpperCase();
+            if (!code) {
+              showToast('Введи код друга', 'warning');
+              return;
+            }
+            try {
+              const resp = await api('/api/referral/apply', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({telegram_id: tgId, code}),
+              });
+              if (resp.ok) {
+                showToast('Реферал применён! Месяц Premium подарен.', 'success');
+                hapticNotify('success');
+                applyInput.value = '';
+                loadProfile();
+              } else {
+                showToast(resp.error || 'Ошибка', 'error');
+              }
+            } catch (e) {
+              showToast('Ошибка: ' + e.message, 'error');
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.error('loadReferral error:', e);
+    }
   }
 
   // ============= SEARCH =============
@@ -2180,9 +2468,78 @@
       hideLoading();
 
       renderRouteFuelResults(data, results, fuel);
+
+      // Anti-traffic button handler
+      const antiTrafficBtn = $('#btn-anti-traffic');
+      if (antiTrafficBtn) {
+        antiTrafficBtn.addEventListener('click', () => loadAntiTraffic(fromCoords, toCoords, fuel));
+      }
     } catch (e) {
       hideLoading();
       console.error('findRouteFuel:', e);
+      showToast('Ошибка: ' + e.message, 'error');
+    }
+  }
+
+  // === Anti-traffic (Elite) ===
+  async function loadAntiTraffic(fromCoords, toCoords, fuel) {
+    const results = $('#route-fuel-results');
+    if (!results) return;
+    showLoading();
+    try {
+      const tgId = getTgId();
+      const url = `/api/route/anti-traffic?from_lat=${fromCoords.lat}&from_lon=${fromCoords.lon}&to_lat=${toCoords.lat}&to_lon=${toCoords.lon}&fuel=${fuel}&telegram_id=${tgId}`;
+      const data = await api(url);
+      hideLoading();
+
+      if (data.error === 'elite_required') {
+        showUpsell('anti_traffic');
+        return;
+      }
+
+      // Показываем результаты
+      const trafficColors = { low: '#34d399', medium: '#fbbf24', high: '#ef4444' };
+      const trafficEmojis = { low: '🟢', medium: '🟡', high: '🔴' };
+      const t = data.traffic || {};
+
+      let html = `
+        <div class="route-fuel-summary" style="background:linear-gradient(135deg,rgba(59,130,246,0.1),rgba(29,78,216,0.05));border-color:rgba(59,130,246,0.2);">
+          <div class="route-fuel-summary-num" style="color:#3b82f6;">${trafficEmojis[t.level] || '🟢'} ${t.level === 'high' ? 'Пробки' : t.level === 'medium' ? 'Средне' : 'Свободно'}</div>
+          <div class="route-fuel-summary-label">${t.description || ''}</div>
+        </div>
+        <div style="display:flex;gap:8px;margin:8px 0;">
+          <div style="flex:1;padding:12px;background:var(--bg-card);border-radius:12px;text-align:center;">
+            <div style="font-size:20px;font-weight:700;color:${trafficColors[t.level] || '#34d399'};">${t.eta_minutes || '?'} мин</div>
+            <div style="font-size:11px;color:var(--text-secondary);">⏱ ETA с пробками</div>
+          </div>
+          <div style="flex:1;padding:12px;background:var(--bg-card);border-radius:12px;text-align:center;">
+            <div style="font-size:20px;font-weight:700;color:var(--text-secondary);">${t.eta_without_traffic || '?'} мин</div>
+            <div style="font-size:11px;color:var(--text-secondary);">⏱ Без пробок</div>
+          </div>
+          <div style="flex:1;padding:12px;background:var(--bg-card);border-radius:12px;text-align:center;">
+            <div style="font-size:20px;font-weight:700;color:#ef4444;">+${t.delay_minutes || 0} мин</div>
+            <div style="font-size:11px;color:var(--text-secondary);">📈 Задержка</div>
+          </div>
+        </div>
+      `;
+
+      if (data.best_time) {
+        html += `<div style="padding:10px;background:rgba(52,211,153,0.08);border-radius:10px;margin:8px 0;font-size:13px;color:#34d399;">💡 ${data.best_time}</div>`;
+      }
+
+      if (data.stop_points && data.stop_points.length > 0) {
+        html += '<div style="font-size:13px;font-weight:700;margin:12px 0 8px;">📍 Точки остановки:</div>';
+        for (const sp of data.stop_points) {
+          html += `<div style="padding:8px 12px;background:var(--bg-card);border-radius:8px;margin-bottom:6px;font-size:13px;">
+            📍 <b>${sp.km_from_start} км</b> — ${sp.suggestion}
+          </div>`;
+        }
+      }
+
+      results.innerHTML = html;
+      showToast('🚗 Данные о пробках загружены', 'success');
+    } catch (e) {
+      hideLoading();
       showToast('Ошибка: ' + e.message, 'error');
     }
   }
@@ -2282,6 +2639,23 @@
       `;
     }
 
+    // Anti-traffic button (Elite)
+    if (isPremium && data.user_tier === 'elite') {
+      html += `
+        <button class="btn btn-primary" id="btn-anti-traffic" style="width:100%;margin:12px 0;background:linear-gradient(135deg,#3b82f6,#1d4ed8);box-shadow:0 4px 16px rgba(59,130,246,0.3);">
+          🚗 Антипробка — показать пробки и ETA
+        </button>
+      `;
+    } else if (!isPremium) {
+      html += `
+        <div style="text-align:center;padding:10px;background:rgba(59,130,246,0.08);border-radius:12px;margin:12px 0;border:1px solid rgba(59,130,246,0.2);">
+          <div style="font-size:13px;color:var(--text-secondary);">
+            🚗 <b>Антипробка</b> — Elite фича: ETA + пробки + лучшее время
+          </div>
+        </div>
+      `;
+    }
+
     // Рекомендация (Premium)
     if (isPremium && data.recommendation) {
       const r = data.recommendation;
@@ -2365,6 +2739,22 @@
         }
         return;
       }
+      if (action === 'delete-fuel-alarm') {
+        e.preventDefault();
+        e.stopPropagation();
+        const stationId = parseInt(target.dataset.station, 10);
+        const fuelType = target.dataset.fuel;
+        if (!stationId || !fuelType || !state.tgId) return;
+        api('/api/fuel-alarm/delete', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({telegram_id: state.tgId, station_id: stationId, fuel_type: fuelType}),
+        }).then(() => {
+          showToast('Будильник удалён', 'info');
+          loadProfile();
+        }).catch(err => showToast('Ошибка: ' + err.message, 'error'));
+        return;
+      }
     });
 
     // Nav items
@@ -2374,6 +2764,8 @@
     dom.citySelector.addEventListener('click', () => { haptic('light'); showCityPicker(); });
     dom.geoBtn.addEventListener('click', useGeo);
     dom.emergencyBtn.addEventListener('click', doEmergencySearch);
+    const sosBtn = $('#btn-sos');
+    if (sosBtn) sosBtn.addEventListener('click', sendSOS);
     $('#btn-profile').addEventListener('click', () => setTab('profile'));
 
     // Search
@@ -2701,6 +3093,26 @@
       console.error('PremiumUI init:', e);
     }
 
+    // === Welcome screen (первый запуск) ===
+    try {
+      if (!localStorage.getItem('benzin_welcomed')) {
+        setTimeout(() => {
+          const overlay = document.getElementById('welcome-overlay');
+          if (overlay) overlay.style.display = 'flex';
+        }, 800);
+      }
+    } catch (e) {}
+
+    // === Offline map service worker (Premium Economy) ===
+    try {
+      if ('serviceWorker' in navigator) {
+        const premStatus = window.PremiumUI?.getStatus();
+        if (premStatus?.active) {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
+      }
+    } catch (e) {}
+
     // Load saved city
     try {
       const savedCity = localStorage.getItem('benzin_city');
@@ -2774,6 +3186,13 @@
       dom.toast.hidden = false;
     }
   });
+
+  // Welcome modal
+  window.closeWelcome = function() {
+    const overlay = document.getElementById('welcome-overlay');
+    if (overlay) overlay.style.display = 'none';
+    try { localStorage.setItem('benzin_welcomed', '1'); } catch (e) {}
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

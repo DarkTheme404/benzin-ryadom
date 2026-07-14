@@ -21,6 +21,7 @@ BTN_MY_STATIONS = "🏪 Мои АЗС"
 BTN_HELP = "❓ Помощь"
 BTN_PREMIUM = "💎 Premium"
 BTN_LINK = "🔗 Привязать"
+BTN_REFERRAL = "🎁 Реферал"
 BTN_DONATE = "❤️ Поддержать"
 BTN_BUG = "🐛 Ошибка"
 BTN_IDEA = "💡 Предложение"
@@ -36,8 +37,8 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_OWNER), KeyboardButton(text=BTN_APP)],
             [KeyboardButton(text=BTN_PROFILE), KeyboardButton(text=BTN_MY_STATIONS)],
             [KeyboardButton(text=BTN_HELP), KeyboardButton(text=BTN_PREMIUM)],
-            [KeyboardButton(text=BTN_LINK), KeyboardButton(text=BTN_DONATE)],
-            [KeyboardButton(text=BTN_BUG)],
+            [KeyboardButton(text=BTN_LINK), KeyboardButton(text=BTN_REFERRAL)],
+            [KeyboardButton(text=BTN_DONATE), KeyboardButton(text=BTN_BUG)],
         ],
         resize_keyboard=True,
     )

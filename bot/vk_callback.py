@@ -10,12 +10,10 @@ VK Callback API — обработка событий от сообщества 
 
 Все ответы отправляются через VK API напрямую.
 """
-import asyncio
 import json
 import logging
 import os
 import time
-from typing import Any
 
 import aiohttp
 import db
@@ -25,40 +23,33 @@ from db import (
     find_stations_by_address,
     find_stations_by_city,
     find_stations_by_name,
-    get_or_create_user,
     get_premium_info,
     get_station_by_id,
     get_station_current_status,
     get_station_rating,
-    get_user_id_by_telegram_id,
+    get_user_id_by_vk_id,
     is_premium,
     log_event,
     get_user_stats_summary,
     add_report,
     add_review,
     add_subscription,
-    upsert_user,
 )
 from vk_keyboards import (
-    VK_BTN_HOME,
     vk_main_menu,
     vk_city_keyboard,
     vk_fuel_filter_keyboard,
-    vk_fuel_type_keyboard,
     vk_price_filter_keyboard,
     vk_network_filter_keyboard,
     vk_report_status_keyboard,
     vk_subscribe_geo_keyboard,
-    vk_subscribe_radius_keyboard,
     vk_station_actions,
     vk_review_fuel_keyboard,
     vk_review_rating_keyboard,
     vk_premium_keyboard,
     vk_donate_keyboard,
     _callback_button,
-    _button,
     _link_button,
-    _location_button,
     vk_keyboard,
 )
 
@@ -252,13 +243,15 @@ def _vk_subscribe_keyboard() -> str:
 
 # === Helpers ===
 async def _get_user_id(peer_id: int) -> int | None:
-    """Получает внутренний user_id из peer_id (используем как telegram_id)."""
-    return await get_user_id_by_telegram_id(peer_id)
+    """Получает внутренний user_id из VK peer_id."""
+    from db import get_user_id_by_vk_id
+    return await get_user_id_by_vk_id(peer_id)
 
 
 async def _ensure_user(peer_id: int, first_name: str = "VK") -> int | None:
-    """Создаёт/обновляет пользователя, возвращает user_id."""
-    return await upsert_user(telegram_id=peer_id, first_name=first_name)
+    """Создаёт/обновляет пользователя по VK ID, возвращает user_id."""
+    from db import upsert_user_vk
+    return await upsert_user_vk(peer_id, first_name=first_name)
 
 
 # === Text handlers ===
@@ -540,21 +533,142 @@ async def handle_link(peer_id: int, text: str = "") -> None:
     )
 
 
+async def handle_alarm(peer_id: int) -> None:
+    """Показывает список топливных будильников (Premium)."""
+    from db import get_user_id_by_vk_id, get_user_premium, get_fuel_alarms_for_user
+
+    uid = await get_user_id_by_vk_id(peer_id)
+    if not uid:
+        await _vk_send(peer_id, "Сначала нажми «Начать»")
+        return
+
+    sub = await get_user_premium(uid)
+    is_premium = bool(sub and sub.get("tier"))
+
+    if not is_premium:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💎 Купить Premium", callback_data="premium:start")],
+        ])
+        await _vk_send(peer_id,
+            "⛽ <b>Топливный будильник</b>\n\n"
+            "Эта фича доступна только для <b>Premium</b> пользователей.\n\n"
+            "Купи Premium и получи:\n"
+            "• Уведомления когда топливо появится\n"
+            "• Прогноз цен на 7 дней\n"
+            "• Экспорт данных в CSV\n"
+            "• Маршрут A→B с ближайшими ценами",
+            kb,
+        )
+        return
+
+    alarms = await get_fuel_alarms_for_user(uid)
+    if not alarms:
+        await _vk_send(peer_id,
+            "⛽ <b>Топливный будильник</b>\n\n"
+            "У тебя нет активных будильников.\n\n"
+            "Чтобы создать будильник:\n"
+            "1. Найди нужную АЗС через поиск\n"
+            "2. Нажми «🔔 Уведомить»\n"
+            "3. Выбери тип топлива\n\n"
+            "Мы уведомим тебя когда нужное топливо появится!",
+        )
+        return
+
+    lines = ["⛽ <b>Твои топливные будильники:</b>\n"]
+    for a in alarms:
+        fuel = a.get("fuel_type", "?")
+        fuel_label = "АИ-100" if fuel == "100" else f"АИ-{fuel}" if fuel in ("92","95","98") else fuel.upper()
+        name = a.get("name", "АЗС")
+        city = a.get("city", "")
+        created = a.get("created_at", "")[:10]
+        lines.append(f"• <b>{fuel_label}</b> — {name} ({city}) — {created}")
+
+    lines.append(f"\nВсего: {len(alarms)} будильников")
+    await _vk_send(peer_id, "\n".join(lines))
+
+
+async def handle_referral(peer_id: int, text: str = "") -> None:
+    """Реферальная программа VK."""
+    from db import get_user_id_by_vk_id, create_referral_code, get_referral_stats
+    import aiohttp
+
+    uid = await get_user_id_by_vk_id(peer_id)
+    if not uid:
+        await _vk_send(peer_id, "Сначала нажми «Начать»")
+        return
+
+    # Проверяем есть ли код в тексте (referral ABC123)
+    parts = text.strip().split()
+    if len(parts) >= 2:
+        code = parts[1].strip().upper()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://benzin-ryadom.onrender.com/api/referral/apply",
+                    json={"telegram_id": peer_id, "code": code},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    data = await r.json()
+        except Exception:
+            data = {"error": "connection error"}
+
+        if data.get("ok"):
+            await _vk_send(peer_id,
+                "🎉 <b>Реферал применён!</b>\n\n"
+                "Твой друг получил месяц Premium.\n"
+                "Спасибо что пользуетесь «Бензин рядом»!",
+            )
+        else:
+            err = data.get("error", "unknown")
+            if err == "invalid referral code":
+                await _vk_send(peer_id, "❌ Код не найден. Проверь и попробуй ещё раз.")
+            elif err == "cannot use your own referral code":
+                await _vk_send(peer_id, "❌ Нельзя использовать свой же код.")
+            else:
+                await _vk_send(peer_id, f"❌ Ошибка: {err}")
+        return
+
+    # Показываем свой код
+    code = await create_referral_code(uid)
+    stats = await get_referral_stats(uid)
+
+    await _vk_send(peer_id,
+        f"🎁 <b>Реферальная программа</b>\n\n"
+        f"Пригласи друга — получи <b>месяц Premium бесплатно</b>!\n\n"
+        f"<b>Твой код:</b> <code>{code}</code>\n\n"
+        f"<b>Статистика:</b>\n"
+        f"👥 Приглашено: {stats.get('total', 0)}\n"
+        f"✅ Активировали: {stats.get('completed', 0)}\n\n"
+        f"<b>Как это работает:</b>\n"
+        f"1. Отправь другу: <code>referral {code}</code>\n"
+        f"2. Друг вводит эту команду\n"
+        f"3. Вы оба получаете месяц Premium!",
+    )
+
+
 async def handle_premium(peer_id: int) -> None:
-    """Показать 3 тарифа Premium со ссылкой на Mini App для оплаты."""
-    from db import PREMIUM_PLANS, is_premium, get_premium_info
+    """Показать 3 тарифа Premium — красивый формат."""
+    from db import PREMIUM_PLANS, is_premium, get_premium_info, get_user_id_by_vk_id
     from datetime import datetime
 
-    uid = await get_user_id_by_telegram_id(peer_id)
+    uid = await get_user_id_by_vk_id(peer_id)
     if uid and await is_premium(uid):
         info = await get_premium_info(uid)
         if info:
             days_left = (info["expires_at"] - datetime.now()).days if isinstance(info["expires_at"], datetime) else 30
+            tier = info.get("tier", "")
+            tier_name = {"economy": "📊 Эконом", "standard": "🗺️ Стандарт", "elite": "👑 Элит"}.get(tier, tier)
+            tier_features = {
+                "economy": "📈 График цен · 📦 CSV-экспорт · 🗺️ Офлайн-карта",
+                "standard": "📈 График цен · 📦 CSV · 🗺️ Офлайн · 🛣 Маршрут A→B · 🔮 Прогноз · 🔔 Будильник",
+                "elite": "Всё из Стандарт + 🚗 Антипробка · 🆘 SOS-режим",
+            }
             text = (
-                f"💎 <b>Premium активен</b>\n\n"
-                f"📅 Осталось дней: <b>{max(days_left, 0)}</b>\n\n"
-                f"🔔 Push о завозе — каждый час\n"
-                f"💎 Premium-бейдж\n"
+                f"✅ <b>У тебя Premium!</b>\n\n"
+                f"Тариф: <b>{tier_name}</b>\n"
+                f"Осталось: <b>{max(days_left, 0)} дн.</b>\n\n"
+                f"<b>Твои фичи:</b>\n{tier_features.get(tier, '')}\n\n"
+                f"💡 Открой Mini App для управления"
             )
             await _vk_send(peer_id, text, vk_main_menu())
             return
@@ -562,24 +676,31 @@ async def handle_premium(peer_id: int) -> None:
     plans = PREMIUM_PLANS
     from premium_texts import format_tier_text
 
-    lines = [
-        "💎 <b>Премиум «Бензин рядом»</b>\n",
-        "🔥 <b>Зачем подключать:</b>",
-        "• Экономия до 3000₽/мес на топливе",
-        "• Знаешь заранее, где будет бензин по пути",
-        "• SOS-режим — если застрял, помогут другие премиум",
-        "• Чем больше премиум-пользователей, тем точнее данные",
-        "• Поддерживаешь развитие сервиса — мы остаёмся бесплатными для остальных\n",
-        "<b>Выбери тариф:</b>\n",
-    ]
-
-    for t in ["economy", "standard", "elite"]:
-        lines.append(format_tier_text(t, plans[t], show_features=True))
-        lines.append("")
-
-    lines.append("👇 Нажми кнопку для оплаты в Мини-приложении:")
-    text = "\n".join(lines)
-    from vk_keyboards import vk_premium_keyboard
+    text = (
+        "💎 <b>Премиум «Бензин рядом»</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🏆 <b>2 400+ водителей</b> уже экономят с нами\n"
+        "💰 В среднем экономия <b>2 700₽/мес</b> на топливе\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📊 <b>Эконом</b> — <b>100₽/мес</b>\n"
+        "├ 📈 График цен 30 дней\n"
+        "├ 📦 Экспорт в CSV/Excel\n"
+        "└ 🗺️ Офлайн-карта (без интернета)\n\n"
+        "🗺️ <b>Стандарт</b> — <b>250₽/мес</b> <i>🔥 Хит</i>\n"
+        "├ Всё из Эконом\n"
+        "├ 🛣 Маршрут A→B с ценами\n"
+        "├ 🔮 Прогноз цен на 7 дней\n"
+        "└ 🔔 Топливный будильник\n\n"
+        "👑 <b>Элит</b> — <b>500₽/мес</b>\n"
+        "├ Всё из Стандарт\n"
+        "├ 🚗 Антипробка (цены+пробки)\n"
+        "└ 🆘 SOS-режим (помощь 50 км)\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🧮 <b>Калькулятор:</b>\n"
+        "40л/мес × 2 заправки × 3₽/л = <b>240₽/мес</b> экономии\n"
+        "→ Стандарт уже окупается!\n\n"
+        "👇 <b>Выбери тариф:</b>"
+    )
     await _vk_send(peer_id, text, vk_premium_keyboard())
 
 
@@ -1275,6 +1396,10 @@ async def process_message_new(event: dict) -> None:
         await handle_donate(peer_id)
     elif low in ("/premium", "premium", "премиум"):
         await handle_premium(peer_id)
+    elif low in ("/alarm", "alarm", "будильник"):
+        await handle_alarm(peer_id)
+    elif low.startswith("/referral") or low.startswith("referral"):
+        await handle_referral(peer_id, text)
     elif low.startswith("/link") or low.startswith("link "):
         await handle_link(peer_id, text)
     elif low in ("/owner", "owner", "владелец", "я владелец"):
@@ -1413,6 +1538,12 @@ async def process_message_event(event: dict) -> None:
             "Код создаётся в TG боте через <code>/link</code> или в Mini App.\n"
             "⏱ Действует 10 минут.",
         )
+
+    elif action == "alarm":
+        await handle_alarm(peer_id)
+
+    elif action == "referral":
+        await handle_referral(peer_id)
 
     elif action == "donate":
         await handle_donate(peer_id)

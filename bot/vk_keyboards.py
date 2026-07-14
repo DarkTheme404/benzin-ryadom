@@ -139,6 +139,8 @@ VK_BTN_PROFILE = "👤 Профиль"
 VK_BTN_HELP = "❓ Помощь"
 VK_BTN_PREMIUM = "💎 Premium"
 VK_BTN_LINK = "🔗 Привязать"
+VK_BTN_ALARM = "🔔 Будильник"
+VK_BTN_REFERRAL = "🎁 Реферал"
 VK_BTN_DONATE = "❤️ Поддержать"
 VK_BTN_HOME = "🏠 В начало"
 
@@ -176,6 +178,14 @@ def vk_main_menu() -> str:
     rows.append([
         _callback_button(VK_BTN_LINK, {"a": "link"}, "primary") if use_callback
         else _button(VK_BTN_LINK, "primary"),
+    ])
+    rows.append([
+        _callback_button(VK_BTN_ALARM, {"a": "alarm"}, "secondary") if use_callback
+        else _button(VK_BTN_ALARM, "secondary"),
+    ])
+    rows.append([
+        _callback_button(VK_BTN_REFERRAL, {"a": "referral"}, "secondary") if use_callback
+        else _button(VK_BTN_REFERRAL, "secondary"),
     ])
     rows.append([
         _callback_button(VK_BTN_PROFILE, {"a": "profile"}) if use_callback

@@ -126,6 +126,46 @@ async def _send_one_push(
         return False, False
 
 
+async def _send_fuel_alarm_notifications(
+    bot: Bot, station_id: int, fuel_type: str, seen_pairs: set, bot_id: int | None
+):
+    """Отправляет уведомления для fuel_alarms когда топливо появилось."""
+    try:
+        from db import get_fuel_alarms_for_station, mark_fuel_alarm_triggered, get_station_by_id
+        alarms = await get_fuel_alarms_for_station(station_id, fuel_type)
+        if not alarms:
+            return
+        station = await get_station_by_id(station_id)
+        sname = station.get("name", "АЗС") if station else "АЗС"
+        sop = station.get("operator", "") if station else ""
+        saddr = station.get("address", "") if station else ""
+        for alarm in alarms:
+            uid = alarm.get("user_id")
+            tg_id = alarm.get("telegram_id")
+            alarm_id = alarm.get("id")
+            if not tg_id or not uid:
+                continue
+            if bot_id and tg_id == bot_id:
+                continue
+            if (uid, station_id) in seen_pairs:
+                continue
+            fuel_label = "АИ-100" if fuel_type == "100" else f"АИ-{fuel_type}" if fuel_type in ("92","95","98") else fuel_type.upper()
+            text = (
+                f"🔔 <b>Топливный будильник!</b>\n\n"
+                f"<b>{fuel_label}</b> появился на <b>{sname}</b> ({sop})\n"
+                f"📍 {saddr}\n\n"
+                f"Торопись — цену могут поднять!"
+            )
+            try:
+                await bot.send_message(chat_id=tg_id, text=text, parse_mode="HTML")
+                await mark_fuel_alarm_triggered(alarm_id)
+                seen_pairs.add((uid, station_id))
+            except Exception as e:
+                logger.warning("Fuel alarm push to %d failed: %s", tg_id, e)
+    except Exception as e:
+        logger.exception("Fuel alarm notifications error: %s", e)
+
+
 async def _push_iteration(bot: Bot):
     """Одна итерация: собрать отчёты → подписчиков → отправить (параллельно)."""
     if not settings.bot:
@@ -176,6 +216,10 @@ async def _push_iteration(bot: Bot):
         if not (became_yes or price_dropped or price_dropped_premium or is_first):
             continue
         is_premium_event = bool(price_dropped_premium)  # только premium получают этот push
+
+        # Fuel alarm: уведомляем Premium юзеров, когда нужное топливо появилось
+        if became_yes:
+            await _send_fuel_alarm_notifications(bot, station_id, fuel_type, seen_pairs, bot_id)
 
         # Собираем задачи для параллельной отправки
         tasks = []

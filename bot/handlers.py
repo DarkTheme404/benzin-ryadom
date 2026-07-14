@@ -7,7 +7,6 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
 from pathlib import Path
 
 from aiogram import Dispatcher, F, Bot
@@ -27,8 +26,9 @@ from aiogram.types import (
     PreCheckoutQuery,
     ReplyKeyboardMarkup,
     WebAppData,
+    WebAppInfo,
 )
-from aiogram.types import ChatMemberUpdated
+
 
 from db import (
     _execute,
@@ -46,11 +46,9 @@ from db import (
     get_owner_stations,
     get_pending_owner_applications,
     get_plan,
-    get_premium_info,
     get_station_by_id,
     get_station_current_status,
     get_station_rating,
-    get_station_recent_reviews,
     get_stations_with_statuses,
     get_user_id_by_telegram_id,
     get_user_premium,
@@ -61,7 +59,6 @@ from db import (
     upsert_user,
 )
 from keyboards import (
-    flow_keyboard,
     fuel_type_keyboard,
     main_menu_keyboard,
     main_inline_keyboard,
@@ -75,7 +72,6 @@ from keyboards import (
     network_filter_keyboard,
     bug_report_keyboard,
     idea_keyboard,
-    premium_keyboard,
     web_app_keyboard,
     report_city_keyboard,
     report_station_keyboard,
@@ -84,15 +80,13 @@ from keyboards import (
     review_fuel_keyboard,
     BTN_FIND, BTN_REPORT, BTN_SUBSCRIBE, BTN_PROFILE,
     BTN_OWNER, BTN_MY_STATIONS, BTN_HELP, BTN_PREMIUM, BTN_HOME,
-    BTN_APP, BTN_BUG, BTN_IDEA, BTN_DONATE, BTN_ROUTE, BTN_LINK,
+    BTN_APP, BTN_BUG, BTN_IDEA, BTN_DONATE, BTN_ROUTE, BTN_LINK, BTN_REFERRAL,
 )
-from utils import format_distance, format_fuel_status, format_station_card
+from utils import format_distance, format_station_card
 from config import settings
 from messages import (
     WELCOME_1, WELCOME_2, WELCOME_3,
-    HELP_TEXT, FIND_PROMPT, FIND_NOTHING, FIND_RESULTS_HEADER,
-    MY_STATIONS_EMPTY, SUBSCRIBE_PROMPT, INLINE_NO_RESULTS,
-    PREMIUM_OFFER, PREMIUM_ACTIVE,
+    HELP_TEXT,
 )
 
 # Inline-фоллбэки для констант, которых нет в messages.py
@@ -336,6 +330,36 @@ async def cmd_start(message: Message):
         return
 
     first_name = message.from_user.first_name or "друг"
+    telegram_id = _tg_id(message)
+
+    # Проверяем реферальный код в /start ref_XXXX
+    text = (message.text or "").strip()
+    if "ref_" in text:
+        import re
+        ref_match = re.search(r'ref_([A-Z0-9]+)', text, re.IGNORECASE)
+        if ref_match:
+            ref_code = ref_match.group(1).upper()
+            import aiohttp
+            backend = "https://benzin-ryadom.onrender.com"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{backend}/api/referral/apply",
+                        json={"telegram_id": telegram_id, "code": ref_code},
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as r:
+                        ref_data = await r.json()
+                if ref_data.get("ok"):
+                    await message.answer(
+                        f"🎉 <b>Добро пожаловать!</b>\n\n"
+                        f"Ты использовал реферальный код!\n"
+                        f"Твой друг получил месяц Premium.\n\n"
+                        f"👇 <b>Главное меню:</b>",
+                        reply_markup=main_menu_keyboard(),
+                    )
+                    return
+            except Exception:
+                pass
 
     # Сообщение 1: Hero
     try:
@@ -988,7 +1012,7 @@ async def cmd_find_raw(message: Message):
 
 # === /premium ===
 async def cmd_premium(message: Message):
-    """Показать 3 тарифа премиума."""
+    """Показать 3 тарифа премиума — красивый формат."""
     await get_or_create_user(message)
     telegram_id = _tg_id(message)
     uid = await get_user_id_by_telegram_id(telegram_id)
@@ -1004,50 +1028,59 @@ async def cmd_premium(message: Message):
             exp_dt = exp
         days_left = max(0, (exp_dt - _dt.now()).days) if exp_dt else 0
         tier_name = {"economy": "📊 Эконом", "standard": "🗺️ Стандарт", "elite": "👑 Элит"}.get(sub.get("tier"), sub.get("tier"))
+        tier_features = {
+            "economy": "📈 График цен · 📦 CSV-экспорт · 🗺️ Офлайн-карта",
+            "standard": "📈 График цен · 📦 CSV · 🗺️ Офлайн · 🛣 Маршрут A→B · 🔮 Прогноз · 🔔 Будильник",
+            "elite": "Всё из Стандарт + 🚗 Антипробка · 🆘 SOS-режим",
+        }
         text = (
-            f"✅ <b>У тебя активен Премиум</b>\n\n"
-            f"Тариф: {tier_name}\n"
-            f"Истекает: {str(exp)[:10]} ({days_left} дн.)\n\n"
-            f"Используй все фичи: /route (маршрут с топливом), /history (история цен), /export (CSV-выгрузка)"
+            f"✅ <b>У тебя Premium!</b>\n\n"
+            f"Тариф: <b>{tier_name}</b>\n"
+            f"Истекает: {str(exp)[:10]} (<b>{days_left} дн.</b>)\n\n"
+            f"<b>Твои фичи:</b>\n{tier_features.get(sub.get('tier'), '')}\n\n"
+            f"💡 Смотри статистику в профиле /profile"
         )
-        await message.answer(text)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🌐 Открыть Mini App", web_app=WebAppInfo(url="https://benzin-ryadom.onrender.com"))],
+            [InlineKeyboardButton(text="🏠 Главная", callback_data="back_home")],
+        ])
+        await message.answer(text, reply_markup=kb)
         return
 
     text = (
-        "💎 <b>Премиум-подписка «Бензин рядом»</b>\n\n"
-        "🔥 <b>Зачем подключать:</b>\n"
-        "• Экономия до 3000₽/мес на топливе\n"
-        "• Знаешь заранее, где будет бензин по пути\n"
-        "• SOS-режим — если застрял, помогут другие премиум\n"
-        "• Чем больше премиум-пользователей, тем точнее данные\n"
-        "• Поддерживаешь развитие сервиса — мы остаёмся бесплатными для остальных\n\n"
-        "<b>Выбери тариф:</b>\n\n"
-        "📊 <b>Эконом</b> — 100₽/мес\n"
-        "   📈 График цен 30 дней\n"
-        "   📦 Экспорт истории в CSV/Excel\n"
-        "   🗺️ Офлайн-карта региона (без интернета)\n\n"
-        "🗺️ <b>Стандарт</b> — 250₽/мес\n"
-        "   Всё из Эконом +\n"
-        "   🛣 Маршрут A→B с гарантией топлива\n"
-        "   🔮 Прогноз наличия на 7 дней\n"
-        "   🔔 Топливный будильник\n\n"
-        "👑 <b>Элит</b> — 500₽/мес\n"
-        "   Всё из Стандарт +\n"
-        "   🚗 Анти-пробка (пробки+цены+наличие)\n"
-        "   🆘 SOS-режим (уведомляет всех премиум в радиусе 50 км)\n\n"
-        "👇 Нажми на тариф для оплаты через ЮMoney:"
+        "💎 <b>Премиум «Бензин рядом»</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🏆 <b>2 400+ водителей</b> уже экономят с нами\n"
+        "💰 В среднем экономия <b>2 700₽/мес</b> на топливе\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📊 <b>Эконом</b> — <b>100₽/мес</b>\n"
+        "├ 📈 График цен 30 дней\n"
+        "├ 📦 Экспорт в CSV/Excel\n"
+        "└ 🗺️ Офлайн-карта (без интернета)\n\n"
+        "🗺️ <b>Стандарт</b> — <b>250₽/мес</b> <i>🔥 Хит</i>\n"
+        "├ Всё из Эконом\n"
+        "├ 🛣 Маршрут A→B с ценами\n"
+        "├ 🔮 Прогноз цен на 7 дней\n"
+        "└ 🔔 Топливный будильник\n\n"
+        "👑 <b>Элит</b> — <b>500₽/мес</b>\n"
+        "├ Всё из Стандарт\n"
+        "├ 🚗 Антипробка (цены+пробки)\n"
+        "└ 🆘 SOS-режим (помощь 50 км)\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🧮 <b>Калькулятор:</b>\n"
+        "Если заправляешь 40л/мес × 2 раза,\n"
+        "и экономишь всего 3₽/л = <b>240₽/мес</b>\n"
+        "→ Стандарт уже окупается!\n\n"
+        "👇 <b>Выбери тариф:</b>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📊 Эконом — 100₽", callback_data="buy_economy"),
-            InlineKeyboardButton(text="🗺️ Стандарт — 250₽", callback_data="buy_standard"),
+            InlineKeyboardButton(text="📊 100₽", callback_data="buy_economy"),
+            InlineKeyboardButton(text="🗺️ 250₽", callback_data="buy_standard"),
+            InlineKeyboardButton(text="👑 500₽", callback_data="buy_elite"),
         ],
-        [
-            InlineKeyboardButton(text="👑 Элит — 500₽", callback_data="buy_elite"),
-        ],
-        [
-            InlineKeyboardButton(text="🎁 Попробовать 7 дней бесплатно", callback_data="premium_trial"),
-        ],
+        [InlineKeyboardButton(text="🎁 7 дней бесплатно", callback_data="premium_trial")],
+        [InlineKeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url="https://benzin-ryadom.onrender.com"))],
         [InlineKeyboardButton(text="🏠 Главная", callback_data="back_home")],
     ])
     await message.answer(text, reply_markup=kb)
@@ -1302,6 +1335,168 @@ async def link_code_input_handler(message: Message, state: FSMContext):
     await _use_link_code(message, telegram_id, code)
 
 
+# === /alarm — Топливный будильник (Premium) ===
+
+async def cmd_alarm(message: Message):
+    """Показывает список топливных будильников или инструкцию."""
+    telegram_id = _tg_id(message)
+    uid = await _get_uid(telegram_id)
+    if not uid:
+        await message.answer("Сначала нажми /start")
+        return
+
+    import aiohttp
+    backend = "https://benzin-ryadom.onrender.com"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/fuel-alarm/list",
+                params={"telegram_id": telegram_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+    except Exception:
+        data = {"alarms": [], "is_premium": False}
+
+    is_premium = data.get("is_premium", False)
+    alarms = data.get("alarms", [])
+
+    if not is_premium:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💎 Купить Premium", callback_data="premium:start")],
+        ])
+        await message.answer(
+            "⛽ <b>Топливный будильник</b>\n\n"
+            "Эта фича доступна только для <b>Premium</b> пользователей.\n\n"
+            "Купи Premium и получи:\n"
+            "• Уведомления когда топливо появится\n"
+            "• Прогноз цен на 7 дней\n"
+            "• Экспорт данных в CSV\n"
+            "• Маршрут A→B с ближайшими ценами",
+            reply_markup=kb,
+        )
+        return
+
+    if not alarms:
+        await message.answer(
+            "⛽ <b>Топливный будильник</b>\n\n"
+            "У тебя нет активных будильников.\n\n"
+            "Чтобы создать будильник:\n"
+            "1. Открой карту в Mini App\n"
+            "2. Найди нужную АЗС\n"
+            "3. Нажми «🔔 Уведомить о появлении»\n"
+            "4. Выбери тип топлива (92/95/98/DT)\n\n"
+            "Мы уведомим тебя когда нужное топливо появится!",
+        )
+        return
+
+    lines = ["⛽ <b>Твои топливные будильники:</b>\n"]
+    for a in alarms:
+        fuel = a.get("fuel_type", "?")
+        fuel_label = "АИ-100" if fuel == "100" else f"АИ-{fuel}" if fuel in ("92","95","98") else fuel.upper()
+        name = a.get("name", "АЗС")
+        city = a.get("city", "")
+        created = a.get("created_at", "")[:10]
+        lines.append(f"• <b>{fuel_label}</b> — {name} ({city}) — {created}")
+
+    lines.append(f"\nВсего: {len(alarms)} будильников")
+    await message.answer("\n".join(lines))
+
+
+# === /referral — Реферальная программа ===
+
+async def cmd_referral(message: Message):
+    """Показывает реферальный код или применяет чужой."""
+    telegram_id = _tg_id(message)
+    uid = await _get_uid(telegram_id)
+    if not uid:
+        await message.answer("Сначала нажми /start")
+        return
+
+    text = (message.text or "").strip()
+    parts = text.split(maxsplit=1)
+
+    # /referral ABC123 — применить чужой код
+    if len(parts) >= 2 and not parts[1].startswith("/"):
+        code = parts[1].strip().upper()
+        import aiohttp
+        backend = "https://benzin-ryadom.onrender.com"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{backend}/api/referral/apply",
+                    json={"telegram_id": telegram_id, "code": code},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    data = await r.json()
+        except Exception:
+            data = {"error": "connection error"}
+
+        if data.get("ok"):
+            await message.answer(
+                f"🎉 <b>Реферал применён!</b>\n\n"
+                f"Твой друг получил месяц Premium.\n"
+                f"Спасибо что пользуетесь «Бензин рядом»!",
+            )
+        else:
+            err = data.get("error", "unknown")
+            if err == "invalid referral code":
+                await message.answer("❌ Код не найден. Проверь и попробуй ещё раз.")
+            elif err == "referral code already used":
+                await message.answer("❌ Этот код уже был использован.")
+            elif err == "cannot use your own referral code":
+                await message.answer("❌ Нельзя использовать свой же код.")
+            else:
+                await message.answer(f"❌ Ошибка: {err}")
+        return
+
+    # /referral — показать свой код
+    import aiohttp
+    backend = "https://benzin-ryadom.onrender.com"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/referral/code",
+                params={"telegram_id": telegram_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+            async with session.get(
+                f"{backend}/api/referral/stats",
+                params={"telegram_id": telegram_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                stats_data = await r.json()
+    except Exception:
+        data = {"code": "ERROR"}
+        stats_data = {"stats": {"total": 0, "completed": 0}}
+
+    code = data.get("code", "?")
+    link = data.get("link", "")
+    stats = stats_data.get("stats", {})
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Поделиться кодом", switch_inline_query=code)],
+        [InlineKeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url="https://benzin-ryadom.onrender.com"))],
+    ])
+    await message.answer(
+        f"🎁 <b>Реферальная программа</b>\n\n"
+        f"Пригласи друга — получи <b>месяц Premium бесплатно</b>!\n\n"
+        f"<b>Твой код:</b> <code>{code}</code>\n"
+        f"<b>Ссылка:</b> {link}\n\n"
+        f"<b>Статистика:</b>\n"
+        f"👥 Приглашено: {stats.get('total', 0)}\n"
+        f"✅ Активировали: {stats.get('completed', 0)}\n"
+        f"⏳ Ожидают: {stats.get('pending', 0)}\n\n"
+        f"<b>Как это работает:</b>\n"
+        f"1. Отправь код другу\n"
+        f"2. Друг вводит /referral {code}\n"
+        f"3. Вы оба получаете месяц Premium!\n\n"
+        f"💡 Код работает в TG, VK и Mini App",
+        reply_markup=kb,
+    )
+
+
 async def premium_trial_callback(callback: CallbackQuery):
     await callback.answer()
     uid = await _ensure_callback_user(callback)
@@ -1313,9 +1508,9 @@ async def premium_trial_callback(callback: CallbackQuery):
         return
     result = await activate_premium(
         user_id=uid,
+        tier="standard",
         days=7,
-        charge_id="trial_7d",
-        stars=0,
+        payment_id="trial_7d",
     )
     await callback.message.answer(
         f"🎁 <b>Trial Premium активирован!</b>\n\n"
@@ -1367,9 +1562,10 @@ async def successful_payment_handler(message: Message):
             return
         result = await activate_premium(
             user_id=uid,
+            tier="standard",
             days=settings.PREMIUM_DURATION_DAYS,
-            charge_id=sp.telegram_payment_charge_id,
-            stars=sp.total_amount,
+            payment_id=sp.telegram_payment_charge_id,
+            amount=sp.total_amount,
         )
         await message.answer(
             f"🎉 <b>Premium активирован!</b>\n\n"
@@ -1569,6 +1765,8 @@ async def handle_main_button(message: Message, state: FSMContext = None):
         await cmd_premium(message)
     elif text == BTN_LINK or text == "🔗 Привязать":
         await cmd_link(message)
+    elif text == BTN_REFERRAL or text == "🎁 Реферал":
+        await cmd_referral(message)
     elif text == BTN_APP or text == "📱 Приложение":
         await cmd_open_app(message)
     elif text == BTN_DONATE or text == "❤️ Поддержать":
@@ -3612,6 +3810,8 @@ def register_all_handlers(dp: Dispatcher):
     # Premium
     dp.message.register(cmd_premium, Command("premium"))
     dp.message.register(cmd_link, Command("link"))
+    dp.message.register(cmd_alarm, Command("alarm"))
+    dp.message.register(cmd_referral, Command("referral"))
     dp.callback_query.register(link_create_callback, F.data == "link:create")
     dp.callback_query.register(link_enter_callback, F.data == "link:enter")
     dp.message.register(link_code_input_handler, StateFilter(LinkStates.waiting_code))

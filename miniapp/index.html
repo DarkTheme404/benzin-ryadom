@@ -90,6 +90,16 @@
         <div class="emergency-arrow">→</div>
       </button>
 
+      <!-- SOS CTA (Elite) -->
+      <button class="emergency-card sos-card" id="btn-sos" style="background:linear-gradient(135deg, rgba(239,68,68,0.15), rgba(220,38,38,0.08));border:1px solid rgba(239,68,68,0.3);">
+        <div class="emergency-icon" style="font-size:28px;">🆘</div>
+        <div class="emergency-text">
+          <div class="emergency-title" style="color:#ef4444;">SOS-режим</div>
+          <div class="emergency-subtitle">Помощь Premium-водителей рядом</div>
+        </div>
+        <div class="emergency-arrow" style="color:#ef4444;">→</div>
+      </button>
+
       <!-- Fuel chips -->
       <div class="chips-row">
         <button class="chip chip-fuel active" data-fuel="">Все</button>
@@ -183,8 +193,8 @@
           <div class="stat-label">Отчётов</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" id="stat-reviews">0</div>
-          <div class="stat-label">Отзывов</div>
+          <div class="stat-value" id="stat-savings">—</div>
+          <div class="stat-label">Экономия</div>
         </div>
         <div class="stat-card">
           <div class="stat-value" id="stat-badges">0</div>
@@ -262,6 +272,48 @@
         <h3 class="profile-section-title">Подписки</h3>
         <div class="subs-list" id="subs-list">
           <div class="empty-mini">Нет активных подписок</div>
+        </div>
+      </div>
+
+      <!-- Fuel Alarms -->
+      <div class="profile-section">
+        <h3 class="profile-section-title">🔔 Топливные будильники</h3>
+        <div class="fuel-alarms-list" id="fuel-alarms-list">
+          <div class="empty-mini">Нет активных будильников</div>
+        </div>
+      </div>
+
+      <!-- Referral -->
+      <div class="profile-section">
+        <h3 class="profile-section-title">🎁 Реферальная программа</h3>
+        <div class="referral-section" id="referral-section">
+          <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">
+            Пригласи друга — получи месяц Premium бесплатно!
+          </div>
+          <div style="background:var(--bg-card);border-radius:12px;padding:16px;margin-bottom:12px;">
+            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Твой код</div>
+            <div style="font-size:20px;font-weight:800;color:var(--accent);letter-spacing:2px;" id="referral-code">Загрузка...</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <div style="flex:1;background:var(--bg-card);border-radius:12px;padding:12px;text-align:center;">
+              <div style="font-size:20px;font-weight:700;" id="referral-total">0</div>
+              <div style="font-size:11px;color:var(--text-secondary);">Приглашено</div>
+            </div>
+            <div style="flex:1;background:var(--bg-card);border-radius:12px;padding:12px;text-align:center;">
+              <div style="font-size:20px;font-weight:700;color:#34d399;" id="referral-completed">0</div>
+              <div style="font-size:11px;color:var(--text-secondary);">Активировали</div>
+            </div>
+          </div>
+          <button class="btn btn-primary" id="btn-share-referral" style="width:100%;border-radius:12px;">
+            📤 Поделиться кодом
+          </button>
+          <div style="margin-top:12px;">
+            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">Введи код друга:</div>
+            <div style="display:flex;gap:8px;">
+              <input type="text" id="referral-input" placeholder="Код друга" style="flex:1;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg-card);color:var(--text);font-size:14px;">
+              <button class="btn btn-secondary" id="btn-apply-referral" style="padding:10px 16px;border-radius:10px;">Применить</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -618,6 +670,63 @@
 <script src="/app/premium-catalog.js?v=1"></script>
 <!-- Premium UI (upsell, badges, locks) -->
 <script src="/app/premium-ui.js?v=1"></script>
+
+<!-- Welcome Modal (первый запуск) -->
+<div class="welcome-overlay" id="welcome-overlay" style="display: none;" onclick="if(event.target===this)closeWelcome()">
+  <div class="welcome-modal">
+    <div class="welcome-hero">
+      <div class="welcome-hero-bg"></div>
+      <div class="welcome-hero-content">
+        <div class="welcome-hero-emoji">⛽</div>
+        <h2 class="welcome-hero-title">Бензин рядом</h2>
+        <p class="welcome-hero-subtitle">Найди дешёвое топливо за секунду</p>
+      </div>
+    </div>
+    <div class="welcome-body">
+      <div class="welcome-features">
+        <div class="welcome-feature">
+          <div class="welcome-feature-icon">📊</div>
+          <div class="welcome-feature-text">
+            <div class="welcome-feature-title">Цены в реальном времени</div>
+            <div class="welcome-feature-desc">Отчёты от водителей как ты</div>
+          </div>
+        </div>
+        <div class="welcome-feature">
+          <div class="welcome-feature-icon">🗺️</div>
+          <div class="welcome-feature-text">
+            <div class="welcome-feature-title">4 288 городов</div>
+            <div class="welcome-feature-desc">Вся Россия и СНГ</div>
+          </div>
+        </div>
+        <div class="welcome-feature">
+          <div class="welcome-feature-icon">🔔</div>
+          <div class="welcome-feature-text">
+            <div class="welcome-feature-title">Уведомления</div>
+            <div class="welcome-feature-desc">Узнаешь о дешёвом бензине первым</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="welcome-premium-teaser">
+        <div class="welcome-premium-badge">💎 Premium</div>
+        <div class="welcome-premium-title">Хочешь больше?</div>
+        <div class="welcome-premium-desc">
+          Прогноз цен, экспорт CSV, маршрут A→B с ценами и топливный будильник — всё для Premium
+        </div>
+        <button class="btn btn-tier btn-standard" onclick="closeWelcome();setTimeout(()=>showUpsell('welcome'),500)" style="width:100%;margin-top:12px;">
+          Узнать о Premium
+        </button>
+      </div>
+
+      <button class="btn btn-primary welcome-cta" onclick="closeWelcome()" style="width:100%;margin-top:16px;font-size:17px;padding:16px;">
+        Начать поиск ⛽
+      </button>
+      <div class="welcome-skip" onclick="closeWelcome()" style="text-align:center;margin-top:12px;font-size:13px;color:var(--text-secondary);cursor:pointer;">
+        Пропустить
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Premium Upsell Modal -->
 <div class="upsell-overlay" id="upsell-overlay" style="display: none;" onclick="if(event.target===this)closeUpsell()">

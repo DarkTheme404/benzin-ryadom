@@ -7,7 +7,7 @@ import json
 import logging
 import math
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -253,6 +253,39 @@ async def _migrate_sqlite(db):
     await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_payments_user_id ON premium_payments (user_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_payments_external_id ON premium_payments (external_id)")
 
+    # === fuel_alarms — подписки на появление топлива (Premium) ===
+    await db.execute(
+        """CREATE TABLE IF NOT EXISTS fuel_alarms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+            fuel_type TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            triggered_at TEXT,
+            last_notified_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, station_id, fuel_type)
+        )"""
+    )
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_fuel_alarms_active ON fuel_alarms (is_active, station_id, fuel_type)")
+
+    # === referrals — Реферальная программа ===
+    await db.execute(
+        """CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            referred_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            referral_code TEXT NOT NULL UNIQUE,
+            referred_telegram_id INTEGER,
+            status TEXT DEFAULT 'pending',
+            premium_granted INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT
+        )"""
+    )
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_referrals_code ON referrals (referral_code)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals (referrer_user_id)")
+
 
 async def _create_indexes_sqlite(db):
     """Создаёт индексы (можно безопасно вызывать повторно)."""
@@ -440,6 +473,45 @@ async def _create_schema_pg(pool):
             logger.info("PG migration premium: tables created")
         except Exception as e:
             logger.warning(f"PG migration premium: {e}")
+
+        # 3.5. fuel_alarms — подписки на появление топлива (Premium)
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS fuel_alarms (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+                    fuel_type TEXT NOT NULL,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    triggered_at TIMESTAMPTZ,
+                    last_notified_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(user_id, station_id, fuel_type)
+                )"""
+            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_fuel_alarms_active ON fuel_alarms (is_active, station_id, fuel_type)")
+        except Exception as e:
+            logger.warning(f"PG migration fuel_alarms: {e}")
+
+        # 3.6. referrals — Реферальная программа
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS referrals (
+                    id SERIAL PRIMARY KEY,
+                    referrer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    referred_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    referral_code TEXT NOT NULL UNIQUE,
+                    referred_telegram_id INTEGER,
+                    status TEXT DEFAULT 'pending',
+                    premium_granted BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    completed_at TIMESTAMPTZ
+                )"""
+            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_code ON referrals (referral_code)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals (referrer_user_id)")
+        except Exception as e:
+            logger.warning(f"PG migration referrals: {e}")
 
         # 4. Автоимпорт из SQLite если PG пуста
         try:
@@ -832,97 +904,23 @@ async def get_user_stats_summary(user_id: int) -> dict:
     return stats
 
 
-# === Premium-подписки (Telegram Stars) ===
-async def activate_premium(user_id: int, days: int = 30, charge_id: str = "", stars: int = 0) -> dict:
-    """Активирует premium на N дней. Возвращает {expires_at}."""
-    from datetime import datetime, timedelta
-    if USE_SQLITE:
-        expires = (datetime.now() + timedelta(days=days)).isoformat()
-        await _db.execute(
-            "UPDATE premium_subscriptions SET is_active = 0 WHERE user_id = ?",
-            (user_id,),
-        )
-        async with _db.execute(
-            """INSERT INTO premium_subscriptions
-               (user_id, telegram_payment_charge_id, stars_amount, expires_at, is_active)
-               VALUES (?, ?, ?, ?, 1)""",
-            (user_id, charge_id, stars, expires),
-        ) as cur:
-            sub_id = cur.lastrowid
-        await _db.commit()
-        return {"id": sub_id, "expires_at": expires}
-    else:
-        async with _db.acquire() as conn:
-            await conn.execute(
-                "UPDATE premium_subscriptions SET is_active = FALSE WHERE user_id = $1",
-                user_id,
-            )
-            row = await conn.fetchrow(
-                """INSERT INTO premium_subscriptions
-                   (user_id, telegram_payment_charge_id, stars_amount, expires_at, is_active)
-                   VALUES ($1, $2, $3, NOW() + ($4 || ' days')::interval, TRUE)
-                   RETURNING id, expires_at""",
-                user_id, charge_id, stars, str(days),
-            )
-            return {"id": row["id"], "expires_at": row["expires_at"].isoformat()}
 
-
-async def is_premium(user_id: int) -> bool:
-    """Проверяет, активна ли premium-подписка."""
-    if USE_SQLITE:
-        async with _db.execute(
-            """SELECT expires_at FROM premium_subscriptions
-               WHERE user_id = ? AND is_active = 1
-               ORDER BY expires_at DESC LIMIT 1""",
-            (user_id,),
-        ) as cur:
-            row = await cur.fetchone()
-        if not row:
-            return False
-        try:
-            exp = datetime.fromisoformat(row["expires_at"])
-            return exp > datetime.now()
-        except (ValueError, TypeError):
-            return False
-    else:
-        async with _db.acquire() as conn:
-            row = await conn.fetchrow(
-                """SELECT expires_at FROM premium_subscriptions
-                   WHERE user_id = $1 AND is_active = TRUE
-                   ORDER BY expires_at DESC LIMIT 1""",
-                user_id,
-            )
-        if not row:
-            return False
-        exp = row["expires_at"]
-        now = datetime.now(timezone.utc) if exp and exp.tzinfo else datetime.now()
-        return exp > now
 
 
 async def get_premium_info(user_id: int) -> dict | None:
     """Возвращает инфо о premium-подписке или None."""
-    if USE_SQLITE:
-        async with _db.execute(
-            """SELECT started_at, expires_at, stars_amount, telegram_payment_charge_id
-               FROM premium_subscriptions
-               WHERE user_id = ? AND is_active = 1
-               ORDER BY expires_at DESC LIMIT 1""",
-            (user_id,),
-        ) as cur:
-            row = await cur.fetchone()
-        if not row:
-            return None
-        return dict(row)
-    else:
-        async with _db.acquire() as conn:
-            row = await conn.fetchrow(
-                """SELECT started_at, expires_at, stars_amount, telegram_payment_charge_id
-                   FROM premium_subscriptions
-                   WHERE user_id = $1 AND is_active = TRUE
-                   ORDER BY expires_at DESC LIMIT 1""",
-                user_id,
-            )
-        return dict(row) if row else None
+    sub = await get_user_premium(user_id)
+    if not sub:
+        return None
+    result = dict(sub) if hasattr(sub, 'keys') else dict(sub)
+    expires = result.get("expires_at")
+    if isinstance(expires, str):
+        try:
+            from datetime import datetime as _dt
+            result["expires_at"] = _dt.fromisoformat(expires)
+        except (ValueError, TypeError):
+            pass
+    return result
 
 
 async def _execute(sql: str, *args, returning: bool = False):
@@ -1558,6 +1556,61 @@ async def get_user_id_by_telegram_id(telegram_id: int) -> int | None:
                 "SELECT id FROM users WHERE telegram_id = $1", telegram_id
             )
         return row["id"] if row else None
+
+
+async def get_user_id_by_vk_id(vk_id: int) -> int | None:
+    """Возвращает внутренний id пользователя по vk_id."""
+    if USE_SQLITE:
+        async with _db.execute(
+            "SELECT id FROM users WHERE vk_id = ?", (vk_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else None
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id FROM users WHERE vk_id = $1", vk_id
+            )
+        return row["id"] if row else None
+
+
+async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") -> int:
+    """Создаёт/обновляет пользователя по VK ID. Возвращает user_id."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT id FROM users WHERE vk_id = ?", (vk_id,), one=True,
+        )
+        if row:
+            await _execute(
+                "UPDATE users SET first_name = ?, last_active_at = datetime('now') WHERE id = ?",
+                first_name, row["id"] if isinstance(row, dict) else row[0],
+            )
+            return row["id"] if isinstance(row, dict) else row[0]
+        await _execute(
+            """INSERT INTO users (vk_id, first_name, last_name, last_active_at)
+               VALUES (?, ?, ?, datetime('now'))""",
+            vk_id, first_name, last_name,
+        )
+        new_row = await _fetch("SELECT last_insert_rowid() as id", one=True)
+        return new_row["id"] if isinstance(new_row, dict) else new_row[0]
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id FROM users WHERE vk_id = $1", vk_id,
+            )
+            if row:
+                await conn.execute(
+                    "UPDATE users SET first_name = $1, last_active_at = NOW() WHERE id = $2",
+                    first_name, row["id"],
+                )
+                return row["id"]
+            new_row = await conn.fetchrow(
+                """INSERT INTO users (vk_id, first_name, last_name, last_active_at)
+                   VALUES ($1, $2, $3, NOW())
+                   RETURNING id""",
+                vk_id, first_name, last_name,
+            )
+            return new_row["id"]
 
 
 async def add_report(
@@ -3652,3 +3705,265 @@ async def get_user_id_by_any(telegram_id: int) -> int | None:
                 telegram_id,
             )
             return row["id"] if row else None
+
+
+# === Fuel Alarms (Premium топливный будильник) ===
+
+async def create_fuel_alarm(user_id: int, station_id: int, fuel_type: str) -> int | None:
+    """Создаёт/обновляет alarm. Возвращает alarm_id."""
+    if USE_SQLITE:
+        row = await _fetch(
+            """SELECT id FROM fuel_alarms
+               WHERE user_id = ? AND station_id = ? AND fuel_type = ?""",
+            user_id, station_id, fuel_type, one=True,
+        )
+        if row:
+            await _execute(
+                "UPDATE fuel_alarms SET is_active = 1, triggered_at = NULL WHERE id = ?",
+                row["id"] if isinstance(row, dict) else row[0],
+            )
+            return row["id"] if isinstance(row, dict) else row[0]
+        await _execute(
+            """INSERT INTO fuel_alarms (user_id, station_id, fuel_type, is_active)
+               VALUES (?, ?, ?, 1)""",
+            user_id, station_id, fuel_type,
+        )
+        new_row = await _fetch(
+            "SELECT last_insert_rowid() as id", one=True,
+        )
+        return new_row["id"] if isinstance(new_row, dict) else new_row[0]
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT id FROM fuel_alarms
+                   WHERE user_id = $1 AND station_id = $2 AND fuel_type = $3""",
+                user_id, station_id, fuel_type,
+            )
+            if row:
+                await conn.execute(
+                    "UPDATE fuel_alarms SET is_active = TRUE, triggered_at = NULL WHERE id = $1",
+                    row["id"],
+                )
+                return row["id"]
+            new_row = await conn.fetchrow(
+                """INSERT INTO fuel_alarms (user_id, station_id, fuel_type, is_active)
+                   VALUES ($1, $2, $3, TRUE)
+                   RETURNING id""",
+                user_id, station_id, fuel_type,
+            )
+            return new_row["id"]
+
+
+async def delete_fuel_alarm(user_id: int, station_id: int, fuel_type: str) -> bool:
+    """Удаляет alarm."""
+    if USE_SQLITE:
+        await _execute(
+            "DELETE FROM fuel_alarms WHERE user_id = ? AND station_id = ? AND fuel_type = ?",
+            user_id, station_id, fuel_type,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM fuel_alarms WHERE user_id = $1 AND station_id = $2 AND fuel_type = $3",
+                user_id, station_id, fuel_type,
+            )
+    return True
+
+
+async def get_fuel_alarms_for_user(user_id: int) -> list:
+    """Возвращает все активные alarms юзера."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT fa.id, fa.station_id, fa.fuel_type, fa.created_at, fa.triggered_at,
+                      s.name, s.operator, s.address, s.city, s.lat, s.lon
+               FROM fuel_alarms fa
+               JOIN stations s ON s.id = fa.station_id
+               WHERE fa.user_id = ? AND fa.is_active = 1
+               ORDER BY fa.created_at DESC""",
+            user_id,
+        )
+    else:
+        rows = await _fetch(
+            """SELECT fa.id, fa.station_id, fa.fuel_type, fa.created_at, fa.triggered_at,
+                      s.name, s.operator, s.address, s.city, s.lat, s.lon
+               FROM fuel_alarms fa
+               JOIN stations s ON s.id = fa.station_id
+               WHERE fa.user_id = $1 AND fa.is_active = TRUE
+               ORDER BY fa.created_at DESC""",
+            user_id,
+        )
+    return [dict(r) if not USE_SQLITE else r for r in (rows or [])]
+
+
+async def get_fuel_alarms_for_station(station_id: int, fuel_type: str) -> list:
+    """Возвращает активные alarms для конкретной АЗС + топлива."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT fa.id, fa.user_id, u.telegram_id
+               FROM fuel_alarms fa
+               JOIN users u ON u.id = fa.user_id
+               WHERE fa.station_id = ? AND fa.fuel_type = ? AND fa.is_active = 1
+                 AND (fa.triggered_at IS NULL OR datetime(fa.triggered_at) < datetime('now', '-1 hour'))""",
+            station_id, fuel_type,
+        )
+    else:
+        rows = await _fetch(
+            """SELECT fa.id, fa.user_id, u.telegram_id
+               FROM fuel_alarms fa
+               JOIN users u ON u.id = fa.user_id
+               WHERE fa.station_id = $1 AND fa.fuel_type = $2 AND fa.is_active = TRUE
+                 AND (fa.triggered_at IS NULL OR fa.triggered_at < NOW() - INTERVAL '1 hour')""",
+            station_id, fuel_type,
+        )
+    return [dict(r) if not USE_SQLITE else r for r in (rows or [])]
+
+
+async def mark_fuel_alarm_triggered(alarm_id: int) -> None:
+    """Помечает alarm как сработавший (чтобы не спамить)."""
+    if USE_SQLITE:
+        await _execute(
+            "UPDATE fuel_alarms SET triggered_at = datetime('now') WHERE id = ?",
+            alarm_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE fuel_alarms SET triggered_at = NOW() WHERE id = $1",
+                alarm_id,
+            )
+
+
+# === Referral Program (Реферальная программа) ===
+
+import secrets
+import string
+
+def _generate_referral_code(length: int = 8) -> str:
+    """Генерирует уникальный реферальный код."""
+    alphabet = string.ascii_uppercase + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+async def create_referral_code(user_id: int) -> str:
+    """Создаёт реферальный код для юзера. Возвращает код."""
+    if USE_SQLITE:
+        # Проверяем есть ли уже код
+        row = await _fetch(
+            "SELECT referral_code FROM referrals WHERE referrer_user_id = ? AND status = 'pending' LIMIT 1",
+            user_id, one=True,
+        )
+        if row:
+            return row["referral_code"] if isinstance(row, dict) else row[0]
+        code = _generate_referral_code()
+        await _execute(
+            """INSERT INTO referrals (referrer_user_id, referral_code, status)
+               VALUES (?, ?, 'active')""",
+            user_id, code,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT referral_code FROM referrals WHERE referrer_user_id = $1 AND status = 'active' LIMIT 1",
+                user_id,
+            )
+            if row:
+                return row["referral_code"]
+            code = _generate_referral_code()
+            await conn.execute(
+                """INSERT INTO referrals (referrer_user_id, referral_code, status)
+                   VALUES ($1, $2, 'active')""",
+                user_id, code,
+            )
+    return code
+
+
+async def get_referral_by_code(code: str) -> dict | None:
+    """Находит реферера по коду."""
+    if USE_SQLITE:
+        row = await _fetch(
+            """SELECT id, referrer_user_id, referral_code, status
+               FROM referrals WHERE referral_code = ? LIMIT 1""",
+            code, one=True,
+        )
+    else:
+        row = await _fetch(
+            """SELECT id, referrer_user_id, referral_code, status
+               FROM referrals WHERE referral_code = $1 LIMIT 1""",
+            code, one=True,
+        )
+    return dict(row) if row and isinstance(row, dict) else ({"id": row[0], "referrer_user_id": row[1], "referral_code": row[2], "status": row[3]} if row else None)
+
+
+async def complete_referral(code: str, referred_user_id: int, referred_telegram_id: int) -> bool:
+    """Завершает реферал: помечает как completed, начисляет Premium рефереру."""
+    from datetime import datetime, timedelta
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT referrer_user_id FROM referrals WHERE referral_code = ? AND status = 'active'",
+            code, one=True,
+        )
+        if not row:
+            return False
+        referrer_id = row["referrer_user_id"] if isinstance(row, dict) else row[0]
+        await _execute(
+            """UPDATE referrals SET referred_user_id = ?, referred_telegram_id = ?,
+               status = 'completed', completed_at = datetime('now')
+               WHERE referral_code = ?""",
+            referred_user_id, referred_telegram_id, code,
+        )
+        # Начисляем 1 месяц Premium рефереру
+        await activate_premium(referrer_id, "standard", days=30)
+        return True
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT referrer_user_id FROM referrals WHERE referral_code = $1 AND status = 'active'",
+                code,
+            )
+            if not row:
+                return False
+            referrer_id = row["referrer_user_id"]
+            await conn.execute(
+                """UPDATE referrals SET referred_user_id = $1, referred_telegram_id = $2,
+                   status = 'completed', completed_at = NOW()
+                   WHERE referral_code = $3""",
+                referred_user_id, referred_telegram_id, code,
+            )
+            await activate_premium(referrer_id, "standard", days=30)
+            return True
+
+
+async def get_referral_stats(user_id: int) -> dict:
+    """Возвращает статистику рефералов юзера."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT status, COUNT(*) as cnt FROM referrals
+               WHERE referrer_user_id = ? GROUP BY status""",
+            user_id,
+        )
+        total = await _fetch(
+            "SELECT COUNT(*) as cnt FROM referrals WHERE referrer_user_id = ?",
+            user_id, one=True,
+        )
+    else:
+        rows = await _fetch(
+            """SELECT status, COUNT(*) as cnt FROM referrals
+               WHERE referrer_user_id = $1 GROUP BY status""",
+            user_id,
+        )
+        total = await _fetch(
+            "SELECT COUNT(*) as cnt FROM referrals WHERE referrer_user_id = $1",
+            user_id, one=True,
+        )
+
+    stats = {"total": 0, "completed": 0, "pending": 0}
+    if total:
+        stats["total"] = total["cnt"] if isinstance(total, dict) else total[0]
+    for r in (rows or []):
+        s = r["status"] if isinstance(r, dict) else r[0]
+        c = r["cnt"] if isinstance(r, dict) else r[1]
+        if s == "completed":
+            stats["completed"] = c
+        elif s == "pending":
+            stats["pending"] = c
+    return stats
