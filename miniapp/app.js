@@ -3034,7 +3034,8 @@
             showToast('Ошибка: ' + (res.error || 'код неверный'), 'error');
           }
         } catch (e) {
-          if (status) status.textContent = '❌ Ошибка соединения';
+          if (status) status.textContent = '❌ ' + (e.message || 'Ошибка соединения');
+          showToast('Ошибка: ' + (e.message || 'соединения'), 'error');
         }
       });
     }

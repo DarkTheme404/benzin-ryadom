@@ -3663,18 +3663,34 @@ async def link_accounts(telegram_id: int, link_code: str) -> dict:
     linked_tg_id = info.get("telegram_id")
 
     if USE_SQLITE:
-        await _execute(
-            "UPDATE users SET linked_user_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE id = ?",
-            target_uid, current_uid,
-        )
-    else:
-        async with _db.acquire() as conn:
-            await conn.execute(
-                """UPDATE users
-                   SET linked_user_id = $1, link_code = NULL, link_code_expires_at = NULL
-                   WHERE id = $2""",
+        try:
+            await _execute(
+                "UPDATE users SET linked_user_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE id = ?",
                 target_uid, current_uid,
             )
+        except Exception:
+            # Fallback если linked_user_id колонки нет
+            await _execute(
+                "UPDATE users SET linked_telegram_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE id = ?",
+                linked_tg_id, current_uid,
+            )
+    else:
+        async with _db.acquire() as conn:
+            try:
+                await conn.execute(
+                    """UPDATE users
+                       SET linked_user_id = $1, link_code = NULL, link_code_expires_at = NULL
+                       WHERE id = $2""",
+                    target_uid, current_uid,
+                )
+            except Exception:
+                # Fallback если linked_user_id колонки нет
+                await conn.execute(
+                    """UPDATE users
+                       SET linked_telegram_id = $1, link_code = NULL, link_code_expires_at = NULL
+                       WHERE id = $2""",
+                    linked_tg_id, current_uid,
+                )
 
     return {
         "ok": True,
