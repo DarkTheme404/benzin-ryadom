@@ -1383,13 +1383,18 @@ async def run_vk_bot():
 
     logger.info("VK-бот запущен, начинаем polling...")
     import asyncio as _asyncio
-    retry_delay = 5
+    retry_delay = 3
+    success_count = 0
     while True:
         try:
             await bot.run_polling()
-            logger.info("VK polling ended normally, restarting...")
+            success_count += 1
+            logger.info("VK polling ended normally (success #%d), restarting...", success_count)
+            if success_count > 0:
+                retry_delay = 3
         except Exception as e:
             logger.exception("VK polling CRASHED: %s", e)
+            success_count = 0
         logger.info("VK polling restart in %ds...", retry_delay)
         await _asyncio.sleep(retry_delay)
-        retry_delay = min(retry_delay * 2, 300)
+        retry_delay = min(retry_delay * 2, 60)
