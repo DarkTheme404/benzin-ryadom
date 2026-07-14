@@ -348,42 +348,81 @@ async def handle_admin_stats(request):
 async def handle_public_stats(request):
     """GET /api/stats — публичная статистика (для лендинга и Mini App)."""
     try:
-        total_users = await db._fetch("SELECT COUNT(*) as c FROM users", one=True)
-        tg_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE telegram_id IS NOT NULL AND telegram_id > 0 AND vk_id IS NULL", one=True)
-        vk_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE vk_id IS NOT NULL", one=True)
-        try:
-            linked_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL", one=True)
-        except Exception:
-            linked_users = {"c": 0}
-        try:
-            premium_users = await db._fetch("SELECT COUNT(*) as c FROM premium_users WHERE is_active = 1", one=True)
-        except Exception:
-            premium_users = {"c": 0}
-        total_stations = await db._fetch("SELECT COUNT(*) as c FROM stations", one=True)
-        try:
-            total_reports = await db._fetch("SELECT COUNT(*) as c FROM reports", one=True)
-        except Exception:
-            total_reports = {"c": 0}
+        import db as _db_mod
 
-        def _c(r):
+        def _count(sql: str, params=()):
+            """Универсальный COUNT."""
+            if _db_mod.USE_SQLITE:
+                row = _db_mod._fetch(sql, *params, one=True) if params else _db_mod._fetch(sql, one=True)
+            else:
+                import asyncio as _aio
+                async def _q():
+                    async with _db_mod._db.acquire() as conn:
+                        return await conn.fetchval(sql, *params)
+                return _aio.get_event_loop().run_until_complete(_q())
+            if row is None: return 0
+            if isinstance(row, dict): return row.get("c", 0) or 0
+            try: return row["c"]
+            except: return row[0] if row else 0
+
+        # Используем простые COUNT через raw SQL
+        if _db_mod.USE_SQLITE:
+            total_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users", one=True)
+            tg_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users WHERE telegram_id > 0 AND vk_id IS NULL", one=True)
+            vk_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users WHERE vk_id IS NOT NULL", one=True)
+            try:
+                linked_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL", one=True)
+            except Exception:
+                linked_users = {"c": 0}
+            try:
+                premium_users = _db_mod._fetch("SELECT COUNT(*) as c FROM premium_users WHERE is_active = 1", one=True)
+            except Exception:
+                premium_users = {"c": 0}
+            total_stations = _db_mod._fetch("SELECT COUNT(*) as c FROM stations", one=True)
+            try:
+                total_reports = _db_mod._fetch("SELECT COUNT(*) as c FROM reports", one=True)
+            except Exception:
+                total_reports = {"c": 0}
+        else:
+            async with _db_mod._db.acquire() as conn:
+                total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
+                tg_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE telegram_id > 0 AND vk_id IS NULL")
+                vk_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE vk_id IS NOT NULL")
+                try:
+                    linked_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL")
+                except Exception:
+                    linked_users = 0
+                try:
+                    premium_users = await conn.fetchval("SELECT COUNT(*) FROM premium_users WHERE is_active = 1")
+                except Exception:
+                    premium_users = 0
+                total_stations = await conn.fetchval("SELECT COUNT(*) FROM stations")
+                try:
+                    total_reports = await conn.fetchval("SELECT COUNT(*) FROM reports")
+                except Exception:
+                    total_reports = 0
+
+        def _get(r, key="c"):
             if r is None: return 0
-            if isinstance(r, dict): return r.get("c", 0)
-            return r["c"] if hasattr(r, 'keys') else r[0]
+            if isinstance(r, int): return r
+            if isinstance(r, dict): return r.get(key, 0) or 0
+            try: return r[key]
+            except: return r[0] if r else 0
 
         return json_resp({
             "users": {
-                "total": _c(total_users),
-                "telegram": _c(tg_users),
-                "vk": _c(vk_users),
-                "linked": _c(linked_users),
-                "premium": _c(premium_users),
+                "total": _get(total_users),
+                "telegram": _get(tg_users),
+                "vk": _get(vk_users),
+                "linked": _get(linked_users),
+                "premium": _get(premium_users),
             },
-            "stations": _c(total_stations),
-            "reports": _c(total_reports),
+            "stations": _get(total_stations),
+            "reports": _get(total_reports),
         })
     except Exception as e:
         logger.exception(f"public_stats error: {e}")
-        return json_resp({"error": f"internal error: {type(e).__name__}"}, status=500)
+        return json_resp({"error": f"internal error: {type(e).__name__}: {str(e)[:100]}"}, status=500)
 
 
 async def get_source_stats() -> list[dict]:
