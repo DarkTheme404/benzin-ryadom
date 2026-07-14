@@ -1456,7 +1456,15 @@ async def process_message_event(event: dict) -> None:
         logger.warning("VK msg_event: missing peer_id or event_id. obj=%s", obj)
         return
 
-    # Дедупликация по event_id
+    # СРАЗУ отвечаем на event (event_answer обязателен в течение 5 сек)
+    # Это ДО любой обработки — чтобы кнопка не грузилась бесконечно
+    ack_ok = await _vk_send_event_answer(
+        event_id, user_id, peer_id,
+        toast="⏳",
+    )
+    logger.info("[vk-cb-evt] peer=%d event_id=%s ack_ok=%s", peer_id, event_id, ack_ok)
+
+    # Дедупликация по event_id (после ack чтобы не терять ответ)
     if event_id in _processed_events:
         return
     _processed_events[event_id] = time.time()
@@ -1481,14 +1489,6 @@ async def process_message_event(event: dict) -> None:
 
     # Регистрация пользователя
     await _ensure_user(peer_id)
-
-    # Сразу отвечаем (event_answer обязателен в течение 5 сек)
-    # Если ответ не пройдёт — не страшно, главное отправить сообщение
-    ack_ok = await _vk_send_event_answer(
-        event_id, user_id, peer_id,
-        toast="⏳",
-    )
-    logger.info("[vk-cb-evt] peer=%d action=%r ack_ok=%s", peer_id, action, ack_ok)
 
     # === Роутер по action ===
     # Пустой action = VK прислал message_event без payload (например, для

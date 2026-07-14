@@ -2040,27 +2040,8 @@ async def handle_vk_callback(request):
       - VK IP whitelist (апдейт VK: 185.195.232.0/22, 77.88.21.0/24, 93.184.216.0/24, 95.142.128.0/24, 87.240.128.0/20, 91.218.228.0/22)
       - VK_CALLBACK_SECRET (если задан)
     """
-    # === IP whitelist (VK API серверы) ===
-    VK_IP_PREFIXES = (
-        "185.195.232.", "77.88.21.", "93.184.216.", "95.142.128.",
-        "87.240.128.", "91.218.228.", "87.240.13.", "5.45.192.",
-        "93.186.225.", "95.213.0.", "104.154.0.", "130.211.0.",
-        "146.148.0.", "162.216.0.", "173.255.112.", "199.192.0.",
-        "199.223.0.", "208.68.0.", "208.78.0.", "209.85.0.",
-    )
-    remote = request.remote or ""
-    is_vk_ip = any(remote.startswith(p) for p in VK_IP_PREFIXES)
-    is_local = remote in ("127.0.0.1", "::1", "10.0.0.0", "", "0.0.0.0")
-    # Render proxy: реальный IP в X-Real-IP или X-Forwarded-For
-    x_real = request.headers.get("X-Real-IP", "") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    is_vk_xreal = any(x_real.startswith(p) for p in VK_IP_PREFIXES)
-    # Render internal check
-    is_render = "onrender.com" in request.headers.get("Host", "")
-
-    if not (is_vk_ip or is_local or is_vk_xreal or is_render):
-        logger.warning("VK callback: rejected from non-VK IP remote=%s x_real=%s", remote, x_real)
-        # НЕ блокируем на проде — лучше пропустить чем потерять события
-        # return json_resp({"error": "forbidden"}, status=403)
+    # IP whitelist ОТКЛЮЧЁН — Render proxy не передаёт реальный IP VK
+    # Секрет ниже — достаточная защита
 
     try:
         event = await request.json()
@@ -2100,21 +2081,30 @@ async def handle_vk_callback(request):
         logger.exception("VK callback: import failed: %s", e)
         return json_resp({"error": "callback handler not available"}, status=500)
 
-    # Обработка событий (синхронно — как было до моих изменений)
+    # Обработка событий — В ФОНЕ чтобы ответить VK МГНОВЕННО (кнопки не грузятся)
+    # Задачи хранятся в _bg_tasks чтобы не быть собранными GC
     if event_type == "message_new":
-        try:
-            await process_message_new(event)
-        except Exception as e:
-            logger.exception("VK callback: process_message_new failed: %s", e)
+        _bg_tasks.add(asyncio.create_task(_bg_process("msg_new", process_message_new, event)))
     elif event_type == "message_event":
-        try:
-            await process_message_event(event)
-        except Exception as e:
-            logger.exception("VK callback: process_message_event failed: %s", e)
+        _bg_tasks.add(asyncio.create_task(_bg_process("msg_event", process_message_event, event)))
     else:
         logger.debug("VK callback: unhandled type=%s", event_type)
 
     return web.Response(text="ok", content_type="text/plain")
+
+
+# Хранилище фоновых задач чтобы GC не убил их
+_bg_tasks: set = set()
+
+
+async def _bg_process(name: str, func, event: dict) -> None:
+    """Обрабатывает событие в фоне, ловит все исключения, удаляет задачу из set."""
+    try:
+        await func(event)
+    except Exception as e:
+        logger.exception(f"VK callback bg {name} failed: {e}")
+    finally:
+        _bg_tasks.discard(asyncio.current_task())
 
 
 # === CORS ===
