@@ -3687,34 +3687,54 @@ async def link_accounts(telegram_id: int, link_code: str) -> dict:
 async def get_user_id_by_any(telegram_id: int) -> int | None:
     """Ищет user_id по telegram_id, vk_id ИЛИ по linked_telegram_id/linked_user_id."""
     if USE_SQLITE:
-        row = await _fetch(
-            """SELECT id FROM users
-               WHERE telegram_id = ? OR vk_id = ? OR linked_telegram_id = ?
-                  OR linked_user_id = (
-                    SELECT id FROM users WHERE telegram_id = ? OR vk_id = ? LIMIT 1
-                  )
-               ORDER BY (telegram_id = ?) DESC, (vk_id = ?) DESC
-               LIMIT 1""",
-            telegram_id, telegram_id, telegram_id,
-            telegram_id, telegram_id,
-            telegram_id, telegram_id,
-            one=True,
-        )
+        try:
+            row = await _fetch(
+                """SELECT id FROM users
+                   WHERE telegram_id = ? OR vk_id = ? OR linked_telegram_id = ?
+                      OR linked_user_id = (
+                        SELECT id FROM users WHERE telegram_id = ? OR vk_id = ? LIMIT 1
+                      )
+                   ORDER BY (telegram_id = ?) DESC, (vk_id = ?) DESC
+                   LIMIT 1""",
+                telegram_id, telegram_id, telegram_id,
+                telegram_id, telegram_id,
+                telegram_id, telegram_id,
+                one=True,
+            )
+        except Exception:
+            row = await _fetch(
+                """SELECT id FROM users
+                   WHERE telegram_id = ? OR vk_id = ? OR linked_telegram_id = ?
+                   ORDER BY (telegram_id = ?) DESC, (vk_id = ?) DESC
+                   LIMIT 1""",
+                telegram_id, telegram_id, telegram_id,
+                telegram_id, telegram_id,
+                one=True,
+            )
         if not row:
             return None
         return row["id"] if isinstance(row, dict) else row[0]
     else:
         async with _db.acquire() as conn:
-            row = await conn.fetchrow(
-                """SELECT id FROM users
-                   WHERE telegram_id = $1 OR vk_id = $1 OR linked_telegram_id = $1
-                      OR linked_user_id = (
-                        SELECT id FROM users WHERE telegram_id = $1 OR vk_id = $1 LIMIT 1
-                      )
-                   ORDER BY (telegram_id = $1) DESC, (vk_id = $1) DESC
-                   LIMIT 1""",
-                telegram_id,
-            )
+            try:
+                row = await conn.fetchrow(
+                    """SELECT id FROM users
+                       WHERE telegram_id = $1 OR vk_id = $1 OR linked_telegram_id = $1
+                          OR linked_user_id = (
+                            SELECT id FROM users WHERE telegram_id = $1 OR vk_id = $1 LIMIT 1
+                          )
+                       ORDER BY (telegram_id = $1) DESC, (vk_id = $1) DESC
+                       LIMIT 1""",
+                    telegram_id,
+                )
+            except Exception:
+                row = await conn.fetchrow(
+                    """SELECT id FROM users
+                       WHERE telegram_id = $1 OR vk_id = $1 OR linked_telegram_id = $1
+                       ORDER BY (telegram_id = $1) DESC, (vk_id = $1) DESC
+                       LIMIT 1""",
+                    telegram_id,
+                )
             return row["id"] if row else None
 
 

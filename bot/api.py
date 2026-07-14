@@ -2556,17 +2556,24 @@ async def handle_account_info(request):
         # Получаем telegram_id и linked данные
         if USE_SQLITE:
             row = await _fetch(
-                "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = ?",
+                "SELECT * FROM users WHERE id = ?",
                 uid, one=True,
             )
             user_data = dict(row) if row else {}
         else:
             async with _db.acquire() as conn:
-                row = await conn.fetchrow(
-                    "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = $1",
-                    uid,
-                )
-                user_data = dict(row) if row else {}
+                try:
+                    row = await conn.fetchrow(
+                        "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = $1",
+                        uid,
+                    )
+                    user_data = dict(row) if row else {}
+                except Exception:
+                    row = await conn.fetchrow(
+                        "SELECT telegram_id, linked_telegram_id, vk_id FROM users WHERE id = $1",
+                        uid,
+                    )
+                    user_data = dict(row) if row else {}
 
         # Получаем premium статус
         sub = await get_user_premium(uid)
