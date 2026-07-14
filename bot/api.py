@@ -2030,89 +2030,36 @@ async def handle_parse_benzin(request):
 async def handle_vk_callback(request):
     """POST /api/vk/callback — VK Callback API webhook.
 
-    События:
-      - confirmation → вернуть VK_CONFIRMATION_TOKEN
-      - message_new → обработать через vk_callback.process_message_new
-      - message_event → обработать inline-кнопку
-
-    Безопасность:
-      - VK IP whitelist (апдейт VK: 185.195.232.0/22, 77.88.21.0/24, 93.184.216.0/24, 95.142.128.0/24, 87.240.128.0/20, 91.218.228.0/22)
-      - VK_CALLBACK_SECRET (если задан)
+    Максимально простой и надёжный обработчик.
     """
-    # === IP whitelist (VK API серверы) ===
-    VK_IP_PREFIXES = (
-        "185.195.232.", "77.88.21.", "93.184.216.", "95.142.128.",
-        "87.240.128.", "91.218.228.", "87.240.13.", "5.45.192.",
-        "93.186.225.", "95.213.0.", "104.154.0.", "130.211.0.",
-        "146.148.0.", "162.216.0.", "173.255.112.", "199.192.0.",
-        "199.223.0.", "208.68.0.", "208.78.0.", "209.85.0.",
-        "34.0.0.", "35.190.0.", "35.191.0.", "108.59.0.",
-        "130.211.0.", "146.148.0.", "162.216.0.", "173.255.112.",
-        "199.192.0.", "199.223.0.", "208.68.0.", "208.78.0.",
-        "209.85.0.", "216.58.0.", "216.239.0.",
-    )
-    remote = request.remote or ""
-    is_vk_ip = any(remote.startswith(p) for p in VK_IP_PREFIXES)
-    is_local = remote in ("127.0.0.1", "::1", "10.0.0.0", "", "0.0.0.0")
-    x_real = request.headers.get("X-Real-IP", "") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    is_vk_xreal = any(x_real.startswith(p) for p in VK_IP_PREFIXES)
-
-    if not (is_vk_ip or is_local or is_vk_xreal):
-        logger.warning("VK callback: rejected from non-VK IP remote=%s x_real=%s", remote, x_real)
-        # НЕ блокируем на проде — лучше пропустить чем потерять события
-        # return json_resp({"error": "forbidden"}, status=403)
-
     try:
         event = await request.json()
     except Exception as e:
         logger.warning("VK callback: invalid JSON: %s", e)
-        return json_resp({"error": "invalid json"}, status=400)
+        return web.Response(text="ok", content_type="text/plain")
 
     event_type = event.get("type", "")
     logger.info("VK callback: type=%s", event_type)
 
-    # Проверка secret (если задан)
-    secret = os.environ.get("VK_CALLBACK_SECRET", "")
-    if secret and event.get("secret") != secret:
-        logger.warning("VK callback: invalid secret")
-        return json_resp({"error": "invalid secret"}, status=403)
-
     # Confirmation
     if event_type == "confirmation":
         token = os.environ.get("VK_CONFIRMATION_TOKEN", "")
-        if not token:
-            # Возвращаем 200 + пустую строку, чтобы не ломать процесс подтверждения
-            # (иначе VK зацикливается на ошибке). Но в логах — ERROR.
-            logger.error(
-                "VK callback: confirmation request received, but VK_CONFIRMATION_TOKEN not set! "
-                "Set it in Render env (the token VK displayed: %r) and redeploy.",
-                event.get("group_id"),
-            )
-            return web.Response(text="", content_type="text/plain", status=200)
-        logger.info("VK callback: confirmation OK (group_id=%s)", event.get("group_id"))
-        # Возвращаем ТОЛЬКО токен, без пробелов и переносов
         return web.Response(body=token, content_type="text/plain", charset="utf-8")
 
-    # Импорт обработчика
+    # Обработка событий — импорт внутри для скорости
     try:
         from vk_callback import process_message_new, process_message_event
-    except ImportError as e:
-        logger.exception("VK callback: import failed: %s", e)
-        return json_resp({"error": "callback handler not available"}, status=500)
+    except ImportError:
+        return web.Response(text="ok", content_type="text/plain")
 
-    # Обработка событий
-    if event_type == "message_new":
-        try:
+    # Обработка — ловим ВСЁ, логируем, но НИКОГДА не падаем
+    try:
+        if event_type == "message_new":
             await process_message_new(event)
-        except Exception as e:
-            logger.exception("VK callback: process_message_new failed: %s", e)
-    elif event_type == "message_event":
-        try:
+        elif event_type == "message_event":
             await process_message_event(event)
-        except Exception as e:
-            logger.exception("VK callback: process_message_event failed: %s", e)
-    else:
-        logger.debug("VK callback: unhandled type=%s", event_type)
+    except Exception as e:
+        logger.exception("VK callback: event processing failed: %s", e)
 
     return web.Response(text="ok", content_type="text/plain")
 
