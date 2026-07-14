@@ -1918,21 +1918,24 @@
           // Если VK привязан — показываем VK row
           const vkRow = document.getElementById('account-vk-row');
           const vkEl = document.getElementById('account-vk-id');
-          if (accRes.linked_via === 'vk' && accRes.linked_telegram_id) {
+          // Показываем VK если: текущий юзер — VK (linked_via==='vk'),
+          // ИЛИ к TG-аккаунту привязан VK (linked_vk_id есть)
+          if (accRes.linked_via === 'vk' && accRes.vk_id) {
             if (vkRow) vkRow.style.display = 'flex';
-            if (vkEl) vkEl.textContent = accRes.linked_telegram_id;
+            if (vkEl) vkEl.textContent = accRes.vk_id;
+          } else if (accRes.linked_vk_id) {
+            if (vkRow) vkRow.style.display = 'flex';
+            if (vkEl) vkEl.textContent = accRes.linked_vk_id;
           } else {
             if (vkRow) vkRow.style.display = 'none';
           }
 
-          // Если это TG-аккаунт, к которому привязан VK
+          // Если к этому TG-аккаунту привязан VK
           const linkRow = document.getElementById('account-link-row');
           const linkEl = document.getElementById('account-link-to');
-          if (accRes.linked_telegram_id && accRes.linked_telegram_id !== accRes.telegram_id) {
-            if (linkRow) linkRow.style.display = 'none';
-          } else if (accRes.linked_telegram_id) {
+          if (accRes.linked_vk_id) {
             if (linkRow) linkRow.style.display = 'flex';
-            if (linkEl) linkEl.textContent = `VK ID: ${accRes.linked_telegram_id}`;
+            if (linkEl) linkEl.textContent = `VK ID: ${accRes.linked_vk_id}`;
           } else {
             if (linkRow) linkRow.style.display = 'none';
           }

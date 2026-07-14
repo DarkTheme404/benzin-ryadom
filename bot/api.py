@@ -2537,20 +2537,47 @@ async def handle_account_info(request):
 
         # Определяем linked_via
         linked_via = None
-        if user_data.get("linked_user_id") or user_data.get("linked_telegram_id"):
+        linked_vk_id = None
+        linked_tg_id = None
+        if user_data.get("linked_user_id"):
+            # Есть привязка через linked_user_id
+            linked_uid = user_data["linked_user_id"]
+            if USE_SQLITE:
+                linked_row = await db._fetch(
+                    "SELECT telegram_id, vk_id FROM users WHERE id = ?",
+                    linked_uid, one=True,
+                )
+            else:
+                async with _db_mod._db.acquire() as conn:
+                    linked_row = await conn.fetchrow(
+                        "SELECT telegram_id, vk_id FROM users WHERE id = $1",
+                        linked_uid,
+                    )
+            if linked_row:
+                linked_row = dict(linked_row) if hasattr(linked_row, 'keys') else linked_row
+                linked_tg_id = linked_row.get("telegram_id")
+                linked_vk_id = linked_row.get("vk_id")
+            # Определяем тип текущего юзера
             if user_data.get("vk_id") and int(tid) == user_data.get("vk_id"):
                 linked_via = "vk"
             elif user_data.get("telegram_id") and int(tid) == user_data.get("telegram_id"):
                 linked_via = "telegram"
             else:
                 linked_via = "linked"
+        elif user_data.get("linked_telegram_id"):
+            linked_tg_id = user_data["linked_telegram_id"]
+            if user_data.get("vk_id") and int(tid) == user_data.get("vk_id"):
+                linked_via = "vk"
+            else:
+                linked_via = "telegram"
 
         return json_resp({
             "ok": True,
             "telegram_id": user_data.get("telegram_id"),
-            "linked_telegram_id": user_data.get("linked_telegram_id"),
+            "linked_telegram_id": linked_tg_id,
             "linked_user_id": user_data.get("linked_user_id"),
             "linked_via": linked_via,
+            "linked_vk_id": linked_vk_id,
             "vk_id": user_data.get("vk_id"),
             "is_premium": is_prem,
             "premium_tier": sub.get("tier") if sub else None,
