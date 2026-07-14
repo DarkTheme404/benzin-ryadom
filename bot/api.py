@@ -2140,6 +2140,17 @@ async def handle_vk_callback(request):
             await process_message_event(event)
     except Exception as e:
         logger.exception("VK callback: event processing failed: %s", e)
+        # Алерт админу при критических ошибках VK callback
+        try:
+            from alert import alert_critical
+            await alert_critical(
+                f"VK callback: event processing failed\n\n"
+                f"type: {event_type}\n"
+                f"error: {type(e).__name__}: {str(e)[:200]}",
+                exc=e,
+            )
+        except Exception:
+            pass
 
     return web.Response(text="ok", content_type="text/plain")
 
@@ -2157,8 +2168,17 @@ else:
 async def _on_startup(app: web.Application) -> None:
     """Инициализация БД + security checks при старте API."""
     import db as _db_mod
-    if _db_mod._db is None:
-        await db.init_db()
+    try:
+        if _db_mod._db is None:
+            await db.init_db()
+    except Exception as e:
+        logger.exception(f"DB init failed: {e}")
+        try:
+            from alert import alert_critical
+            await alert_critical(f"DB init failed at startup!\n\n{type(e).__name__}: {str(e)[:200]}", exc=e)
+        except Exception:
+            pass
+        raise
 
     # Security: проверка критических переменных окружения
     bot_token = os.getenv("BOT_TOKEN", "")

@@ -131,6 +131,19 @@
     }
   }
 
+  async function apiRetry(path, options = {}, maxRetries = 2) {
+    // API call с автоматическим retry при сетевых ошибках
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await api(path, options);
+      } catch (e) {
+        const isNetworkError = e.message && (e.message.includes('Таймаут') || e.message.includes('Failed to fetch') || e.message.includes('NetworkError'));
+        if (attempt === maxRetries || !isNetworkError) throw e;
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      }
+    }
+  }
+
   // ============= STATE =============
   const state = {
     screen: 'home',

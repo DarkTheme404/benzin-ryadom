@@ -4,10 +4,11 @@ Worker для автопубликации свежих отчётов в Telegr
 """
 import asyncio
 import logging
+import random
 from collections import defaultdict
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 import db
@@ -15,23 +16,30 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-CHANNEL_INTERVAL_SEC = 1800   # 30 мин
-CHANNEL_SCAN_MINUTES = 60     # за последний час
+CHANNEL_INTERVAL_SEC = 1800   # 30 мин между постами
+CHANNEL_SCAN_MINUTES = 120    # берём отчёты за последние 2 часа
 CHANNEL_TOP_PER_POST = 5      # максимум АЗС в одном посте
+CHANNEL_MIN_REPORTS = 2       # минимум отчётов в городе для поста
+CHANNEL_CITIES_PER_POST = 1   # сколько городов в одном посте
+
+
+CHANNEL_POST_TEMPLATES = [
+    "⛽ <b>Где есть бензин — {city}</b>",
+    "🔥 <b>Свежие цены — {city}</b>",
+    "💡 <b>Топ АЗС с топливом — {city}</b>",
+    "⛽ <b>Есть бензин рядом — {city}</b>",
+]
+
+
+def _pick_template(city: str) -> str:
+    """Случайный шаблон для разнообразия постов."""
+    tpl = random.choice(CHANNEL_POST_TEMPLATES)
+    return tpl.format(city=city or "Россия")
 
 
 def _format_post(city: str, items: list) -> str:
-    """Форматирует пост для канала: топ АЗС в городе с verified-приоритетом.
-
-    Шаблон:
-    ⛽ Свежие отчёты — Иваново
-    ✅ Лукойл (verified) — АИ-95: 56.40₽
-       📍 ул. Космонавта Волкова, 12
-    ✅ Газпромнефть — АИ-95: есть
-       📍 район Коптево
-    ...
-    """
-    lines = [f"⛽ <b>Где есть бензин — {city or 'Россия'}</b>\n"]
+    """Форматирует пост для канала: топ АЗС в городе с verified-приоритетом."""
+    lines = [_pick_template(city) + "\n"]
     for i, it in enumerate(items, 1):
         name = it.get("name") or "АЗС"
         operator = it.get("operator") or ""
@@ -58,7 +66,7 @@ def _format_post(city: str, items: list) -> str:
         lines.append(line)
         if address:
             lines.append(f"   📍 {address}")
-    lines.append("\n💡 Открой @benzyn_ryadom_bot чтобы сообщить о наличии")
+    lines.append("\n💡 Сообщи о наличии → @benzyn_ryadom_bot")
     lines.append("📊 Источник: краудсорс водителей в реальном времени")
     return "\n".join(lines)
 
@@ -82,27 +90,23 @@ async def _channel_iteration(bot: Bot, chat_id: str):
     """Одна итерация: агрегировать отчёты по городам, опубликовать топ-N городов."""
     reports = await db.get_recent_fuel_reports(minutes=CHANNEL_SCAN_MINUTES)
     if not reports:
+        logger.debug("Channel: no recent reports")
         return
 
-    # Группируем по городу
     by_city = defaultdict(list)
     for r in reports:
         city = (r.get("city") or "").strip()
         by_city[city].append(r)
 
-    # Берём только города с >= 2 positive отчётами (иначе шум)
     cities_with_data = [
-        (city, items) for city, items in by_city.items() if len(items) >= 2
+        (city, items) for city, items in by_city.items() if len(items) >= CHANNEL_MIN_REPORTS
     ]
     if not cities_with_data:
         return
 
-    # Сортируем: сначала больше отчётов, потом по свежести
     cities_with_data.sort(key=lambda x: -len(x[1]))
 
-    # Публикуем максимум 1 пост (чтобы не спамить)
-    for city, items in cities_with_data[:1]:
-        # Сортируем АЗС внутри города: verified first, потом с ценой, потом по свежести
+    for city, items in cities_with_data[:CHANNEL_CITIES_PER_POST]:
         items = items[:CHANNEL_TOP_PER_POST]
         items.sort(key=lambda r: (
             0 if r.get("is_verified") else 1,
@@ -112,6 +116,8 @@ async def _channel_iteration(bot: Bot, chat_id: str):
 
         text = _format_post(city, items)
         try:
+            me = await bot.get_me()
+            bot_username = me.username or "benzyn_ryadom_bot"
             await bot.send_message(
                 chat_id=chat_id,
                 text=text,
@@ -120,11 +126,16 @@ async def _channel_iteration(bot: Bot, chat_id: str):
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(
                         text="🗺 Открыть в боте",
-                        url=f"https://t.me/{(await bot.get_me()).username}",
+                        url=f"https://t.me/{bot_username}",
                     )],
                 ]),
             )
             logger.info("Channel: posted for city=%s (%d items)", city or "—", len(items))
-            break  # один пост за итерацию
+            break
+        except TelegramRetryAfter as e:
+            logger.warning("Channel: rate limit, retry after %ds", e.retry_after)
+            await asyncio.sleep(e.retry_after)
         except TelegramAPIError as e:
             logger.warning("Channel post failed: %s", e)
+            break
+

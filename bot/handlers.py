@@ -3835,6 +3835,8 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(cmd_link, Command("link"))
     dp.message.register(cmd_alarm, Command("alarm"))
     dp.message.register(cmd_referral, Command("referral"))
+    dp.message.register(cmd_broadcast, Command("broadcast"))
+    dp.message.register(cmd_freetrial, Command("freetrial"))
     dp.callback_query.register(link_create_callback, F.data == "link:create")
     dp.callback_query.register(link_enter_callback, F.data == "link:enter")
     dp.message.register(link_code_input_handler, StateFilter(LinkStates.waiting_code))
@@ -3977,3 +3979,65 @@ async def _check_and_celebrate_badges(uid):
     except Exception:
         pass
     return ""
+
+
+# === /broadcast — рассылка по всем юзерам (admin) ===
+ADMIN_TG_IDS = [772577887]  # darkt30
+
+
+async def cmd_broadcast(message: Message):
+    """Рассылает сообщение всем пользователям бота. Только для admin."""
+    if message.from_user.id not in ADMIN_TG_IDS:
+        return
+    # Текст рассылки — аргумент после /broadcast
+    text = (message.text or "").replace("/broadcast", "", 1).strip()
+    if not text:
+        await message.answer(
+            "📢 <b>Рассылка</b>\n\n"
+            "Использование: <code>/broadcast текст сообщения</code>\n\n"
+            "Пример:\n"
+            "<code>/broadcast 🎉 Premium запущен! 3 дня бесплатно → /premium</code>"
+        )
+        return
+    # Получаем всех юзеров из БД
+    import db as _db
+    users = await _db._fetch(
+        "SELECT telegram_id FROM users WHERE telegram_id > 0",
+    )
+    sent = 0
+    failed = 0
+    await message.answer(f"📢 Начинаю рассылку для {len(users)} юзеров...")
+    for row in users:
+        tid = row["telegram_id"] if isinstance(row, dict) else row[0]
+        try:
+            await message.bot.send_message(chat_id=tid, text=text)
+            sent += 1
+        except Exception:
+            failed += 1
+        # Rate limit
+        import asyncio as _aio
+        await _aio.sleep(0.05)
+    await message.answer(f"✅ Рассылка завершена: {sent} отправлено, {failed} ошибок")
+
+
+# === /freetrial — выдать 3 дня Premium (admin) ===
+async def cmd_freetrial(message: Message):
+    """Выдаёт 3 дня Premium указанному юзеру. Только для admin."""
+    if message.from_user.id not in ADMIN_TG_IDS:
+        return
+    text = (message.text or "").replace("/freetrial", "", 1).strip()
+    if not text:
+        await message.answer("Использование: <code>/freetrial TG_ID</code>")
+        return
+    try:
+        tid = int(text.split()[0])
+    except (ValueError, IndexError):
+        await message.answer("❌ Неверный формат. Пример: <code>/freetrial 772577887</code>")
+        return
+    import db as _db
+    uid = await _db.get_user_id_by_telegram_id(tid)
+    if not uid:
+        await message.answer(f"❌ Юзер {tid} не найден")
+        return
+    sub = await _db.activate_premium(uid, "standard", days=3, payment_id=f"admin_trial_{tid}")
+    await message.answer(f"✅ Trial выдан: {tid} → standard на 3 дня (до {sub.get('expires_at', '')[:10]})")
