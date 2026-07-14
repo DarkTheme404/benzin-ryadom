@@ -2095,24 +2095,27 @@ async def handle_vk_callback(request):
         logger.exception("VK callback: import failed: %s", e)
         return json_resp({"error": "callback handler not available"}, status=500)
 
-    # Обработка событий — В ФОНЕ чтобы ответить VK в течение 5 сек
-    # (иначе кнопки будут бесконечно грузиться)
+    # Обработка событий
     if event_type == "message_new":
-        asyncio.create_task(_safe_process("message_new", process_message_new, event))
+        try:
+            await asyncio.wait_for(process_message_new(event), timeout=4.0)
+        except asyncio.TimeoutError:
+            logger.warning("VK callback: process_message_new timeout")
+        except Exception as e:
+            logger.exception("VK callback: process_message_new failed: %s", e)
     elif event_type == "message_event":
-        asyncio.create_task(_safe_process("message_event", process_message_event, event))
+        try:
+            # event_answer отправляется в начале process_message_event (line 1487),
+            # поэтому даже при timeout кнопка не будет бесконечно грузиться
+            await asyncio.wait_for(process_message_event(event), timeout=4.0)
+        except asyncio.TimeoutError:
+            logger.warning("VK callback: process_message_event timeout")
+        except Exception as e:
+            logger.exception("VK callback: process_message_event failed: %s", e)
     else:
         logger.debug("VK callback: unhandled type=%s", event_type)
 
     return web.Response(text="ok", content_type="text/plain")
-
-
-async def _safe_process(name: str, func, event: dict) -> None:
-    """Безопасно вызывает обработчик события, логирует исключения."""
-    try:
-        await func(event)
-    except Exception as e:
-        logger.exception(f"VK callback: {name} failed: {e}")
 
 
 # === CORS ===
