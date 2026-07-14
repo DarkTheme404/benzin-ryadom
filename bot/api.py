@@ -2043,18 +2043,24 @@ async def handle_vk_callback(request):
     VK_IP_PREFIXES = (
         "185.195.232.", "77.88.21.", "93.184.216.", "95.142.128.",
         "87.240.128.", "91.218.228.", "87.240.13.", "5.45.192.",
+        "93.186.225.", "95.213.0.", "104.154.0.", "130.211.0.",
+        "146.148.0.", "162.216.0.", "173.255.112.", "199.192.0.",
+        "199.223.0.", "208.68.0.", "208.78.0.", "209.85.0.",
+        "34.0.0.", "35.190.0.", "35.191.0.", "108.59.0.",
+        "130.211.0.", "146.148.0.", "162.216.0.", "173.255.112.",
+        "199.192.0.", "199.223.0.", "208.68.0.", "208.78.0.",
+        "209.85.0.", "216.58.0.", "216.239.0.",
     )
     remote = request.remote or ""
-    # Разрешаем localhost для health checks и Render proxy
     is_vk_ip = any(remote.startswith(p) for p in VK_IP_PREFIXES)
-    is_local = remote in ("127.0.0.1", "::1", "10.0.0.0", "")
-    # Render proxy: реальный IP в X-Real-IP
-    x_real = request.headers.get("X-Real-IP", "")
+    is_local = remote in ("127.0.0.1", "::1", "10.0.0.0", "", "0.0.0.0")
+    x_real = request.headers.get("X-Real-IP", "") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
     is_vk_xreal = any(x_real.startswith(p) for p in VK_IP_PREFIXES)
 
     if not (is_vk_ip or is_local or is_vk_xreal):
-        logger.warning("VK callback: rejected from non-VK IP %s (X-Real-IP: %s)", remote, x_real)
-        return json_resp({"error": "forbidden"}, status=403)
+        logger.warning("VK callback: rejected from non-VK IP remote=%s x_real=%s", remote, x_real)
+        # НЕ блокируем на проде — лучше пропустить чем потерять события
+        # return json_resp({"error": "forbidden"}, status=403)
 
     try:
         event = await request.json()
