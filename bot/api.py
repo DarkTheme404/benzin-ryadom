@@ -2514,7 +2514,10 @@ async def handle_account_info(request):
             )
             user_data = dict(row) if row else {}
         else:
-            async with db._db.acquire() as conn:
+            import db as _db_mod
+            if _db_mod._db is None:
+                return json_resp({"error": "db not ready"}, status=503)
+            async with _db_mod._db.acquire() as conn:
                 try:
                     row = await conn.fetchrow(
                         "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = $1",
