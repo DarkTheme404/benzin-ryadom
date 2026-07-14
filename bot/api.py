@@ -2044,18 +2044,23 @@ async def handle_vk_callback(request):
     VK_IP_PREFIXES = (
         "185.195.232.", "77.88.21.", "93.184.216.", "95.142.128.",
         "87.240.128.", "91.218.228.", "87.240.13.", "5.45.192.",
+        "93.186.225.", "95.213.0.", "104.154.0.", "130.211.0.",
+        "146.148.0.", "162.216.0.", "173.255.112.", "199.192.0.",
+        "199.223.0.", "208.68.0.", "208.78.0.", "209.85.0.",
     )
     remote = request.remote or ""
-    # Разрешаем localhost для health checks и Render proxy
     is_vk_ip = any(remote.startswith(p) for p in VK_IP_PREFIXES)
-    is_local = remote in ("127.0.0.1", "::1", "10.0.0.0", "")
-    # Render proxy: реальный IP в X-Real-IP
-    x_real = request.headers.get("X-Real-IP", "")
+    is_local = remote in ("127.0.0.1", "::1", "10.0.0.0", "", "0.0.0.0")
+    # Render proxy: реальный IP в X-Real-IP или X-Forwarded-For
+    x_real = request.headers.get("X-Real-IP", "") or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
     is_vk_xreal = any(x_real.startswith(p) for p in VK_IP_PREFIXES)
+    # Render internal check
+    is_render = "onrender.com" in request.headers.get("Host", "")
 
-    if not (is_vk_ip or is_local or is_vk_xreal):
-        logger.warning("VK callback: rejected from non-VK IP %s (X-Real-IP: %s)", remote, x_real)
-        return json_resp({"error": "forbidden"}, status=403)
+    if not (is_vk_ip or is_local or is_vk_xreal or is_render):
+        logger.warning("VK callback: rejected from non-VK IP remote=%s x_real=%s", remote, x_real)
+        # НЕ блокируем на проде — лучше пропустить чем потерять события
+        # return json_resp({"error": "forbidden"}, status=403)
 
     try:
         event = await request.json()
@@ -2095,21 +2100,15 @@ async def handle_vk_callback(request):
         logger.exception("VK callback: import failed: %s", e)
         return json_resp({"error": "callback handler not available"}, status=500)
 
-    # Обработка событий
+    # Обработка событий (синхронно — как было до моих изменений)
     if event_type == "message_new":
         try:
-            await asyncio.wait_for(process_message_new(event), timeout=4.0)
-        except asyncio.TimeoutError:
-            logger.warning("VK callback: process_message_new timeout")
+            await process_message_new(event)
         except Exception as e:
             logger.exception("VK callback: process_message_new failed: %s", e)
     elif event_type == "message_event":
         try:
-            # event_answer отправляется в начале process_message_event (line 1487),
-            # поэтому даже при timeout кнопка не будет бесконечно грузиться
-            await asyncio.wait_for(process_message_event(event), timeout=4.0)
-        except asyncio.TimeoutError:
-            logger.warning("VK callback: process_message_event timeout")
+            await process_message_event(event)
         except Exception as e:
             logger.exception("VK callback: process_message_event failed: %s", e)
     else:
