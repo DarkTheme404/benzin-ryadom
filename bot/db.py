@@ -179,6 +179,23 @@ async def _migrate_sqlite(db):
         await db.execute("ALTER TABLE users ADD COLUMN link_code_expires_at TEXT")
     if "linked_user_id" not in user_cols:
         await db.execute("ALTER TABLE users ADD COLUMN linked_user_id INTEGER")
+    # Миграция: убираем UNIQUE constraint с telegram_id (для VK юзеров с telegram_id=0)
+    # Создаём partial unique index — telegram_id уникален только когда > 0
+    try:
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_telegram_id_positive
+            ON users (telegram_id) WHERE telegram_id > 0
+        """)
+    except Exception:
+        pass
+    # Миграция: vk_id должен быть UNIQUE (для поиска VK юзеров)
+    try:
+        await db.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_vk_id_unique
+            ON users (vk_id) WHERE vk_id IS NOT NULL
+        """)
+    except Exception:
+        pass
 
     # Создаём owner_stations если её нет
     await db.execute(
@@ -399,6 +416,19 @@ async def _create_schema_pg(pool):
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS linked_user_id BIGINT")
         except Exception as e:
             logger.warning(f"PG migration users link fields: {e}")
+
+        # 3b. Partial unique indexes (для VK юзеров с telegram_id=0)
+        try:
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_users_telegram_id_positive
+                ON users (telegram_id) WHERE telegram_id > 0
+            """)
+            await conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_users_vk_id_unique
+                ON users (vk_id) WHERE vk_id IS NOT NULL
+            """)
+        except Exception as e:
+            logger.warning(f"PG migration partial indexes: {e}")
 
         # 2b. Reports: новые колонки для качеств/очередей/лимитов
         new_report_cols = [
@@ -1589,11 +1619,36 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") 
                 first_name, row["id"] if isinstance(row, dict) else row[0],
             )
             return row["id"] if isinstance(row, dict) else row[0]
-        await _execute(
-            """INSERT INTO users (vk_id, telegram_id, first_name, last_name, last_active_at)
-               VALUES (?, 0, ?, ?, datetime('now'))""",
-            vk_id, first_name, last_name,
+        # Fallback: может быть старая запись с telegram_id=peer_id (до фикса)
+        row = await _fetch(
+            "SELECT id FROM users WHERE telegram_id = ? AND vk_id IS NULL", (vk_id,), one=True,
         )
+        if row:
+            uid = row["id"] if isinstance(row, dict) else row[0]
+            await _execute(
+                "UPDATE users SET vk_id = ?, first_name = ?, last_active_at = datetime('now') WHERE id = ?",
+                vk_id, first_name, uid,
+            )
+            return uid
+        try:
+            await _execute(
+                """INSERT INTO users (vk_id, telegram_id, first_name, last_name, last_active_at)
+                   VALUES (?, 0, ?, ?, datetime('now'))""",
+                vk_id, first_name, last_name,
+            )
+        except Exception:
+            # Race condition — другой запрос уже создал запись
+            row = await _fetch(
+                "SELECT id FROM users WHERE vk_id = ?", (vk_id,), one=True,
+            )
+            if row:
+                uid = row["id"] if isinstance(row, dict) else row[0]
+                await _execute(
+                    "UPDATE users SET first_name = ?, last_active_at = datetime('now') WHERE id = ?",
+                    first_name, uid,
+                )
+                return uid
+            raise
         new_row = await _fetch("SELECT last_insert_rowid() as id", one=True)
         return new_row["id"] if isinstance(new_row, dict) else new_row[0]
     else:
@@ -1607,13 +1662,62 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") 
                     first_name, row["id"],
                 )
                 return row["id"]
-            new_row = await conn.fetchrow(
-                """INSERT INTO users (vk_id, telegram_id, first_name, last_name, last_active_at)
-                   VALUES ($1, 0, $2, $3, NOW())
-                   RETURNING id""",
-                vk_id, first_name, last_name,
+            # Fallback: старая запись с telegram_id=peer_id (до фикса)
+            row = await conn.fetchrow(
+                "SELECT id FROM users WHERE telegram_id = $1 AND vk_id IS NULL", vk_id,
             )
-            return new_row["id"]
+            if row:
+                await conn.execute(
+                    "UPDATE users SET vk_id = $1, first_name = $2, last_active_at = NOW() WHERE id = $3",
+                    vk_id, first_name, row["id"],
+                )
+                return row["id"]
+            try:
+                new_row = await conn.fetchrow(
+                    """INSERT INTO users (vk_id, telegram_id, first_name, last_name, last_active_at)
+                       VALUES ($1, 0, $2, $3, NOW())
+                       ON CONFLICT (vk_id) DO UPDATE SET first_name = $2, last_active_at = NOW()
+                       RETURNING id""",
+                    vk_id, first_name, last_name,
+                )
+                if new_row:
+                    return new_row["id"]
+                # ON CONFLICT не сработал (vk_id=NULL для старых записей) — ищем ещё раз
+                row = await conn.fetchrow(
+                    "SELECT id FROM users WHERE vk_id = $1", vk_id,
+                )
+                if row:
+                    await conn.execute(
+                        "UPDATE users SET first_name = $1, last_active_at = NOW() WHERE id = $2",
+                        first_name, row["id"],
+                    )
+                    return row["id"]
+                raise Exception("upsert_user_vk: row not found after insert")
+            except Exception as e:
+                # Race: telegram_id=0 уже занят другим VK юзером → ищем по vk_id
+                if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                    row = await conn.fetchrow(
+                        "SELECT id FROM users WHERE vk_id = $1", vk_id,
+                    )
+                    if row:
+                        await conn.execute(
+                            "UPDATE users SET first_name = $1, last_active_at = NOW() WHERE id = $2",
+                            first_name, row["id"],
+                        )
+                        return row["id"]
+                    # Последний fallback: обновляем telegram_id=0 запись → ставим уникальный telegram_id
+                    # Находим запись с telegram_id=0 и обновляем её
+                    placeholder_id = -abs(vk_id) % 2147483647  # уникальный negative int из vk_id
+                    row = await conn.fetchrow(
+                        "SELECT id FROM users WHERE telegram_id = $1", placeholder_id,
+                    )
+                    if row:
+                        await conn.execute(
+                            "UPDATE users SET vk_id = $1, first_name = $2, telegram_id = $3, last_active_at = NOW() WHERE id = $4",
+                            vk_id, first_name, placeholder_id, row["id"],
+                        )
+                        return row["id"]
+                raise
 
 
 async def add_report(
