@@ -203,6 +203,18 @@ async def _run_workers(bot: Bot):
     )
 
 
+async def _vk_bot_supervisor():
+    """Supervisor для VK бота — перезапускает run_vk_bot() при любом краше."""
+    import asyncio as _asyncio
+    while True:
+        try:
+            await run_vk_bot()
+            logger.warning(">>> VK bot run_vk_bot() returned, restarting in 3s...")
+        except Exception as e:
+            logger.exception(f">>> VK bot run_vk_bot() CRASHED: {e}")
+        await _asyncio.sleep(3)
+
+
 async def main():
     logger.info("=" * 60)
     logger.info("Бот «Бензин рядом» запускается...")
@@ -228,9 +240,9 @@ async def main():
 
     try:
         bot_task = asyncio.create_task(run_bot())
-        # VK-бот запускается параллельно (если задан VK_TOKEN)
-        logger.info(">>> Создаю задачу VK-бота...")
-        vk_task = asyncio.create_task(_safe_worker(run_vk_bot(), "vk_bot"))
+        # VK-бот запускается через supervisor — перезапускается при любом краше
+        logger.info(">>> Создаю задачу VK-бота (supervised)...")
+        vk_task = asyncio.create_task(_safe_worker(_vk_bot_supervisor(), "vk_supervisor"))
         logger.info(">>> Задача VK-бота создана")
         # Ждём готовности bot (макс 5 сек)
         for _ in range(50):
