@@ -2674,12 +2674,14 @@ async def handle_account_info(request):
 
         return json_resp({
             "ok": True,
-            "telegram_id": user_data.get("telegram_id"),
+            "telegram_id": user_data.get("telegram_id") if user_data.get("telegram_id", 0) > 0 else None,
+            "vk_id": user_data.get("vk_id"),
+            "platform": "vk" if user_data.get("vk_id") and not user_data.get("telegram_id", 0) > 0 else "telegram",
+            "display_id": user_data.get("vk_id") or (user_data.get("telegram_id") if user_data.get("telegram_id", 0) > 0 else None),
             "linked_telegram_id": linked_tg_id,
             "linked_user_id": user_data.get("linked_user_id"),
             "linked_via": linked_via,
             "linked_vk_id": linked_vk_id,
-            "vk_id": user_data.get("vk_id"),
             "is_premium": is_prem,
             "premium_tier": sub.get("tier") if sub else None,
             "premium_expires_at": str(sub.get("expires_at", "")) if sub else None,

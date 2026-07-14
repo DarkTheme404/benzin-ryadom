@@ -1925,8 +1925,17 @@
       if (tgId) {
         const accRes = await api(`/api/account/info?telegram_id=${tgId}`).catch(() => null);
         if (accRes && accRes.ok) {
+          // Определяем реальный ID юзера для отображения
           const tgEl = document.getElementById('account-tg-id');
-          if (tgEl) tgEl.textContent = accRes.telegram_id || '—';
+          const isVkUser = platform.vk && accRes.vk_id;
+          if (tgEl) {
+            // Для VK юзеров показываем их VK ID, для TG — telegram_id
+            if (isVkUser) {
+              tgEl.textContent = accRes.vk_id || '—';
+            } else {
+              tgEl.textContent = (accRes.telegram_id && accRes.telegram_id > 0) ? accRes.telegram_id : '—';
+            }
+          }
 
           // Если VK привязан — показываем VK row
           const vkRow = document.getElementById('account-vk-row');
