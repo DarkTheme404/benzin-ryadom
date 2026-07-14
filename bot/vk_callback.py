@@ -163,14 +163,14 @@ async def _vk_send(peer_id: int, text: str, keyboard: str | None = None) -> dict
     text = format_for_vk(text)
     params = {
         "peer_id": peer_id,
-        "message": text,
+        "message": text[:4000],  # VK лимит 4096 символов
         "random_id": int(time.time() * 1000) % (2**31),
     }
     if keyboard:
         params["keyboard"] = keyboard
     result = await _vk_api_call("messages.send", params)
     if "error" in result:
-        logger.warning("VK messages.send error to peer=%d: %s", peer_id, result.get("error"))
+        logger.error("VK messages.send ERROR to peer=%d: %s", peer_id, result.get("error"))
     else:
         logger.info("VK messages.send OK to peer=%d (msg_id=%s)", peer_id, result.get("response"))
     return result
