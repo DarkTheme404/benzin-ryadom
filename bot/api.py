@@ -2,6 +2,7 @@
 API-сервер для Mini App.
 Работает рядом с ботом в одном процессе (порт 8080).
 """
+import asyncio
 import json
 import logging
 import os
@@ -2094,21 +2095,24 @@ async def handle_vk_callback(request):
         logger.exception("VK callback: import failed: %s", e)
         return json_resp({"error": "callback handler not available"}, status=500)
 
-    # Обработка событий
+    # Обработка событий — В ФОНЕ чтобы ответить VK в течение 5 сек
+    # (иначе кнопки будут бесконечно грузиться)
     if event_type == "message_new":
-        try:
-            await process_message_new(event)
-        except Exception as e:
-            logger.exception("VK callback: process_message_new failed: %s", e)
+        asyncio.create_task(_safe_process("message_new", process_message_new, event))
     elif event_type == "message_event":
-        try:
-            await process_message_event(event)
-        except Exception as e:
-            logger.exception("VK callback: process_message_event failed: %s", e)
+        asyncio.create_task(_safe_process("message_event", process_message_event, event))
     else:
         logger.debug("VK callback: unhandled type=%s", event_type)
 
     return web.Response(text="ok", content_type="text/plain")
+
+
+async def _safe_process(name: str, func, event: dict) -> None:
+    """Безопасно вызывает обработчик события, логирует исключения."""
+    try:
+        await func(event)
+    except Exception as e:
+        logger.exception(f"VK callback: {name} failed: {e}")
 
 
 # === CORS ===
