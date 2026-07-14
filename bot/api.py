@@ -2081,14 +2081,20 @@ async def handle_vk_callback(request):
         logger.exception("VK callback: import failed: %s", e)
         return json_resp({"error": "callback handler not available"}, status=500)
 
-    # Обработка событий — В ФОНЕ чтобы ответить VK МГНОВЕННО (кнопки не грузятся)
-    # Задачи хранятся в _bg_tasks чтобы не быть собранными GC
-    if event_type == "message_new":
-        _bg_tasks.add(asyncio.create_task(_bg_process("msg_new", process_message_new, event)))
-    elif event_type == "message_event":
-        _bg_tasks.add(asyncio.create_task(_bg_process("msg_event", process_message_event, event)))
-    else:
-        logger.debug("VK callback: unhandled type=%s", event_type)
+    # Обработка событий — В ФОНЕ чтобы ответить VK МГНОВЕННО
+    # Создаём задачу и сохраняем ссылку чтобы GC не убил
+    try:
+        if event_type == "message_new":
+            task = asyncio.create_task(_bg_process("msg_new", process_message_new, event))
+        elif event_type == "message_event":
+            task = asyncio.create_task(_bg_process("msg_event", process_message_event, event))
+        else:
+            logger.debug("VK callback: unhandled type=%s", event_type)
+            return web.Response(text="ok", content_type="text/plain")
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
+    except Exception as e:
+        logger.exception(f"VK callback: failed to create bg task: {e}")
 
     return web.Response(text="ok", content_type="text/plain")
 
@@ -2098,13 +2104,11 @@ _bg_tasks: set = set()
 
 
 async def _bg_process(name: str, func, event: dict) -> None:
-    """Обрабатывает событие в фоне, ловит все исключения, удаляет задачу из set."""
+    """Обрабатывает событие в фоне, ловит все исключения."""
     try:
         await func(event)
     except Exception as e:
         logger.exception(f"VK callback bg {name} failed: {e}")
-    finally:
-        _bg_tasks.discard(asyncio.current_task())
 
 
 # === CORS ===
