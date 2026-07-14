@@ -2558,7 +2558,7 @@ async def handle_account_info(request):
         })
     except Exception as e:
         logger.exception(f"account_info error: {e}")
-        return json_resp({"error": "internal error"}, status=500)
+        return json_resp({"error": f"internal error: {type(e).__name__}"}, status=500)
 
 
 # === Fuel Alarm endpoints ===
