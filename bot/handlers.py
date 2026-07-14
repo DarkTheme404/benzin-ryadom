@@ -1038,13 +1038,40 @@ async def cmd_find_raw(message: Message):
 async def cmd_premium(message: Message):
     """Показать 3 тарифа премиума — красивый формат."""
     try:
+        await _cmd_premium_impl(message)
+    except Exception as e:
+        logger.exception(f"cmd_premium CRASHED: {e}")
+        try:
+            await message.answer(
+                "💎 <b>Премиум «Бензин рядом»</b>\n\n"
+                "Тарифы:\n"
+                "📊 <b>Эконом</b> — 100₽/мес\n"
+                "🗺️ <b>Стандарт</b> — 250₽/мес\n"
+                "👑 <b>Элит</b> — 500₽/мес\n\n"
+                "💳 Оплата: /premium → выбери тариф\n"
+                "Или открой 🌐 Mini App → Профиль → Premium",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🌐 Mini App", url="https://benzin-ryadom.onrender.com")],
+                ]),
+            )
+        except Exception:
+            pass
+
+
+async def _cmd_premium_impl(message: Message):
+    logger.info(f"cmd_premium START: user={message.from_user.id if message.from_user else '?'}")
+    try:
         await get_or_create_user(message)
+        logger.info("cmd_premium: get_or_create_user OK")
     except Exception as e:
         logger.exception(f"cmd_premium: get_or_create_user failed: {e}")
     telegram_id = _tg_id(message)
+    logger.info(f"cmd_premium: telegram_id={telegram_id}")
     try:
         uid = await get_user_id_by_telegram_id(telegram_id)
+        logger.info(f"cmd_premium: uid={uid}")
         sub = await get_user_premium(uid) if uid else None
+        logger.info(f"cmd_premium: sub={'yes' if sub else 'no'}")
     except Exception as e:
         logger.exception(f"cmd_premium: premium check failed: {e}")
         uid = None
@@ -1073,7 +1100,7 @@ async def cmd_premium(message: Message):
             f"💡 Смотри статистику в профиле /profile"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🌐 Открыть Mini App", web_app=WebAppInfo(url="https://benzin-ryadom.onrender.com"))],
+            [InlineKeyboardButton(text="🌐 Открыть Mini App", url="https://benzin-ryadom.onrender.com")],
             [InlineKeyboardButton(text="🏠 Главная", callback_data="back_home")],
         ])
         await message.answer(text, reply_markup=kb)
@@ -1112,7 +1139,7 @@ async def cmd_premium(message: Message):
             InlineKeyboardButton(text="👑 500₽", callback_data="buy_elite"),
         ],
         [InlineKeyboardButton(text="🎁 7 дней бесплатно", callback_data="premium_trial")],
-        [InlineKeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url="https://benzin-ryadom.onrender.com"))],
+        [InlineKeyboardButton(text="🌐 Mini App", url="https://benzin-ryadom.onrender.com")],
         [InlineKeyboardButton(text="🏠 Главная", callback_data="back_home")],
     ])
     await message.answer(text, reply_markup=kb)
