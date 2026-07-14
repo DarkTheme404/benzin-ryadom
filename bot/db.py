@@ -1590,8 +1590,8 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") 
             )
             return row["id"] if isinstance(row, dict) else row[0]
         await _execute(
-            """INSERT INTO users (vk_id, first_name, last_name, last_active_at)
-               VALUES (?, ?, ?, datetime('now'))""",
+            """INSERT INTO users (vk_id, telegram_id, first_name, last_name, last_active_at)
+               VALUES (?, 0, ?, ?, datetime('now'))""",
             vk_id, first_name, last_name,
         )
         new_row = await _fetch("SELECT last_insert_rowid() as id", one=True)
@@ -1608,8 +1608,8 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") 
                 )
                 return row["id"]
             new_row = await conn.fetchrow(
-                """INSERT INTO users (vk_id, first_name, last_name, last_active_at)
-                   VALUES ($1, $2, $3, NOW())
+                """INSERT INTO users (vk_id, telegram_id, first_name, last_name, last_active_at)
+                   VALUES ($1, 0, $2, $3, NOW())
                    RETURNING id""",
                 vk_id, first_name, last_name,
             )
