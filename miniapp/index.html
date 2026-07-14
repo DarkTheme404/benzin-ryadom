@@ -222,35 +222,39 @@
 
       <!-- Premium Tiers -->
       <div class="premium-tiers" id="premium-tiers" style="display:none">
+        <div style="background: linear-gradient(135deg, rgba(34,197,94,0.15), rgba(34,197,94,0.05)); border: 1px solid rgba(34,197,94,0.3); border-radius: 12px; padding: 12px; margin-bottom: 12px; text-align: center;">
+          <div style="font-size: 13px; color: #86efac;">💰 <b>Окупается с первого месяца</b></div>
+          <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">Средняя экономия: <b>~2 700₽/мес</b> на топливе</div>
+        </div>
         <div class="premium-tier" data-tier="economy">
           <div class="tier-header">
             <span class="tier-icon">🥈</span>
-            <span class="tier-name">Экономия</span>
+            <span class="tier-name">Эконом</span>
             <span class="tier-price">100₽/мес</span>
           </div>
+          <div style="font-size: 11px; color: #86efac; margin: 4px 0 8px;">≈ 3₽/л экономии = окупается за 33л</div>
           <ul class="tier-features">
-            <li>📊 График цен за 30 дней</li>
-            <li>📥 Экспорт данных в CSV</li>
-            <li>🗺️ Офлайн-карта АЗС</li>
+            <li>📊 <b>График цен 30 дней</b> — видишь когда заправляться</li>
+            <li>📥 <b>Экспорт в CSV/Excel</b> — для бухгалтерии</li>
+            <li>🗺️ <b>Офлайн-карта</b> — работает без интернета</li>
           </ul>
-          <button class="btn btn-tier btn-economy" data-tier="economy">Выбрать</button>
+          <button class="btn btn-tier btn-economy" data-tier="economy">Выбрать за 100₽</button>
         </div>
         <div class="premium-tier tier-featured" data-tier="standard">
-          <div class="tier-badge">Популярный</div>
+          <div class="tier-badge">🔥 Хит продаж</div>
           <div class="tier-header">
             <span class="tier-icon">🥇</span>
             <span class="tier-name">Стандарт</span>
             <span class="tier-price">250₽/мес</span>
           </div>
+          <div style="font-size: 11px; color: #86efac; margin: 4px 0 8px;">Всё из Эконом + маршруты и прогнозы</div>
           <ul class="tier-features">
-            <li>📊 График цен за 30 дней</li>
-            <li>📥 Экспорт данных в CSV</li>
-            <li>🗺️ Офлайн-карта АЗС</li>
-            <li>🛣️ Маршрут А→Б с ценами</li>
-            <li>🔮 Прогноз цен на 7 дней</li>
-            <li>🔔 Топливный дозор</li>
+            <li>✅ <b>Всё из Эконом</b></li>
+            <li>🛣️ <b>Маршрут А→Б с ценами</b> — экономь в поездках</li>
+            <li>🔮 <b>Прогноз цен 7 дней</b> — заправляйся дёшево</li>
+            <li>🔔 <b>Топливный будильник</b> — узнай когда завезут</li>
           </ul>
-          <button class="btn btn-tier btn-standard" data-tier="standard">Выбрать</button>
+          <button class="btn btn-tier btn-standard" data-tier="standard">Выбрать за 250₽</button>
         </div>
         <div class="premium-tier" data-tier="elite">
           <div class="tier-header">
@@ -258,12 +262,16 @@
             <span class="tier-name">Элита</span>
             <span class="tier-price">500₽/мес</span>
           </div>
+          <div style="font-size: 11px; color: #86efac; margin: 4px 0 8px;">Всё из Стандарт + безопасность</div>
           <ul class="tier-features">
-            <li>Всё из Стандарта</li>
-            <li>🚗 Антипробковый маршрут</li>
-            <li>🆘 SOS-режим</li>
+            <li>✅ <b>Всё из Стандарт</b></li>
+            <li>🚗 <b>Антипробка</b> — экономь время в пути</li>
+            <li>🆘 <b>SOS-режим</b> — помощь водителей 50 км вокруг</li>
           </ul>
-          <button class="btn btn-tier btn-elite" data-tier="elite">Выбрать</button>
+          <button class="btn btn-tier btn-elite" data-tier="elite">Выбрать за 500₽</button>
+        </div>
+        <div style="text-align: center; font-size: 11px; color: var(--text-secondary); margin-top: 12px;">
+          💳 Оплата через ЮMoney · Отмена в любой момент
         </div>
       </div>
 
@@ -357,22 +365,19 @@
       <div class="profile-section">
         <h3 class="profile-section-title">🔗 Привязка аккаунта</h3>
         <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px;">
-          Чтобы Premium работал и в Telegram, и в VK — привяжи аккаунт
+          Premium работает везде — в TG, VK и Mini App
         </p>
         <div class="link-section" id="link-section">
-          <input type="text" id="link-code-input" placeholder="Введи 6-значный код" maxlength="6" style="width: 100%; padding: 10px; background: var(--bg-elev); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--text); font-size: 16px; text-align: center; letter-spacing: 4px; margin-bottom: 8px;">
-          <button class="btn btn-secondary" id="btn-link-apply" style="width: 100%;">✅ Применить код</button>
+          <a id="btn-link-tg" class="btn btn-primary" style="width: 100%; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 12px; margin-bottom: 8px; background: linear-gradient(135deg, #0088cc, #00aaff); color: white; border-radius: 10px; font-weight: 600;">
+            📱 Привязать Telegram (1 клик)
+          </a>
+          <button class="btn btn-secondary" id="btn-link-code-toggle" style="width: 100%; font-size: 12px;">Или ввести код вручную</button>
+          <div id="link-code-section" style="display: none; margin-top: 8px;">
+            <input type="text" id="link-code-input" placeholder="6-значный код" maxlength="6" style="width: 100%; padding: 10px; background: var(--bg-elev); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: var(--text); font-size: 16px; text-align: center; letter-spacing: 4px; margin-bottom: 8px;">
+            <button class="btn btn-secondary" id="btn-link-apply" style="width: 100%;">✅ Применить код</button>
+          </div>
           <div id="link-status" style="margin-top: 8px; font-size: 13px; text-align: center;"></div>
         </div>
-        <details style="margin-top: 12px; font-size: 12px; color: var(--text-secondary);">
-          <summary style="cursor: pointer;">📖 Как получить код?</summary>
-          <ol style="padding-left: 18px; margin-top: 8px; line-height: 1.6;">
-            <li>Открой Telegram бот @benzyn_ryadom</li>
-            <li>Напиши: <code>/link</code></li>
-            <li>Бот даст 6-значный код (10 мин)</li>
-            <li>Введи код выше</li>
-          </ol>
-        </details>
       </div>
 
       <!-- Actions -->

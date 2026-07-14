@@ -345,6 +345,33 @@ async def handle_admin_stats(request):
     })
 
 
+async def handle_public_stats(request):
+    """GET /api/stats — публичная статистика (для лендинга и Mini App)."""
+    try:
+        total_users = await db._fetch("SELECT COUNT(*) as c FROM users", one=True)
+        tg_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE telegram_id IS NOT NULL AND telegram_id > 0 AND vk_id IS NULL", one=True)
+        vk_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE vk_id IS NOT NULL", one=True)
+        linked_users = await db._fetch("SELECT COUNT(*) as c FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL", one=True)
+        premium_users = await db._fetch("SELECT COUNT(*) as c FROM premium_users WHERE is_active = 1 AND expires_at > NOW()", one=True)
+        total_stations = await db._fetch("SELECT COUNT(*) as c FROM stations", one=True)
+        total_reports = await db._fetch("SELECT COUNT(*) as c FROM reports", one=True)
+
+        return json_resp({
+            "users": {
+                "total": total_users["c"] if total_users else 0,
+                "telegram": tg_users["c"] if tg_users else 0,
+                "vk": vk_users["c"] if vk_users else 0,
+                "linked": linked_users["c"] if linked_users else 0,
+                "premium": premium_users["c"] if premium_users else 0,
+            },
+            "stations": total_stations["c"] if total_stations else 0,
+            "reports": total_reports["c"] if total_reports else 0,
+        })
+    except Exception as e:
+        logger.exception(f"public_stats error: {e}")
+        return json_resp({"error": "internal error"}, status=500)
+
+
 async def get_source_stats() -> list[dict]:
     """Собирает статистику по каждому источнику."""
     if db.USE_SQLITE:
@@ -2244,6 +2271,7 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/health", handle_health)
     app.router.add_get("/api/logs", handle_logs)
     app.router.add_get("/api/admin/stats", handle_admin_stats)
+    app.router.add_get("/api/stats", handle_public_stats)
     app.router.add_get("/api/reverse-geocode", handle_reverse_geocode)
     app.router.add_get("/api/stations", handle_stations)
     app.router.add_get("/api/stations/by-city", handle_stations_by_city)

@@ -3007,6 +3007,29 @@
         }
       });
     }
+    // One-click link to Telegram
+    const linkTgBtn = $('#btn-link-tg');
+    if (linkTgBtn) {
+      const vkId = state.vkUserId || getTgId();
+      if (vkId && platform.vk) {
+        linkTgBtn.href = `https://t.me/benzyn_ryadom_bot?start=link_vk_${vkId}`;
+        linkTgBtn.style.display = 'flex';
+        linkTgBtn.addEventListener('click', () => {
+          haptic('medium');
+          showToast('Открой бота и нажми /start для привязки', 'info');
+        });
+      } else {
+        linkTgBtn.style.display = 'none';
+      }
+    }
+    // Toggle code input
+    const codeToggle = $('#btn-link-code-toggle');
+    if (codeToggle) {
+      codeToggle.addEventListener('click', () => {
+        const section = $('#link-code-section');
+        if (section) section.style.display = section.style.display === 'none' ? 'block' : 'none';
+      });
+    }
     const linkBtn = $('#btn-link-apply');
     if (linkBtn) {
       linkBtn.addEventListener('click', async () => {

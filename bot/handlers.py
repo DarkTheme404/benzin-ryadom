@@ -361,6 +361,30 @@ async def cmd_start(message: Message):
             except Exception:
                 pass
 
+    # Проверяем deep link для привязки: /start link_VKUSERID
+    if "link_vk_" in text:
+        import re
+        link_match = re.search(r'link_vk_(\d+)', text)
+        if link_match:
+            vk_id = int(link_match.group(1))
+            # Привязываем VK к TG
+            from db import link_accounts_by_vk
+            result = await link_accounts_by_vk(vk_id, telegram_id)
+            if result.get("ok"):
+                await message.answer(
+                    f"✅ <b>Аккаунт привязан!</b>\n\n"
+                    f"Твой TG аккаунт привязан к VK ID: {vk_id}\n\n"
+                    f"Теперь Premium (если есть) работает и в TG, и в VK, и в Mini App.",
+                    reply_markup=main_menu_keyboard(),
+                )
+                return
+            else:
+                await message.answer(
+                    f"❌ Не удалось привязать: {result.get('error', 'неизвестная ошибка')}",
+                    reply_markup=main_menu_keyboard(),
+                )
+                return
+
     # Сообщение 1: Hero
     try:
         hero = WELCOME_1

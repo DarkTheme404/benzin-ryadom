@@ -3700,6 +3700,62 @@ async def link_accounts(telegram_id: int, link_code: str) -> dict:
     }
 
 
+async def link_accounts_by_vk(vk_id: int, telegram_id: int) -> dict:
+    """Привязывает VK аккаунт к TG по deep link (one-click link).
+
+    Вызывается из /start link_vk_VKID deep link.
+    """
+    # Находим VK пользователя
+    vk_uid = await get_user_id_by_vk_id(vk_id)
+    if not vk_uid:
+        # Создаём VK пользователя
+        from db import upsert_user_vk
+        vk_uid = await upsert_user_vk(vk_id)
+        if not vk_uid:
+            return {"ok": False, "error": "Не удалось создать VK аккаунт"}
+
+    # Находим TG пользователя
+    tg_uid = await get_user_id_by_telegram_id(telegram_id)
+    if not tg_uid:
+        # Создаём TG пользователя
+        from db import upsert_user
+        tg_uid = await upsert_user(telegram_id)
+        if not tg_uid:
+            return {"ok": False, "error": "Не удалось создать TG аккаунт"}
+
+    if vk_uid == tg_uid:
+        return {"ok": False, "error": "Это один и тот же аккаунт"}
+
+    # Привязываем VK → TG
+    try:
+        if USE_SQLITE:
+            await _execute(
+                "UPDATE users SET linked_user_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE id = ?",
+                tg_uid, vk_uid,
+            )
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    "UPDATE users SET linked_user_id = $1, link_code = NULL, link_code_expires_at = NULL WHERE id = $2",
+                    tg_uid, vk_uid,
+                )
+    except Exception:
+        # Fallback
+        if USE_SQLITE:
+            await _execute(
+                "UPDATE users SET linked_telegram_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE id = ?",
+                telegram_id, vk_uid,
+            )
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    "UPDATE users SET linked_telegram_id = $1, link_code = NULL, link_code_expires_at = NULL WHERE id = $2",
+                    telegram_id, vk_uid,
+                )
+
+    return {"ok": True, "vk_id": vk_id, "telegram_id": telegram_id}
+
+
 async def get_user_id_by_any(telegram_id: int) -> int | None:
     """Ищет user_id по telegram_id, vk_id ИЛИ по linked_telegram_id/linked_user_id."""
     if USE_SQLITE:
