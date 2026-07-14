@@ -1765,49 +1765,57 @@ async def handle_main_button(message: Message, state: FSMContext = None):
     text = (message.text or "").strip()
     logger.info(f"handle_main_button: text={text!r}")
 
-    # Глобальный «В начало»
-    if text == "🏠 В начало" or text == BTN_HOME:
-        await go_home_text(message, state)
-        return
+    try:
+        # Глобальный «В начало»
+        if text == "🏠 В начало" or text == BTN_HOME:
+            await go_home_text(message, state)
+            return
 
-    if not await _require_subscription(message):
-        return
+        if not await _require_subscription(message):
+            logger.warning(f"handle_main_button: subscription check failed for user {message.from_user.id if message.from_user else '?'}, text={text!r}")
+            return
 
-    if text == BTN_FIND or text == "🔍 Найти АЗС":
-        await cmd_find(message)
-    elif text == BTN_ROUTE or text == "🛣 Поиск по трассе":
-        await cmd_route_search(message, state)
-    elif text == BTN_REPORT or text == "📝 Сообщить о наличии":
-        await message.answer(
-            "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
-            reply_markup=report_city_keyboard(),
-        )
-    elif text == BTN_SUBSCRIBE or text == "🔔 Уведомления":
-        await cmd_subscribe(message, state)
-    elif text == BTN_PROFILE or text == "👤 Профиль":
-        await cmd_profile(message)
-    elif text == BTN_OWNER or text == "👤 Я владелец АЗС":
-        await cmd_register_owner(message, state)
-    elif text == BTN_MY_STATIONS or text == "🏪 Мои АЗС":
-        await cmd_my_stations(message)
-    elif text == BTN_HELP or text == "❓ Помощь" or text == "/help":
-        await cmd_help(message)
-    elif text == BTN_PREMIUM or text == "💎 Premium":
-        await cmd_premium(message)
-    elif text == BTN_LINK or text == "🔗 Привязать":
-        await cmd_link(message)
-    elif text == BTN_REFERRAL or text == "🎁 Реферал":
-        await cmd_referral(message)
-    elif text == BTN_APP or text == "📱 Приложение":
-        await cmd_open_app(message)
-    elif text == BTN_DONATE or text == "❤️ Поддержать":
-        await cmd_donate(message)
-    elif text == BTN_BUG or text == "🐛 Ошибка":
-        await cmd_bug_report(message, state)
-    elif text == BTN_IDEA or text == "💡 Предложение":
-        await cmd_idea(message, state)
-    else:
-        await handle_text_search(message, state)
+        if text == BTN_FIND or text == "🔍 Найти АЗС":
+            await cmd_find(message)
+        elif text == BTN_ROUTE or text == "🛣 Поиск по трассе":
+            await cmd_route_search(message, state)
+        elif text == BTN_REPORT or text == "📝 Сообщить о наличии":
+            await message.answer(
+                "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
+                reply_markup=report_city_keyboard(),
+            )
+        elif text == BTN_SUBSCRIBE or text == "🔔 Уведомления":
+            await cmd_subscribe(message, state)
+        elif text == BTN_PROFILE or text == "👤 Профиль":
+            await cmd_profile(message)
+        elif text == BTN_OWNER or text == "👤 Я владелец АЗС":
+            await cmd_register_owner(message, state)
+        elif text == BTN_MY_STATIONS or text == "🏪 Мои АЗС":
+            await cmd_my_stations(message)
+        elif text == BTN_HELP or text == "❓ Помощь" or text == "/help":
+            await cmd_help(message)
+        elif text == BTN_PREMIUM or text == "💎 Premium":
+            await cmd_premium(message)
+        elif text == BTN_LINK or text == "🔗 Привязать":
+            await cmd_link(message)
+        elif text == BTN_REFERRAL or text == "🎁 Реферал":
+            await cmd_referral(message)
+        elif text == BTN_APP or text == "📱 Приложение":
+            await cmd_open_app(message)
+        elif text == BTN_DONATE or text == "❤️ Поддержать":
+            await cmd_donate(message)
+        elif text == BTN_BUG or text == "🐛 Ошибка":
+            await cmd_bug_report(message, state)
+        elif text == BTN_IDEA or text == "💡 Предложение":
+            await cmd_idea(message, state)
+        else:
+            await handle_text_search(message, state)
+    except Exception as e:
+        logger.exception(f"handle_main_button CRASHED for text={text!r}: {e}")
+        try:
+            await message.answer("⚠️ Ошибка. Попробуй /start или /help")
+        except Exception:
+            pass
 
 
 # === /profile ===
