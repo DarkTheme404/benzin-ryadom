@@ -2051,16 +2051,32 @@
 
     showLoading();
     try {
-      // Используем координаты из map picker, если они есть и совпадают с вводом
-      let fromCoords = routeFuelCoords.from;
-      let toCoords = routeFuelCoords.to;
+      // Сбрасываем старые координаты чтобы геокодинг заново обработал текущий ввод
+      let fromCoords = null;
+      let toCoords = null;
+
+      // Если у нас уже есть координаты из picker — проверяем что текст не изменился
+      if (routeFuelCoords.from && routeFuelCoords.from.name === fromInput) {
+        fromCoords = routeFuelCoords.from;
+      }
+      if (routeFuelCoords.to && routeFuelCoords.to.name === toInput) {
+        toCoords = routeFuelCoords.to;
+      }
 
       // Если нет — делаем геокодинг
       if (!fromCoords) {
         fromCoords = await geocode(fromInput);
+        if (fromCoords) {
+          fromCoords.name = fromInput;
+          routeFuelCoords.from = fromCoords;
+        }
       }
       if (!toCoords) {
         toCoords = await geocode(toInput);
+        if (toCoords) {
+          toCoords.name = toInput;
+          routeFuelCoords.to = toCoords;
+        }
       }
 
       if (!fromCoords) {
@@ -2107,6 +2123,39 @@
       const toEl = $('#route-fuel-to-coords');
       if (toEl) toEl.textContent = `📍 ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}`;
     }
+    // Reverse geocoding — определяем название места
+    reverseGeocode(coords.lat, coords.lon).then(name => {
+      if (!name) return;
+      if (target === 'from') {
+        const input = $('#route-fuel-from');
+        if (input && !input.value) input.value = name;
+        if (routeFuelCoords.from) routeFuelCoords.from.name = name;
+      } else {
+        const input = $('#route-fuel-to');
+        if (input && !input.value) input.value = name;
+        if (routeFuelCoords.to) routeFuelCoords.to.name = name;
+      }
+    });
+  }
+
+  // === Reverse geocoding (определяет город по координатам) ===
+  async function reverseGeocode(lat, lon) {
+    try {
+      // Nominatim reverse geocoding
+      const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=ru&zoom=10`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'BenzinRyadom/1.0' } });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data && data.address) {
+        const a = data.address;
+        // Приоритет: город → посёлок → деревня → район → штат
+        return a.city || a.town || a.village || a.hamlet || a.suburb ||
+               a.county || a.state || data.display_name?.split(',')[0] || 'Точка';
+      }
+    } catch (e) {
+      console.error('reverseGeocode:', e);
+    }
+    return null;
   }
 
   function renderRouteFuelResults(data, container, fuel) {

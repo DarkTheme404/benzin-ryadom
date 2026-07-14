@@ -2587,6 +2587,7 @@ async def handle_route_fuel(request):
 
     lat_min, lat_max, lon_min, lon_max = bbox_search(mid_lat, mid_lon, corridor_km, 50)
 
+    from db import _fetch
     try:
         if USE_SQLITE:
             rows = await _fetch(
