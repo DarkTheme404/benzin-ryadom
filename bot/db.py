@@ -177,6 +177,8 @@ async def _migrate_sqlite(db):
         await db.execute("ALTER TABLE users ADD COLUMN link_code TEXT")
     if "link_code_expires_at" not in user_cols:
         await db.execute("ALTER TABLE users ADD COLUMN link_code_expires_at TEXT")
+    if "linked_user_id" not in user_cols:
+        await db.execute("ALTER TABLE users ADD COLUMN linked_user_id INTEGER")
 
     # Создаём owner_stations если её нет
     await db.execute(
@@ -394,6 +396,7 @@ async def _create_schema_pg(pool):
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS vk_id BIGINT")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS link_code TEXT")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS link_code_expires_at TIMESTAMPTZ")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS linked_user_id BIGINT")
         except Exception as e:
             logger.warning(f"PG migration users link fields: {e}")
 
@@ -3573,22 +3576,28 @@ def _gen_link_code() -> str:
 async def create_link_code(telegram_id: int) -> str:
     """Создаёт/обновляет код привязки для пользователя.
 
+    Принимает telegram_id ИЛИ vk_user_id — функция сама найдёт пользователя.
     Возвращает 6-значный код, действующий 10 минут.
     """
     code = _gen_link_code()
     expires_dt = datetime.now(timezone.utc) + timedelta(minutes=10)
     expires_str = expires_dt.isoformat()  # для SQLite (TEXT)
+
+    uid = await get_user_id_by_any(telegram_id)
+    if not uid:
+        raise ValueError("User not found")
+
     if USE_SQLITE:
         await _execute(
-            "UPDATE users SET link_code = ?, link_code_expires_at = ? WHERE telegram_id = ?",
-            code, expires_str, telegram_id,
+            "UPDATE users SET link_code = ?, link_code_expires_at = ? WHERE id = ?",
+            code, expires_str, uid,
         )
     else:
         # PG: TIMESTAMPTZ требует datetime объект, не строку
         async with _db.acquire() as conn:
             await conn.execute(
-                "UPDATE users SET link_code = $1, link_code_expires_at = $2 WHERE telegram_id = $3",
-                code, expires_dt, telegram_id,
+                "UPDATE users SET link_code = $1, link_code_expires_at = $2 WHERE id = $3",
+                code, expires_dt, uid,
             )
     return code
 
@@ -3597,7 +3606,7 @@ async def get_link_code_info(code: str) -> dict | None:
     """Возвращает инфо о коде привязки (кто создал, когда истекает)."""
     if USE_SQLITE:
         row = await _fetch(
-            """SELECT telegram_id, username, first_name, link_code_expires_at
+            """SELECT id, telegram_id, vk_id, username, first_name, link_code_expires_at
                FROM users WHERE link_code = ?""",
             code, one=True,
         )
@@ -3607,7 +3616,7 @@ async def get_link_code_info(code: str) -> dict | None:
     else:
         async with _db.acquire() as conn:
             row = await conn.fetchrow(
-                """SELECT telegram_id, username, first_name, link_code_expires_at
+                """SELECT id, telegram_id, vk_id, username, first_name, link_code_expires_at
                    FROM users WHERE link_code = $1""",
                 code,
             )
@@ -3630,66 +3639,65 @@ async def get_link_code_info(code: str) -> dict | None:
 
 
 async def link_accounts(telegram_id: int, link_code: str) -> dict:
-    """Привязывает telegram_id к аккаунту, который создал link_code.
+    """Привязывает текущий аккаунт к аккаунту, который создал link_code.
 
-    Возвращает {"ok": True, "linked_to": telegram_id, "username": ...}
+    Принимает telegram_id ИЛИ vk_user_id — функция сама найдёт пользователя.
+    Возвращает {"ok": True, "linked_to": ..., "username": ...}
     или {"ok": False, "error": "..."}
     """
     info = await get_link_code_info(link_code)
     if not info:
         return {"ok": False, "error": "Код не найден или истёк"}
 
-    target_tg_id = info["telegram_id"]
-    if target_tg_id == telegram_id:
+    target_uid = info.get("id")
+    if not target_uid:
+        return {"ok": False, "error": "Аккаунт с этим кодом не найден"}
+
+    current_uid = await get_user_id_by_any(telegram_id)
+    if not current_uid:
+        return {"ok": False, "error": "Сначала запусти бота"}
+
+    if target_uid == current_uid:
         return {"ok": False, "error": "Нельзя привязать аккаунт к самому себе"}
 
-    if USE_SQLITE:
-        # Проверяем что у текущего юзера есть user_id
-        target_uid = await get_user_id_by_telegram_id(target_tg_id)
-        if not target_uid:
-            return {"ok": False, "error": "Аккаунт с этим кодом не найден"}
-        current_uid = await get_user_id_by_telegram_id(telegram_id)
-        if not current_uid:
-            return {"ok": False, "error": "Сначала запусти бота"}
+    linked_tg_id = info.get("telegram_id")
 
-        # Привязываем
+    if USE_SQLITE:
         await _execute(
-            "UPDATE users SET linked_telegram_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE telegram_id = ?",
-            target_tg_id, telegram_id,
+            "UPDATE users SET linked_user_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE id = ?",
+            target_uid, current_uid,
         )
     else:
         async with _db.acquire() as conn:
-            target_uid = await conn.fetchval("SELECT id FROM users WHERE telegram_id = $1", target_tg_id)
-            if not target_uid:
-                return {"ok": False, "error": "Аккаунт с этим кодом не найден"}
-            current_uid = await conn.fetchval("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
-            if not current_uid:
-                return {"ok": False, "error": "Сначала запусти бота"}
-
             await conn.execute(
                 """UPDATE users
-                   SET linked_telegram_id = $1, link_code = NULL, link_code_expires_at = NULL
-                   WHERE telegram_id = $2""",
-                target_tg_id, telegram_id,
+                   SET linked_user_id = $1, link_code = NULL, link_code_expires_at = NULL
+                   WHERE id = $2""",
+                target_uid, current_uid,
             )
 
     return {
         "ok": True,
-        "linked_to_telegram_id": target_tg_id,
+        "linked_to_telegram_id": linked_tg_id,
         "linked_to_username": info.get("username"),
         "linked_to_name": info.get("first_name"),
     }
 
 
 async def get_user_id_by_any(telegram_id: int) -> int | None:
-    """Ищет user_id по telegram_id ИЛИ по linked_telegram_id."""
+    """Ищет user_id по telegram_id, vk_id ИЛИ по linked_telegram_id/linked_user_id."""
     if USE_SQLITE:
         row = await _fetch(
             """SELECT id FROM users
-               WHERE telegram_id = ? OR linked_telegram_id = ?
-               ORDER BY (telegram_id = ?) DESC
+               WHERE telegram_id = ? OR vk_id = ? OR linked_telegram_id = ?
+                  OR linked_user_id = (
+                    SELECT id FROM users WHERE telegram_id = ? OR vk_id = ? LIMIT 1
+                  )
+               ORDER BY (telegram_id = ?) DESC, (vk_id = ?) DESC
                LIMIT 1""",
             telegram_id, telegram_id, telegram_id,
+            telegram_id, telegram_id,
+            telegram_id, telegram_id,
             one=True,
         )
         if not row:
@@ -3699,8 +3707,11 @@ async def get_user_id_by_any(telegram_id: int) -> int | None:
         async with _db.acquire() as conn:
             row = await conn.fetchrow(
                 """SELECT id FROM users
-                   WHERE telegram_id = $1 OR linked_telegram_id = $1
-                   ORDER BY (telegram_id = $1) DESC
+                   WHERE telegram_id = $1 OR vk_id = $1 OR linked_telegram_id = $1
+                      OR linked_user_id = (
+                        SELECT id FROM users WHERE telegram_id = $1 OR vk_id = $1 LIMIT 1
+                      )
+                   ORDER BY (telegram_id = $1) DESC, (vk_id = $1) DESC
                    LIMIT 1""",
                 telegram_id,
             )

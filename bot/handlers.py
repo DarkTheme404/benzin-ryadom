@@ -1281,9 +1281,8 @@ async def link_create_callback(callback: CallbackQuery):
                 json={"telegram_id": callback.from_user.id},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
-                text = await r.text()
-                logger.info(f"link_create_callback: API response status={r.status} body={text[:200]}")
                 data = await r.json()
+                logger.info(f"link_create_callback: API response status={r.status}")
         if data.get("ok"):
             code = data["code"]
             await callback.message.answer(

@@ -2416,11 +2416,13 @@ async def handle_premium_activate(request):
         return json_resp({"error": "telegram_id and tier required"}, status=400)
     if tier not in ("economy", "standard", "elite"):
         return json_resp({"error": "invalid tier"}, status=400)
-    from db import get_user_id_by_any, upsert_user, activate_premium, get_plan
+    from db import get_user_id_by_any, upsert_user, upsert_user_vk, activate_premium, get_plan
     uid = await get_user_id_by_any(int(tid))
     if not uid:
-        # Создаём пользователя
-        await upsert_user(int(tid), username=None, first_name="Premium User")
+        if body.get("vk_user_id"):
+            await upsert_user_vk(int(tid))
+        else:
+            await upsert_user(int(tid), username=None, first_name="Premium User")
         uid = await get_user_id_by_any(int(tid))
     plan = get_plan(tier)
     sub = await activate_premium(uid, tier, days=plan["period_days"], payment_id=body.get("payment_id", f"manual_{tid}"), amount=plan["price"])
@@ -2483,15 +2485,18 @@ async def handle_account_link_create(request):
     tid = body.get("telegram_id") or body.get("vk_user_id")
     if not tid:
         return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
-    from db import create_link_code, get_user_id_by_any, upsert_user
+    from db import create_link_code, get_user_id_by_any, upsert_user, upsert_user_vk
     uid = await get_user_id_by_any(int(tid))
     if not uid:
-        await upsert_user(int(tid), username=None, first_name="User")
+        if body.get("vk_user_id"):
+            await upsert_user_vk(int(tid))
+        else:
+            await upsert_user(int(tid), username=None, first_name="User")
     try:
         code = await create_link_code(int(tid))
     except Exception as e:
         logger.exception(f"create_link_code error: {e}")
-        return json_resp({"error": f"create_link_code failed: {e}"}, status=500)
+        return json_resp({"error": "failed to create link code"}, status=500)
     return json_resp({"ok": True, "code": code, "expires_in": 600})
 
 
@@ -2548,17 +2553,17 @@ async def handle_account_info(request):
                 "linked_telegram_id": None,
                 "is_premium": False,
             })
-        # Получаем telegram_id и linked_telegram_id
+        # Получаем telegram_id и linked данные
         if USE_SQLITE:
             row = await _fetch(
-                "SELECT telegram_id, linked_telegram_id, vk_id FROM users WHERE id = ?",
+                "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = ?",
                 uid, one=True,
             )
             user_data = dict(row) if row else {}
         else:
             async with _db.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT telegram_id, linked_telegram_id, vk_id FROM users WHERE id = $1",
+                    "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = $1",
                     uid,
                 )
                 user_data = dict(row) if row else {}
@@ -2569,17 +2574,19 @@ async def handle_account_info(request):
 
         # Определяем linked_via
         linked_via = None
-        if user_data.get("linked_telegram_id"):
-            # Если текущий tg_id != linked_telegram_id — это привязанный VK
-            if int(tid) != user_data.get("linked_telegram_id"):
+        if user_data.get("linked_user_id") or user_data.get("linked_telegram_id"):
+            if user_data.get("vk_id") and int(tid) == user_data.get("vk_id"):
                 linked_via = "vk"
-            else:
+            elif user_data.get("telegram_id") and int(tid) == user_data.get("telegram_id"):
                 linked_via = "telegram"
+            else:
+                linked_via = "linked"
 
         return json_resp({
             "ok": True,
             "telegram_id": user_data.get("telegram_id"),
             "linked_telegram_id": user_data.get("linked_telegram_id"),
+            "linked_user_id": user_data.get("linked_user_id"),
             "linked_via": linked_via,
             "vk_id": user_data.get("vk_id"),
             "is_premium": is_prem,
@@ -2588,7 +2595,7 @@ async def handle_account_info(request):
         })
     except Exception as e:
         logger.exception(f"account_info error: {e}")
-        return json_resp({"error": str(e)}, status=500)
+        return json_resp({"error": "internal error"}, status=500)
 
 
 # === Fuel Alarm endpoints ===
@@ -3416,12 +3423,15 @@ async def handle_premium_create_payment(request):
         return json_resp({"error": "invalid tier"}, status=400)
 
     from db import (
-        get_user_id_by_any, upsert_user,
+        get_user_id_by_any, upsert_user, upsert_user_vk,
         get_plan, create_payment_request,
     )
     uid = await get_user_id_by_any(int(tid))
     if not uid:
-        await upsert_user(int(tid), username=None, first_name="Premium User")
+        if body.get("vk_user_id"):
+            await upsert_user_vk(int(tid))
+        else:
+            await upsert_user(int(tid), username=None, first_name="Premium User")
         uid = await get_user_id_by_any(int(tid))
     if not uid:
         return json_resp({"error": "user creation failed"}, status=500)
