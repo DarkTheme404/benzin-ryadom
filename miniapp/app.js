@@ -1199,13 +1199,15 @@
 
   // ============= SOS (Elite) =============
   async function sendSOS() {
-    if (!state.tgId) {
-      showToast('Войдите через Telegram для SOS', 'warning');
+    const uid = getTgId();
+    if (!uid) {
+      showToast('Не удалось определить пользователя', 'error');
       return;
     }
     // Проверяем Premium Elite
     try {
-      const premRes = await api(`/api/premium/status?telegram_id=${state.tgId}`);
+      const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+      const premRes = await api(`/api/premium/status?${idParam}=${uid}`);
       if (!premRes || !premRes.active || premRes.tier !== 'elite') {
         showUpsell('sos_elite');
         return;
@@ -1223,16 +1225,17 @@
     }
 
     // Подтверждение
-    const confirmed = confirm('🚨 Отправить SOS-сигнал?\n\nPremium-пользователям в радиусе 50 км придёт уведомление с твоими координатами.');
+    const confirmed = confirm('🚨 Отправить SOS-сигнал?\n\nВодителям в радиусе 50 км придёт уведомление с твоими координатами.');
     if (!confirmed) return;
 
     showLoading();
     try {
+      const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
       const resp = await api('/api/sos/broadcast', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-          telegram_id: state.tgId,
+          [idParam]: uid,
           lat: pos.lat,
           lon: pos.lon,
           message: 'Помогите! Нужна помощь на дороге!',

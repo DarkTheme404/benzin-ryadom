@@ -2937,8 +2937,8 @@ async def handle_user_savings(request):
 async def handle_sos_broadcast(request):
     """POST /api/sos/broadcast — SOS-сигнал.
 
-    Elite only. Отправляет SOS-уведомление всем Premium юзерам в радиусе 50 км.
-    Body: {telegram_id, lat, lon, message?}
+    Elite only (отправка). Рассылает SOS-уведомление ВСЕМ пользователям в радиусе 50 км.
+    Body: {telegram_id OR vk_user_id, lat, lon, message?}
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
@@ -2947,13 +2947,13 @@ async def handle_sos_broadcast(request):
     except Exception:
         return json_resp({"error": "invalid json"}, status=400)
 
-    tid = body.get("telegram_id")
+    tid = body.get("telegram_id") or body.get("vk_user_id")
     lat = body.get("lat")
     lon = body.get("lon")
     msg = body.get("message", "Помогите! Нужна помощь на дороге!")
 
     if not tid or lat is None or lon is None:
-        return json_resp({"error": "telegram_id, lat, lon required"}, status=400)
+        return json_resp({"error": "telegram_id/vk_user_id, lat, lon required"}, status=400)
 
     from db import get_user_id_by_any, get_user_premium
     uid = await get_user_id_by_any(int(tid))
@@ -2968,11 +2968,11 @@ async def handle_sos_broadcast(request):
             "message": "SOS-режим доступен только для Elite",
         }, status=402)
 
-    # Находим Premium юзеров в радиусе 50 км (Haversine)
+    # Находим ВСЕХ пользователей в радиусе 50 км (не только Premium)
     RADIUS_KM = 50
     if USE_SQLITE:
         nearby = await _fetch(
-            """SELECT u.id, u.telegram_id,
+            """SELECT u.id, u.telegram_id, u.vk_id,
                       (6371 * acos(
                         cos(radians(?)) * cos(radians(s.center_lat)) *
                         cos(radians(s.center_lon) - radians(?)) +
@@ -2980,17 +2980,15 @@ async def handle_sos_broadcast(request):
                       )) AS distance_km
                FROM users u
                JOIN subscriptions s ON s.user_id = u.id
-               JOIN premium_users pu ON pu.user_id = u.id
-               WHERE pu.is_active = 1
-                 AND (pu.expires_at IS NULL OR datetime(pu.expires_at) > datetime('now'))
-                 AND s.center_lat IS NOT NULL
+               WHERE s.center_lat IS NOT NULL
+                 AND u.id != ?
                HAVING distance_km < ?
                ORDER BY distance_km""",
-            float(lat), float(lon), float(lat), RADIUS_KM,
+            float(lat), float(lon), float(lat), uid, RADIUS_KM,
         )
     else:
         nearby = await _fetch(
-            """SELECT u.id, u.telegram_id,
+            """SELECT u.id, u.telegram_id, u.vk_id,
                       (6371 * acos(
                         cos(radians($1)) * cos(radians(s.center_lat)) *
                         cos(radians(s.center_lon) - radians($2)) +
@@ -2998,58 +2996,66 @@ async def handle_sos_broadcast(request):
                       )) AS distance_km
                FROM users u
                JOIN subscriptions s ON s.user_id = u.id
-               JOIN premium_users pu ON pu.user_id = u.id
-               WHERE pu.is_active = TRUE
-                 AND (pu.expires_at IS NULL OR pu.expires_at > NOW())
-                 AND s.center_lat IS NOT NULL
+               WHERE s.center_lat IS NOT NULL
+                 AND u.id != $4
                HAVING (6371 * acos(
                         cos(radians($1)) * cos(radians(s.center_lat)) *
                         cos(radians(s.center_lon) - radians($2)) +
                         sin(radians($1)) * sin(radians(s.center_lat))
                       )) < $3
                ORDER BY distance_km""",
-            float(lat), float(lon), RADIUS_KM,
+            float(lat), float(lon), RADIUS_KM, uid,
         )
 
     if not nearby:
         return json_resp({
             "ok": True,
             "broadcasted": 0,
-            "message": "Нет Premium пользователей рядом",
+            "message": "Нет пользователей рядом",
         })
 
-    # Отправляем SOS через бота (из push_worker или напрямую)
+    # Отправляем SOS через бота — всем пользователям в радиусе (TG + VK)
     sent = 0
     try:
         from bot_instance import bot
         for row in nearby:
             tg_id = row.get("telegram_id") if isinstance(row, dict) else row[1]
-            dist = row.get("distance_km", 0) if isinstance(row, dict) else row[2]
-            if not tg_id:
-                continue
-            try:
-                await bot.send_message(
-                    chat_id=tg_id,
-                    text=(
-                        f"🚨 <b>SOS-СИГНАЛ!</b>\n\n"
-                        f"Водитель рядом с тобой нуждается в помощи!\n\n"
-                        f"📍 Координаты: {lat}, {lon}\n"
-                        f"📏 Расстояние: {dist:.1f} км\n"
-                        f"💬 Сообщение: {msg}\n\n"
-                        f"Если можешь помоги — свяжись через @darkt30"
-                    ),
-                    parse_mode="HTML",
-                )
-                sent += 1
-            except Exception:
-                pass
+            vk_id = row.get("vk_id") if isinstance(row, dict) else row[2]
+            dist = row.get("distance_km", 0) if isinstance(row, dict) else row[3]
+            sos_text = (
+                f"🚨 <b>SOS-СИГНАЛ!</b>\n\n"
+                f"Водитель рядом с тобой нуждается в помощи!\n\n"
+                f"📍 Координаты: {lat}, {lon}\n"
+                f"📏 Расстояние: {dist:.1f} км\n"
+                f"💬 Сообщение: {msg}\n\n"
+                f"Если можешь помоги — свяжись через @darkt30"
+            )
+            # Отправляем в TG
+            if tg_id and int(tg_id) > 0:
+                try:
+                    await bot.send_message(
+                        chat_id=tg_id,
+                        text=sos_text,
+                        parse_mode="HTML",
+                    )
+                    sent += 1
+                except Exception:
+                    pass
+            # Отправляем в VK
+            elif vk_id:
+                try:
+                    from vk_callback import _vk_send
+                    await _vk_send(int(vk_id), sos_text)
+                    sent += 1
+                except Exception:
+                    pass
     except Exception as e:
         logger.exception(f"SOS broadcast error: {e}")
 
     return json_resp({
         "ok": True,
         "broadcasted": sent,
-        "nearby_premium": len(nearby),
+        "nearby_users": len(nearby),
         "radius_km": RADIUS_KM,
     })
 
