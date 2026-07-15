@@ -1530,6 +1530,33 @@ async def process_message_event(event: dict) -> None:
     elif action == "premium":
         await handle_premium(peer_id)
 
+    elif action == "trial":
+        # Кнопка "Попробовать бесплатно" — 3 дня Standard
+        from db import get_user_id_by_vk_id, activate_trial, is_premium
+        uid = await get_user_id_by_vk_id(peer_id)
+        if not uid:
+            await _vk_send(peer_id, "Сначала напиши /start", vk_main_menu())
+            return
+        if await is_premium(uid):
+            await _vk_send(peer_id, "✅ У тебя уже есть Premium. Используй «Premium» в меню.", vk_main_menu())
+            return
+        result = await activate_trial(uid, tier="standard", days=3)
+        if result.get("ok"):
+            await _vk_send(peer_id,
+                "🎁 <b>Trial Premium активирован!</b>\n\n"
+                "📅 На 3 дня (до " + str(result.get("expires_at", ""))[:10] + ")\n"
+                "💎 Тариф: Стандарт\n\n"
+                "Что попробовать:\n"
+                "1️⃣ Маршрут A→B с ценами\n"
+                "2️⃣ Прогноз цен на 7 дней\n"
+                "3️⃣ Топливный будильник\n\n"
+                "Если понравится — выбери «Premium» в меню.",
+                vk_main_menu())
+        elif result.get("error") == "already_used":
+            await _vk_send(peer_id, "⚠️ Ты уже использовал trial раньше. Оформи Premium через меню.", vk_main_menu())
+        else:
+            await _vk_send(peer_id, f"❌ Ошибка: {result.get('error', 'неизвестно')}", vk_main_menu())
+
     elif action == "link":
         await handle_link(peer_id, "link")
 

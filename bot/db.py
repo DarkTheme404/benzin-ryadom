@@ -337,6 +337,19 @@ async def _migrate_sqlite(db):
         )"""
     )
     await db.execute("CREATE INDEX IF NOT EXISTS idx_referrals_code ON referrals (referral_code)")
+
+    # === referral_discounts — 50% скидка за реферала (вместо бесплатного месяца) ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_discounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            discount_percent INTEGER NOT NULL DEFAULT 50,
+            expires_at TEXT NOT NULL,
+            used INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_referral_discounts_user ON referral_discounts (user_id, expires_at)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals (referrer_user_id)")
 
 
@@ -600,6 +613,25 @@ async def _create_schema_pg(pool):
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals (referrer_user_id)")
         except Exception as e:
             logger.warning(f"PG migration referrals: {e}")
+
+        # 3.7. referral_discounts — 50% скидка за приглашение (вместо бесплатного месяца)
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS referral_discounts (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    discount_percent INTEGER NOT NULL DEFAULT 50,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    used BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )"""
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_referral_discounts_user "
+                "ON referral_discounts (user_id, expires_at)"
+            )
+        except Exception as e:
+            logger.warning(f"PG migration referral_discounts: {e}")
 
         # 4. Автоимпорт из SQLite если PG пуста
         try:

@@ -1985,8 +1985,14 @@
               premEl.textContent = `${tierName} ✅${expDate}`;
               premEl.style.color = '#fbbf24';
             }
+            // Скрываем trial кнопку для premium
+            const trialBtnProfile2 = document.getElementById('btn-trial-profile');
+            if (trialBtnProfile2) trialBtnProfile2.style.display = 'none';
           } else {
             if (premRow) premRow.style.display = 'none';
+            // Показываем trial кнопку для non-premium
+            const trialBtnProfile = document.getElementById('btn-trial-profile');
+            if (trialBtnProfile) trialBtnProfile.style.display = 'block';
           }
 
           const statusEl = document.getElementById('accounts-status');
@@ -3094,6 +3100,18 @@
         tiers.style.display = tiers.style.display === 'none' ? 'flex' : 'none';
       }
     });
+    // Trial button в профиле
+    const trialBtn = document.getElementById('btn-trial-profile');
+    if (trialBtn) {
+      trialBtn.addEventListener('click', () => {
+        haptic('heavy');
+        if (window.PremiumUI && window.PremiumUI.activateTrial) {
+          window.PremiumUI.activateTrial();
+        } else {
+          activateTrial();
+        }
+      });
+    }
 
     // Premium tier buttons
     document.querySelectorAll('.btn-tier').forEach(btn => {

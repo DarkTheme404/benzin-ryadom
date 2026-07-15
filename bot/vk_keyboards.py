@@ -437,6 +437,8 @@ def vk_premium_keyboard() -> str:
     """Кнопки Premium — ссылка на Mini App для оплаты."""
     import os
     rows = []
+    # Trial кнопка — 3 дня бесплатно
+    rows.append([_callback_button("🎁 Попробовать 3 дня бесплатно", {"a": "trial"}, "positive")])
     # Ссылка на Mini App
     app_id = os.getenv("VK_MINI_APP_ID", "")
     if app_id and app_id.isdigit():
