@@ -4,7 +4,7 @@ YooMoney P2P оплата для Premium подписки.
 Регистрация (15 мин):
 1. Создать кошелёк: https://yoomoney.ru
 2. Зарегистрировать приложение: https://yoomoney.ru/myservices/new
-   - Redirect URI: https://benzin-ryadom.onrender.com/api/yoomoney/callback
+   - Redirect URI: {BACKEND_URL}/api/yoomoney/callback
    - Scopes: account-info, operation-history, operation-details, payment-p2p
 3. Получить ACCESS_TOKEN через OAuth (Authorize URL)
 4. Добавить в env: YOOMONEY_TOKEN, YOOMONEY_RECEIVER (номер кошелька)

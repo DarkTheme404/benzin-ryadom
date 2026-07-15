@@ -17,6 +17,7 @@ import time
 
 import aiohttp
 import db
+from config import settings
 
 from db import (
     find_nearest_stations,
@@ -425,7 +426,7 @@ async def handle_link(peer_id: int, text: str = "") -> None:
     - "link_help" — инструкция
     """
     import aiohttp
-    backend = "https://benzin-ryadom.onrender.com"
+    backend = settings.BACKEND_URL
 
     # Парсим подкоманду
     parts = (text or "").strip().split()
@@ -604,7 +605,7 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    "https://benzin-ryadom.onrender.com/api/referral/apply",
+                    f"{settings.BACKEND_URL}/api/referral/apply",
                     json={"telegram_id": peer_id, "code": code},
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as r:
@@ -1773,7 +1774,7 @@ async def process_message_event(event: dict) -> None:
     elif action == "open_app":
         # Открыть приложение (отправляем ссылку, т.к. open_link работает надёжнее open_app)
         import os
-        direct_url = os.getenv("VK_MINI_APP_DIRECT_URL", "https://benzin-ryadom.onrender.com/v2")
+        direct_url = os.getenv("VK_MINI_APP_DIRECT_URL", f"{settings.BACKEND_URL}/v2")
         await _vk_send(peer_id, f"👉 Открой приложение:\n{direct_url}", vk_main_menu())
 
     else:

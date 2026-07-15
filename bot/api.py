@@ -2126,6 +2126,14 @@ async def handle_vk_callback(request):
         token = os.environ.get("VK_CONFIRMATION_TOKEN", "")
         return web.Response(body=token, content_type="text/plain", charset="utf-8")
 
+    # VK callback secret validation — проверяем все события кроме confirmation
+    vk_secret = os.environ.get("VK_CALLBACK_SECRET", "")
+    if vk_secret:
+        event_secret = event.get("secret", "")
+        if event_secret != vk_secret:
+            logger.warning("VK callback: invalid secret (type=%s)", event_type)
+            return web.Response(text="ok", content_type="text/plain")
+
     # Обработка событий — импорт внутри для скорости
     try:
         from vk_callback import process_message_new, process_message_event
@@ -2161,8 +2169,9 @@ ALLOWED_ORIGINS_RAW = os.getenv("CORS_ORIGINS", "")
 if ALLOWED_ORIGINS_RAW:
     ALLOWED_ORIGINS = ALLOWED_ORIGINS_RAW
 else:
+    from config import settings
     # Default: разрешаем Mini App домены
-    ALLOWED_ORIGINS = "https://benzin-ryadom.onrender.com,https://benzin-ryadom.vercel.app"
+    ALLOWED_ORIGINS = f"{settings.BACKEND_URL},https://benzin-ryadom.vercel.app"
 
 
 async def _on_startup(app: web.Application) -> None:
@@ -3703,47 +3712,48 @@ async def handle_premium_create_payment(request):
 
 
 async def handle_premium_payment_callback(request):
-    """POST/GET /api/premium/payment-callback — VK Pay callback после оплаты.
+    """POST /api/premium/payment-callback — VK Pay callback после оплаты.
 
     VK Pay отправляет POST с form-encoded body и подписью в X-Signature header.
-    Также обрабатывает manual callback для тестов.
+    Ручные GET-запросы отклоняются (security).
     """
     from db import get_payment_by_token, confirm_payment
 
-    # Проверяем подпись VK Pay
+    # Только POST с подписью VK Pay
+    if request.method != "POST":
+        return web.Response(status=405, text="method not allowed")
+
     from vkpay import parse_callback, verify_signature
-    raw_body = await request.text() if request.method == "POST" else ""
+    raw_body = await request.text()
     sig_header = request.headers.get("X-Signature", "")
 
-    if request.method == "POST" and sig_header:
-        # Реальный callback от VK Pay
-        if not verify_signature(raw_body, sig_header):
-            logger.warning("Invalid VK Pay callback signature")
-            return web.Response(status=403, text="invalid signature")
-        data = parse_callback(raw_body)
-        if not data:
-            return web.Response(status=400, text="invalid payload")
-        if data.get("status") != "paid":
-            return web.Response(status=200, text="ok")  # acknowledged
-        # extra — наш payment_token
-        token = data.get("extra")
-        if not token:
-            return web.Response(status=400, text="missing extra")
-    else:
-        # Manual callback (для тестов или редиректа после оплаты)
-        token = request.query.get("token")
-        if not token:
-            return web.Response(status=400, text="missing token")
+    if not sig_header:
+        logger.warning("VK Pay callback: missing X-Signature header")
+        return web.Response(status=403, text="missing signature")
+
+    if not verify_signature(raw_body, sig_header):
+        logger.warning("Invalid VK Pay callback signature")
+        return web.Response(status=403, text="invalid signature")
+
+    data = parse_callback(raw_body)
+    if not data:
+        return web.Response(status=400, text="invalid payload")
+    if data.get("status") != "paid":
+        return web.Response(status=200, text="ok")  # acknowledged
+
+    # extra — наш payment_token
+    token = data.get("extra")
+    if not token:
+        return web.Response(status=400, text="missing extra")
 
     payment = await get_payment_by_token(token)
     if not payment:
         return web.Response(status=404, text="payment not found")
     if payment.get("status") == "paid":
-        # Уже активирован — редирект на success
-        return web.Response(status=302, headers={"Location": "https://vk.com/benzyn_ryadom?pay=ok"})
+        return web.Response(status=200, text="already paid")
 
     await confirm_payment(token)
-    return web.Response(status=302, headers={"Location": "https://vk.com/benzyn_ryadom?pay=ok"})
+    return web.Response(status=200, text="ok")
 
 
 async def handle_premium_payment_status(request):

@@ -340,7 +340,7 @@ async def cmd_start(message: Message):
         if ref_match:
             ref_code = ref_match.group(1).upper()
             import aiohttp
-            backend = "https://benzin-ryadom.onrender.com"
+            backend = settings.BACKEND_URL
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
@@ -1051,7 +1051,7 @@ async def cmd_premium(message: Message):
                 "💳 Оплата: /premium → выбери тариф\n"
                 "Или открой 🌐 Mini App → Профиль → Premium",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🌐 Mini App", url="https://benzin-ryadom.onrender.com")],
+                    [InlineKeyboardButton(text="🌐 Mini App", url=settings.BACKEND_URL)],
                 ]),
             )
         except Exception:
@@ -1100,7 +1100,7 @@ async def _cmd_premium_impl(message: Message):
             f"💡 Смотри статистику в профиле /profile"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🌐 Открыть Mini App", url="https://benzin-ryadom.onrender.com")],
+            [InlineKeyboardButton(text="🌐 Открыть Mini App", url=settings.BACKEND_URL)],
             [InlineKeyboardButton(text="🏠 Главная", callback_data="back_home")],
         ])
         await message.answer(text, reply_markup=kb)
@@ -1139,7 +1139,7 @@ async def _cmd_premium_impl(message: Message):
             InlineKeyboardButton(text="👑 500₽", callback_data="buy_elite"),
         ],
         [InlineKeyboardButton(text="🎁 7 дней бесплатно", callback_data="premium_trial")],
-        [InlineKeyboardButton(text="🌐 Mini App", url="https://benzin-ryadom.onrender.com")],
+        [InlineKeyboardButton(text="🌐 Mini App", url=settings.BACKEND_URL)],
         [InlineKeyboardButton(text="🏠 Главная", callback_data="back_home")],
     ])
     await message.answer(text, reply_markup=kb)
@@ -1164,7 +1164,7 @@ async def buy_tier_callback(callback: CallbackQuery):
 
     # Вызываем наш API чтобы получить payment_url
     import aiohttp
-    backend = "https://benzin-ryadom.onrender.com"
+    backend = settings.BACKEND_URL
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -1294,7 +1294,7 @@ async def cmd_link(message: Message):
 async def _use_link_code(message: Message, telegram_id: int, code: str) -> None:
     """Применяет код привязки."""
     import aiohttp
-    backend = "https://benzin-ryadom.onrender.com"
+    backend = settings.BACKEND_URL
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -1332,7 +1332,7 @@ async def link_create_callback(callback: CallbackQuery):
         await callback.message.answer("Ошибка: пользователь не найден.")
         return
     import aiohttp
-    backend = "https://benzin-ryadom.onrender.com"
+    backend = settings.BACKEND_URL
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -1404,7 +1404,7 @@ async def cmd_alarm(message: Message):
         return
 
     import aiohttp
-    backend = "https://benzin-ryadom.onrender.com"
+    backend = settings.BACKEND_URL
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -1478,7 +1478,7 @@ async def cmd_referral(message: Message):
     if len(parts) >= 2 and not parts[1].startswith("/"):
         code = parts[1].strip().upper()
         import aiohttp
-        backend = "https://benzin-ryadom.onrender.com"
+        backend = settings.BACKEND_URL
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -1510,7 +1510,7 @@ async def cmd_referral(message: Message):
 
     # /referral — показать свой код
     import aiohttp
-    backend = "https://benzin-ryadom.onrender.com"
+    backend = settings.BACKEND_URL
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -1535,7 +1535,7 @@ async def cmd_referral(message: Message):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Поделиться кодом", switch_inline_query=code)],
-        [InlineKeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url="https://benzin-ryadom.onrender.com"))],
+        [InlineKeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url=settings.BACKEND_URL))],
     ])
     await message.answer(
         f"🎁 <b>Реферальная программа</b>\n\n"
@@ -3722,7 +3722,7 @@ async def subscribe_station(callback: CallbackQuery):
 # === Открыть приложение ===
 async def cmd_open_app(message: Message):
     """Показывает кнопку для открытия Telegram Web App."""
-    web_app_url = settings.WEB_APP_URL or "https://benzin-ryadom.onrender.com/miniapp"
+    web_app_url = settings.WEB_APP_URL or f"{settings.BACKEND_URL}/miniapp"
     if not web_app_url:
         await message.answer(
             "📱 <b>Приложение «Бензин рядом»</b>\n\n"

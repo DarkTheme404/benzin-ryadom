@@ -59,8 +59,8 @@ def verify_signature(body: str, signature: str) -> bool:
     X-Signature = sha256(secret + body + secret) в hex
     """
     if not VK_PAY_SECRET_KEY:
-        logger.warning("VK_PAY_SECRET_KEY not set, skipping signature check")
-        return True  # В dev режиме пропускаем проверку
+        logger.error("VK_PAY_SECRET_KEY not set — REJECTING payment callback (security)")
+        return False  # В продакшене ОТКАЗЫВАЕМ если ключ не задан
     expected = _sign_with_body(body)
     return hmac.compare_digest(expected, signature)
 
@@ -177,7 +177,7 @@ def parse_callback(body: str) -> Optional[dict]:
 # VK_PAY_MERCHANT_ID — ID магазина в VK Pay
 # VK_PAY_SECRET_KEY — секретный ключ для подписи (получить в кабинете)
 # VK_PAY_API_URL — по умолчанию https://vk.com/pay
-# VK_PAY_CALLBACK_URL — наш endpoint для уведомлений: https://benzin-ryadom.onrender.com/api/premium/payment-callback
+# VK_PAY_CALLBACK_URL — наш endpoint для уведомлений: {BACKEND_URL}/api/premium/payment-callback
 # VK_PAY_SUCCESS_URL — куда редиректить после успешной оплаты
 # VK_PAY_FAIL_URL — куда редиректить при ошибке
 

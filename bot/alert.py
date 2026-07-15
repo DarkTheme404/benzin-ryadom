@@ -31,7 +31,9 @@ async def send_admin_alert(text: str, bot=None) -> bool:
             return False
 
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        full_text = f"🚨 <b>ALERT [{timestamp}]</b>\n\n{text}\n\n<code>benzin-ryadom.onrender.com</code>"
+        from config import settings
+        backend_host = settings.BACKEND_URL.replace("https://", "").replace("http://", "")
+        full_text = f"🚨 <b>ALERT [{timestamp}]</b>\n\n{text}\n\n<code>{backend_host}</code>"
 
         # Telegram лимит 4096 символов
         if len(full_text) > 4000:
