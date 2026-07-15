@@ -2491,12 +2491,13 @@ async def handle_premium_activate(request):
             await upsert_user(int(tid), username=None, first_name="Premium User")
         uid = await get_user_id_by_any(int(tid))
     plan = get_plan(tier)
-    sub = await activate_premium(uid, tier, days=plan["period_days"], payment_id=body.get("payment_id", f"manual_{tid}"), amount=plan["price"])
+    days = body.get("days") or plan["period_days"]
+    sub = await activate_premium(uid, tier, days=days, payment_id=body.get("payment_id", f"manual_{tid}"), amount=plan["price"])
     return json_resp({
         "ok": True,
         "tier": tier,
         "expires_at": str(sub.get("expires_at", "")),
-        "message": f"Премиум '{plan['name']}' активирован на {plan['period_days']} дней",
+        "message": f"Премиум '{plan['name']}' активирован на {days} дней",
     })
 
 
