@@ -20,7 +20,8 @@
       return userPremiumStatus;
     }
     try {
-      const res = await api('/api/premium/status?telegram_id=' + tgId);
+      const idParam = (typeof platform !== 'undefined' && platform.vk) ? 'vk_user_id=' + tgId : 'telegram_id=' + tgId;
+      const res = await api('/api/premium/status?' + idParam);
       userPremiumStatus = res || { active: false, tier: null };
     } catch (e) {
       userPremiumStatus = { active: false, tier: null };
@@ -144,9 +145,10 @@
     }
     showLoading();
     try {
+      const idParam = (typeof platform !== 'undefined' && platform.vk) ? 'vk_user_id' : 'telegram_id';
       const res = await api('/api/premium/trial', {
         method: 'POST',
-        body: JSON.stringify({ telegram_id: uid, tier: 'standard', days: 3 }),
+        body: JSON.stringify({ [idParam]: uid, tier: 'standard', days: 3 }),
       });
       if (res.ok) {
         showToast('🎁 Trial активирован на 3 дня!', 'success');

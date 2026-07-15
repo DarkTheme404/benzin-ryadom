@@ -2397,6 +2397,7 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/referral/apply", handle_referral_apply)
     app.router.add_get("/api/referral/stats", handle_referral_stats)
     app.router.add_get("/api/account/info", handle_account_info)
+    app.router.add_post("/api/user/ensure-vk", handle_user_ensure_vk)
     app.router.add_get("/api/export/csv", handle_export_csv)
     app.router.add_get("/api/route/fuel", handle_route_fuel)
     app.router.add_get("/api/route/anti-traffic", handle_route_anti_traffic)
@@ -2641,6 +2642,36 @@ async def handle_premium_trial(request):
     return json_resp(result, status=400)
 
 
+async def handle_user_ensure_vk(request):
+    """POST /api/user/ensure-vk — создаёт VK юзера в БД если его нет.
+
+    Body: {vk_user_id: 12345}
+    Возвращает: {ok, user_id, is_new}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    vid = body.get("vk_user_id")
+    if not vid:
+        return json_resp({"error": "vk_user_id required"}, status=400)
+
+    from db import get_user_id_by_any, upsert_user_vk
+    uid = await get_user_id_by_any(int(vid))
+    is_new = False
+    if not uid:
+        await upsert_user_vk(int(vid))
+        uid = await get_user_id_by_any(int(vid))
+        is_new = True
+    if not uid:
+        return json_resp({"error": "failed to create user"}, status=500)
+
+    return json_resp({"ok": True, "user_id": uid, "is_new": is_new})
+
+
 async def handle_account_info(request):
     """GET /api/account/info?telegram_id=... — информация о привязанных аккаунтах.
 
@@ -2760,7 +2791,7 @@ async def handle_fuel_alarm_create(request):
     """POST /api/fuel-alarm/create
 
     Premium only. Создаёт подписку "уведомить когда появится X на АЗС Y".
-    Body: {telegram_id, station_id, fuel_type}
+    Body: {telegram_id OR vk_user_id, station_id, fuel_type}
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
@@ -2769,11 +2800,11 @@ async def handle_fuel_alarm_create(request):
     except Exception:
         return json_resp({"error": "invalid json"}, status=400)
 
-    tid = body.get("telegram_id")
+    tid = body.get("telegram_id") or body.get("vk_user_id")
     sid = body.get("station_id")
     fuel = body.get("fuel_type", "95")
     if not tid or not sid:
-        return json_resp({"error": "telegram_id and station_id required"}, status=400)
+        return json_resp({"error": "telegram_id/vk_user_id and station_id required"}, status=400)
     if fuel not in ("92", "95", "98", "diesel", "100", "lpg"):
         return json_resp({"error": "invalid fuel_type"}, status=400)
 
@@ -2806,7 +2837,7 @@ async def handle_fuel_alarm_create(request):
 
 async def handle_fuel_alarm_delete(request):
     """POST /api/fuel-alarm/delete
-    Body: {telegram_id, station_id, fuel_type}
+    Body: {telegram_id OR vk_user_id, station_id, fuel_type}
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
@@ -2815,11 +2846,11 @@ async def handle_fuel_alarm_delete(request):
     except Exception:
         return json_resp({"error": "invalid json"}, status=400)
 
-    tid = body.get("telegram_id")
+    tid = body.get("telegram_id") or body.get("vk_user_id")
     sid = body.get("station_id")
     fuel = body.get("fuel_type", "95")
     if not tid or not sid:
-        return json_resp({"error": "telegram_id and station_id required"}, status=400)
+        return json_resp({"error": "telegram_id/vk_user_id and station_id required"}, status=400)
 
     from db import get_user_id_by_any, delete_fuel_alarm
     uid = await get_user_id_by_any(int(tid))
@@ -2834,7 +2865,7 @@ async def handle_fuel_alarm_delete(request):
 
 
 async def handle_user_savings(request):
-    """GET /api/user/savings?telegram_id=... — рассчитывает экономию юзера.
+    """GET /api/user/savings?telegram_id=...&vk_user_id=... — рассчитывает экономию юзера.
 
     Логика: берём отчёты юзера за месяц, считаем среднюю цену,
     умножаем на объём топлива (по умолчанию 40л/мес).
@@ -2842,7 +2873,7 @@ async def handle_user_savings(request):
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)
-    tid = request.query.get("telegram_id")
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
     if not tid:
         return json_resp({"savings": 0, "currency": "RUB"})
     from db import get_user_id_by_any
@@ -3017,28 +3048,38 @@ async def handle_sos_broadcast(request):
 # === Referral Program endpoints ===
 
 async def handle_referral_code(request):
-    """GET /api/referral/code?telegram_id=... — создаёт/возвращает реферальный код."""
+    """GET /api/referral/code?telegram_id=...&vk_user_id=... — создаёт/возвращает реферальный код."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)
     tid = request.query.get("telegram_id")
-    if not tid:
-        return json_resp({"error": "telegram_id required"}, status=400)
-    from db import get_user_id_by_any, create_referral_code
-    uid = await get_user_id_by_any(int(tid))
+    vid = request.query.get("vk_user_id")
+    if not tid and not vid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+    from db import get_user_id_by_any, upsert_user_vk, create_referral_code
+    uid = None
+    if tid:
+        uid = await get_user_id_by_any(int(tid))
+    if not uid and vid:
+        uid = await get_user_id_by_any(int(vid))
+        if not uid:
+            await upsert_user_vk(int(vid))
+            uid = await get_user_id_by_any(int(vid))
     if not uid:
         return json_resp({"error": "user not found"}, status=404)
     code = await create_referral_code(uid)
+    tg_link = f"https://t.me/benzin_ryadom_bot?start=ref_{code}"
     return json_resp({
         "ok": True,
         "code": code,
-        "link": f"https://t.me/benzin_ryadom_bot?start=ref_{code}",
+        "link": tg_link,
+        "tg_link": tg_link,
     })
 
 
 async def handle_referral_apply(request):
     """POST /api/referral/apply — применяет реферальный код.
 
-    Body: {telegram_id, code}
+    Body: {telegram_id OR vk_user_id, code}
     Выдаёт 50% скидку обоим (реферер + приглашённый).
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
@@ -3048,10 +3089,10 @@ async def handle_referral_apply(request):
     except Exception:
         return json_resp({"error": "invalid json"}, status=400)
 
-    tid = body.get("telegram_id")
+    tid = body.get("telegram_id") or body.get("vk_user_id")
     code = body.get("code", "").strip().upper()
     if not tid or not code:
-        return json_resp({"error": "telegram_id and code required"}, status=400)
+        return json_resp({"error": "telegram_id/vk_user_id and code required"}, status=400)
 
     from db import get_user_id_by_any, get_referral_by_code, complete_referral
     uid = await get_user_id_by_any(int(tid))
@@ -3084,27 +3125,32 @@ async def handle_referral_apply(request):
 
 
 async def handle_referral_stats(request):
-    """GET /api/referral/stats?telegram_id=... — статистика рефералов."""
+    """GET /api/referral/stats?telegram_id=...&vk_user_id=... — статистика рефералов."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)
     tid = request.query.get("telegram_id")
-    if not tid:
-        return json_resp({"error": "telegram_id required"}, status=400)
-    from db import get_user_id_by_any, get_referral_stats
-    uid = await get_user_id_by_any(int(tid))
+    vid = request.query.get("vk_user_id")
+    uid = None
+    if tid:
+        from db import get_user_id_by_any
+        uid = await get_user_id_by_any(int(tid))
+    if not uid and vid:
+        from db import get_user_id_by_any
+        uid = await get_user_id_by_any(int(vid))
     if not uid:
         return json_resp({"stats": {"total": 0, "completed": 0, "pending": 0}})
+    from db import get_referral_stats
     stats = await get_referral_stats(uid)
     return json_resp({"stats": stats})
 
 
 async def handle_fuel_alarm_list(request):
-    """GET /api/fuel-alarm/list?telegram_id=... — список активных подписок"""
+    """GET /api/fuel-alarm/list?telegram_id=...&vk_user_id=... — список активных подписок"""
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)
-    tid = request.query.get("telegram_id")
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
     if not tid:
-        return json_resp({"error": "telegram_id required"}, status=400)
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
     from db import get_user_id_by_any, get_fuel_alarms_for_user, get_user_premium
     uid = await get_user_id_by_any(int(tid))
     if not uid:
@@ -3120,16 +3166,16 @@ async def handle_fuel_alarm_list(request):
 
 
 async def handle_export_csv(request):
-    """GET /api/export/csv?telegram_id=&type=reports
+    """GET /api/export/csv?telegram_id=&vk_user_id=&type=reports
 
     Premium only. Возвращает CSV с историей отчётов/цен пользователя.
     Типы: reports, prices.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)
-    tid = request.query.get("telegram_id")
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
     if not tid:
-        return json_resp({"error": "telegram_id required"}, status=400)
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
     try:
         from db import get_user_id_by_any, get_user_premium
         uid = await get_user_id_by_any(int(tid))
@@ -3449,9 +3495,9 @@ async def handle_route_anti_traffic(request):
         return json_resp({"error": "rate limit"}, status=429)
 
     # Premium Elite check
-    tid = request.query.get("telegram_id")
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
     if not tid:
-        return json_resp({"error": "telegram_id required for anti-traffic"}, status=400)
+        return json_resp({"error": "telegram_id or vk_user_id required for anti-traffic"}, status=400)
 
     from db import get_user_id_by_any, get_user_premium
     uid = await get_user_id_by_any(int(tid))

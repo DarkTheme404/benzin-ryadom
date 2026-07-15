@@ -726,7 +726,8 @@
   async function loadStationPriceHistory(stationId) {
     // Загружает историю цен и рисует мини-график (Premium).
     const tgId = getTgId();
-    const url = `/api/stations/${stationId}/price-history?days=30&fuel=95` + (tgId ? `&telegram_id=${tgId}` : '');
+    const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+    const url = `/api/stations/${stationId}/price-history?days=30&fuel=95` + (tgId ? `&${idParam}=${tgId}` : '');
     const data = await api(url).catch(() => null);
     if (!data || !data.history) return;
 
@@ -801,7 +802,8 @@
     // Загружает прогноз цен на 7 дней (Premium Стандарт).
     const tgId = getTgId();
     if (!tgId) return;
-    const url = `/api/stations/${stationId}/forecast?days=7&fuel=95&telegram_id=${tgId}`;
+    const forecastIdParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+    const url = `/api/stations/${stationId}/forecast?days=7&fuel=95&${forecastIdParam}=${tgId}`;
     const data = await api(url).catch(() => null);
     if (!data || !data.ok) return;
 
@@ -1086,7 +1088,8 @@
 
     async function updateFuelAlarmBtn() {
       try {
-        const data = await api(`/api/fuel-alarm/list?telegram_id=${state.tgId || ''}`);
+        const alarmListParam = platform.vk ? `vk_user_id=${state.tgId || ''}` : `telegram_id=${state.tgId || ''}`;
+        const data = await api(`/api/fuel-alarm/list?${alarmListParam}`);
         const alarms = data.alarms || [];
         const match = alarms.find(a => a.station_id == s.id && a.fuel_type === selectedFuelType);
         if (match) {
@@ -1120,10 +1123,11 @@
       if (activeAlarmId) {
         // Delete alarm
         try {
+          const alarmIdParam = platform.vk ? 'vk_user_id' : 'telegram_id';
           await api('/api/fuel-alarm/delete', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({telegram_id: state.tgId, station_id: s.id, fuel_type: selectedFuelType}),
+            body: JSON.stringify({[alarmIdParam]: state.tgId, station_id: s.id, fuel_type: selectedFuelType}),
           });
           activeAlarmId = null;
           updateFuelAlarmBtn();
@@ -1134,10 +1138,11 @@
       } else {
         // Create alarm
         try {
+          const alarmIdParam = platform.vk ? 'vk_user_id' : 'telegram_id';
           const resp = await api('/api/fuel-alarm/create', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({telegram_id: state.tgId, station_id: s.id, fuel_type: selectedFuelType}),
+            body: JSON.stringify({[alarmIdParam]: state.tgId, station_id: s.id, fuel_type: selectedFuelType}),
           });
           if (resp.error === 'premium_required') {
             showUpsell('fuel_alarm');
@@ -1886,6 +1891,14 @@
         state.vkUserId = userInfo.id;
         dom.profileAvatar.textContent = userInfo.first_name[0].toUpperCase();
         dom.profileBigAvatar.textContent = userInfo.first_name[0].toUpperCase();
+        // Ensure VK user exists in DB
+        try {
+          await api('/api/user/ensure-vk', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({vk_user_id: userInfo.id}),
+          });
+        } catch (e) { console.warn('ensure-vk failed:', e); }
       } catch (e) {
         dom.profileName.textContent = 'Гость';
         dom.profileId.textContent = '';
@@ -1899,7 +1912,8 @@
     try {
       const tgId = getTgId();
       if (tgId) {
-        const stats = await api(`/api/stations?lat=0&lon=0&telegram_id=${tgId}`).catch(() => null);
+        const idParam = platform.vk ? `vk_user_id=${tgId}` : `telegram_id=${tgId}`;
+        const stats = await api(`/api/stations?lat=0&lon=0&${idParam}`).catch(() => null);
         // No dedicated stats endpoint — use reports count via admin
       }
     } catch (e) {}
@@ -1908,7 +1922,8 @@
     try {
       const tgId = getTgId();
       if (tgId) {
-        const premRes = await api(`/api/premium/status?telegram_id=${tgId}`).catch(() => null);
+        const idParam = platform.vk ? `vk_user_id=${tgId}` : `telegram_id=${tgId}`;
+        const premRes = await api(`/api/premium/status?${idParam}`).catch(() => null);
         if (premRes && premRes.active) {
           const premCard = document.getElementById('premium-card');
           if (premCard) {
@@ -1923,7 +1938,8 @@
     try {
       const tgId = getTgId();
       if (tgId) {
-        const accRes = await api(`/api/account/info?telegram_id=${tgId}`).catch(() => null);
+        const idParam = platform.vk ? `vk_user_id=${tgId}` : `telegram_id=${tgId}`;
+        const accRes = await api(`/api/account/info?${idParam}`).catch(() => null);
         if (accRes && accRes.ok) {
           // Определяем реальный ID юзера для отображения
           const tgEl = document.getElementById('account-tg-id');
@@ -2016,7 +2032,8 @@
     try {
       const tgId = getTgId();
       if (tgId) {
-        const alarmsRes = await api(`/api/fuel-alarm/list?telegram_id=${tgId}`).catch(() => null);
+        const idParam = platform.vk ? `vk_user_id=${tgId}` : `telegram_id=${tgId}`;
+        const alarmsRes = await api(`/api/fuel-alarm/list?${idParam}`).catch(() => null);
         const alarmsList = document.getElementById('fuel-alarms-list');
         if (alarmsList && alarmsRes) {
           const alarms = alarmsRes.alarms || [];
@@ -2049,7 +2066,8 @@
     try {
       const tgId = getTgId();
       if (tgId) {
-        const savingsRes = await api(`/api/user/savings?telegram_id=${tgId}`).catch(() => null);
+        const savingsIdParam = platform.vk ? `vk_user_id=${tgId}` : `telegram_id=${tgId}`;
+        const savingsRes = await api(`/api/user/savings?${savingsIdParam}`).catch(() => null);
         if (savingsRes && dom.statSavings) {
           const savings = savingsRes.savings || 0;
           if (savings > 0) {
@@ -2068,10 +2086,11 @@
     try {
       const tgId = getTgId();
       if (tgId) {
+        const idParam = platform.vk ? `vk_user_id=${tgId}` : `telegram_id=${tgId}`;
         const [codeRes, statsRes, discountRes] = await Promise.all([
-          api(`/api/referral/code?telegram_id=${tgId}`).catch(() => null),
-          api(`/api/referral/stats?telegram_id=${tgId}`).catch(() => null),
-          api(`/api/referral/discount-status?telegram_id=${tgId}`).catch(() => null),
+          api(`/api/referral/code?${idParam}`).catch(() => null),
+          api(`/api/referral/stats?${idParam}`).catch(() => null),
+          api(`/api/referral/discount-status?${idParam}`).catch(() => null),
         ]);
         if (codeRes && codeRes.code) {
           const codeEl = document.getElementById('referral-code');
@@ -2123,10 +2142,11 @@
               return;
             }
             try {
+              const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
               const resp = await api('/api/referral/apply', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({telegram_id: tgId, code}),
+                body: JSON.stringify({[idParam]: tgId, code}),
               });
               if (resp.ok) {
                 showToast('Реферал применён! 50% скидка обоим.', 'success');
@@ -2504,8 +2524,9 @@
 
       // Запрос
       const tgId = getTgId();
+      const routeIdParam = platform.vk ? 'vk_user_id' : 'telegram_id';
       let url = `/api/route/fuel?from_lat=${fromCoords.lat}&from_lon=${fromCoords.lon}&to_lat=${toCoords.lat}&to_lon=${toCoords.lon}&fuel=${fuel}`;
-      if (tgId) url += `&telegram_id=${tgId}`;
+      if (tgId) url += `&${routeIdParam}=${tgId}`;
 
       const data = await api(url);
       hideLoading();
@@ -2531,7 +2552,8 @@
     showLoading();
     try {
       const tgId = getTgId();
-      const url = `/api/route/anti-traffic?from_lat=${fromCoords.lat}&from_lon=${fromCoords.lon}&to_lat=${toCoords.lat}&to_lon=${toCoords.lon}&fuel=${fuel}&telegram_id=${tgId}`;
+      const antiIdParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+      const url = `/api/route/anti-traffic?from_lat=${fromCoords.lat}&from_lon=${fromCoords.lon}&to_lat=${toCoords.lat}&to_lon=${toCoords.lon}&fuel=${fuel}&${antiIdParam}=${tgId}`;
       const data = await api(url);
       hideLoading();
 
@@ -3028,7 +3050,8 @@
         // Скачиваем CSV
         try {
           showLoading();
-          const res = await fetch(`${API}/api/export/csv?telegram_id=${uid}&type=reports&days=30`, {
+          const csvIdParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+          const res = await fetch(`${API}/api/export/csv?${csvIdParam}=${uid}&type=reports&days=30`, {
             headers: tg?.initData ? { 'X-Telegram-Init-Data': tg.initData } : {},
           });
           if (!res.ok) throw new Error('Ошибка скачивания');
@@ -3142,9 +3165,10 @@
         showToast('Не удалось определить ID пользователя', 'error');
         return;
       }
+      const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
       const res = await api('/api/premium/create-payment', {
         method: 'POST',
-        body: JSON.stringify({ telegram_id: uid, tier: tier }),
+        body: JSON.stringify({ [idParam]: uid, tier: tier }),
       });
       if (res.ok && res.payment_url) {
         window.open(res.payment_url, '_blank');
