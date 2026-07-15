@@ -2383,6 +2383,7 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/premium/payment-callback", handle_premium_payment_callback)
     app.router.add_get("/api/premium/payment-status", handle_premium_payment_status)
     app.router.add_get("/api/premium/pending", handle_premium_pending_payments)
+    app.router.add_get("/api/referral/discount-status", handle_referral_discount_status)
     # Account linking
     app.router.add_post("/api/account/link/create", handle_account_link_create)
     app.router.add_post("/api/account/link/use", handle_account_link_use)
@@ -2521,6 +2522,29 @@ async def handle_premium_pending_payments(request):
     from db import get_pending_payments
     payments = await get_pending_payments(limit=50)
     return json_resp({"payments": payments, "count": len(payments)})
+
+
+async def handle_referral_discount_status(request):
+    """GET /api/referral/discount-status?telegram_id=X или vk_user_id=X — активная реферальная скидка."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+    from db import get_user_id_by_any, get_active_discount
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"ok": True, "discount": None})
+    discount = await get_active_discount(uid)
+    if discount:
+        return json_resp({
+            "ok": True,
+            "discount": {
+                "percent": discount["discount_percent"],
+                "expires_at": str(discount["expires_at"])[:10],
+            },
+        })
+    return json_resp({"ok": True, "discount": None})
 
 
 # === Account linking ===
@@ -3556,7 +3580,7 @@ async def handle_premium_create_payment(request):
 
     from db import (
         get_user_id_by_any, upsert_user, upsert_user_vk,
-        get_plan, create_payment_request,
+        get_plan, create_payment_request, get_active_discount, use_discount,
     )
     uid = await get_user_id_by_any(int(tid))
     if not uid:
@@ -3572,11 +3596,22 @@ async def handle_premium_create_payment(request):
     if not plan:
         return json_resp({"error": "invalid plan"}, status=400)
 
+    # Проверяем активную реферальную скидку
+    discount = await get_active_discount(uid)
+    discount_id = None
+    discount_percent = 0
+    original_price = plan["price"]
+    if discount:
+        discount_percent = discount["discount_percent"]
+        discount_id = discount["id"]
+
     token = await create_payment_request(uid, tier, payment_method="yoomoney")
 
     from yoomoney_pay import create_payment as yoomoney_create, is_configured as ym_configured
 
-    desc = f"Бензин рядом · Премиум {plan['name']} · {plan['price']}₽ / {plan['period_days']} дней"
+    final_price = round(original_price * (100 - discount_percent) / 100) if discount_percent else original_price
+    discount_note = f" (скидка {discount_percent}%)" if discount_percent else ""
+    desc = f"Бензин рядом · Премиум {plan['name']} · {final_price}₽ / {plan['period_days']} дней{discount_note}"
 
     if not ym_configured():
         return json_resp({
@@ -3584,11 +3619,11 @@ async def handle_premium_create_payment(request):
             "error": "YooMoney not configured. Установите YOOMONEY_TOKEN и YOOMONEY_RECEIVER в env.",
             "payment_token": token,
             "tier": tier,
-            "amount": plan["price"],
+            "amount": final_price,
         }, status=503)
 
     result = yoomoney_create(
-        amount=plan["price"],
+        amount=final_price,
         description=desc,
         payment_token=token,
     )
@@ -3599,14 +3634,20 @@ async def handle_premium_create_payment(request):
             "error": result.get("error", "YooMoney error"),
             "payment_token": token,
             "tier": tier,
-            "amount": plan["price"],
+            "amount": final_price,
         }, status=503)
+
+    # Помечаем скидку как использованную после успешного создания платежа
+    if discount_id:
+        await use_discount(discount_id)
 
     return json_resp({
         "ok": True,
         "payment_token": token,
         "method": "yoomoney",
-        "amount": plan["price"],
+        "amount": final_price,
+        "original_price": original_price,
+        "discount_percent": discount_percent,
         "tier": tier,
         "description": desc,
         "payment_url": result["payment_url"],

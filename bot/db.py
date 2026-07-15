@@ -4259,8 +4259,59 @@ async def get_referral_by_code(code: str) -> dict | None:
     return dict(row) if row and isinstance(row, dict) else ({"id": row[0], "referrer_user_id": row[1], "referral_code": row[2], "status": row[3]} if row else None)
 
 
+async def grant_referral_discount(user_id: int, percent: int = 50, days: int = 30) -> bool:
+    """Выдаёт скидку % на premium-подписку. Действует days дней."""
+    from datetime import datetime, timedelta
+    expires = (datetime.utcnow() + timedelta(days=days)).isoformat()
+    if USE_SQLITE:
+        await _execute(
+            """INSERT INTO referral_discounts (user_id, discount_percent, expires_at, used)
+               VALUES (?, ?, ?, 0)""",
+            user_id, percent, expires,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO referral_discounts (user_id, discount_percent, expires_at, used)
+                   VALUES ($1, $2, $3, FALSE)""",
+                user_id, percent, expires,
+            )
+    return True
+
+
+async def get_active_discount(user_id: int) -> dict | None:
+    """Возвращает активную реферальную скидку (не использованную и не истёкшую) или None."""
+    if USE_SQLITE:
+        row = await _fetch(
+            """SELECT id, discount_percent, expires_at FROM referral_discounts
+               WHERE user_id = ? AND used = 0 AND datetime(expires_at) > datetime('now')
+               ORDER BY created_at DESC LIMIT 1""",
+            user_id, one=True,
+        )
+    else:
+        row = await _fetch(
+            """SELECT id, discount_percent, expires_at FROM referral_discounts
+               WHERE user_id = $1 AND used = FALSE AND expires_at > NOW()
+               ORDER BY created_at DESC LIMIT 1""",
+            user_id, one=True,
+        )
+    if not row:
+        return None
+    return dict(row) if isinstance(row, dict) else {"id": row[0], "discount_percent": row[1], "expires_at": row[2]}
+
+
+async def use_discount(discount_id: int) -> bool:
+    """Помечает скидку как использованную."""
+    if USE_SQLITE:
+        await _execute("UPDATE referral_discounts SET used = 1 WHERE id = ?", discount_id)
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute("UPDATE referral_discounts SET used = TRUE WHERE id = $1", discount_id)
+    return True
+
+
 async def complete_referral(code: str, referred_user_id: int, referred_telegram_id: int) -> bool:
-    """Завершает реферал: помечает как completed, начисляет Premium рефереру."""
+    """Завершает реферал: помечает как completed, выдаёт 50% скидку обоим (реферер + приглашённый)."""
     from datetime import datetime, timedelta
     if USE_SQLITE:
         row = await _fetch(
@@ -4276,8 +4327,10 @@ async def complete_referral(code: str, referred_user_id: int, referred_telegram_
                WHERE referral_code = ?""",
             referred_user_id, referred_telegram_id, code,
         )
-        # Начисляем 1 месяц Premium рефереру
-        await activate_premium(referrer_id, "standard", days=30)
+        # 50% скидка рефереру
+        await grant_referral_discount(referrer_id, percent=50, days=30)
+        # 50% скидка приглашённому
+        await grant_referral_discount(referred_user_id, percent=50, days=30)
         return True
     else:
         async with _db.acquire() as conn:
@@ -4294,7 +4347,8 @@ async def complete_referral(code: str, referred_user_id: int, referred_telegram_
                    WHERE referral_code = $3""",
                 referred_user_id, referred_telegram_id, code,
             )
-            await activate_premium(referrer_id, "standard", days=30)
+            await grant_referral_discount(referrer_id, percent=50, days=30)
+            await grant_referral_discount(referred_user_id, percent=50, days=30)
             return True
 
 
