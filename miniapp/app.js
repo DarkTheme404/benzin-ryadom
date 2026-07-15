@@ -1088,7 +1088,8 @@
 
     async function updateFuelAlarmBtn() {
       try {
-        const alarmListParam = platform.vk ? `vk_user_id=${state.tgId || ''}` : `telegram_id=${state.tgId || ''}`;
+        const _uid = getTgId();
+        const alarmListParam = platform.vk ? `vk_user_id=${_uid || ''}` : `telegram_id=${_uid || ''}`;
         const data = await api(`/api/fuel-alarm/list?${alarmListParam}`);
         const alarms = data.alarms || [];
         const match = alarms.find(a => a.station_id == s.id && a.fuel_type === selectedFuelType);
@@ -1116,8 +1117,9 @@
     }
 
     alarmBtn.addEventListener('click', async () => {
-      if (!state.tgId) {
-        showToast('Войдите через Telegram чтобы использовать будильник', 'warning');
+      const _uid = getTgId();
+      if (!_uid) {
+        showToast(platform.vk ? 'Определение пользователя...' : 'Войдите через Telegram чтобы использовать будильник', 'warning');
         return;
       }
       if (activeAlarmId) {
@@ -1127,7 +1129,7 @@
           await api('/api/fuel-alarm/delete', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({[alarmIdParam]: state.tgId, station_id: s.id, fuel_type: selectedFuelType}),
+            body: JSON.stringify({[alarmIdParam]: _uid, station_id: s.id, fuel_type: selectedFuelType}),
           });
           activeAlarmId = null;
           updateFuelAlarmBtn();
@@ -1142,7 +1144,7 @@
           const resp = await api('/api/fuel-alarm/create', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({[alarmIdParam]: state.tgId, station_id: s.id, fuel_type: selectedFuelType}),
+            body: JSON.stringify({[alarmIdParam]: _uid, station_id: s.id, fuel_type: selectedFuelType}),
           });
           if (resp.error === 'premium_required') {
             showUpsell('fuel_alarm');
@@ -2812,11 +2814,13 @@
         e.stopPropagation();
         const stationId = parseInt(target.dataset.station, 10);
         const fuelType = target.dataset.fuel;
-        if (!stationId || !fuelType || !state.tgId) return;
+        const _delUid = getTgId();
+        if (!stationId || !fuelType || !_delUid) return;
+        const _delParam = platform.vk ? 'vk_user_id' : 'telegram_id';
         api('/api/fuel-alarm/delete', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({telegram_id: state.tgId, station_id: stationId, fuel_type: fuelType}),
+          body: JSON.stringify({[_delParam]: _delUid, station_id: stationId, fuel_type: fuelType}),
         }).then(() => {
           showToast('Будильник удалён', 'info');
           loadProfile();
