@@ -2068,9 +2068,10 @@
     try {
       const tgId = getTgId();
       if (tgId) {
-        const [codeRes, statsRes] = await Promise.all([
+        const [codeRes, statsRes, discountRes] = await Promise.all([
           api(`/api/referral/code?telegram_id=${tgId}`).catch(() => null),
           api(`/api/referral/stats?telegram_id=${tgId}`).catch(() => null),
+          api(`/api/referral/discount-status?telegram_id=${tgId}`).catch(() => null),
         ]);
         if (codeRes && codeRes.code) {
           const codeEl = document.getElementById('referral-code');
@@ -2084,12 +2085,23 @@
           if (completedEl) completedEl.textContent = s.completed || 0;
         }
 
+        // Discount status
+        if (discountRes && discountRes.discount) {
+          const d = discountRes.discount;
+          const dsEl = document.getElementById('discount-status');
+          const dpEl = document.getElementById('discount-percent');
+          const deEl = document.getElementById('discount-expires');
+          if (dsEl) dsEl.style.display = 'block';
+          if (dpEl) dpEl.textContent = d.percent + '%';
+          if (deEl) deEl.textContent = d.expires_at || '—';
+        }
+
         // Share button
         const shareBtn = document.getElementById('btn-share-referral');
         if (shareBtn) {
           shareBtn.addEventListener('click', () => {
             const code = codeRes?.code || '';
-            const text = `🎁 Используй код ${code} в @benzin_ryadom_bot и получи месяц Premium бесплатно!`;
+            const text = `🎁 Используй код ${code} в @benzin_ryadom_bot — получи 50% скидку на Premium!`;
             if (navigator.share) {
               navigator.share({ text }).catch(() => {});
             } else {
@@ -2117,7 +2129,7 @@
                 body: JSON.stringify({telegram_id: tgId, code}),
               });
               if (resp.ok) {
-                showToast('Реферал применён! Месяц Premium подарен.', 'success');
+                showToast('Реферал применён! 50% скидка обоим.', 'success');
                 hapticNotify('success');
                 applyInput.value = '';
                 loadProfile();

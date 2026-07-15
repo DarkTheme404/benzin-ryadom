@@ -615,7 +615,7 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
         if data.get("ok"):
             await _vk_send(peer_id,
                 "🎉 <b>Реферал применён!</b>\n\n"
-                "Твой друг получил месяц Premium.\n"
+                "Ты и твой друг получили 50% скидку на Premium.\n"
                 "Спасибо что пользуетесь «Бензин рядом»!",
             )
         else:
@@ -634,7 +634,7 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
 
     await _vk_send(peer_id,
         f"🎁 <b>Реферальная программа</b>\n\n"
-        f"Пригласи друга — получи <b>месяц Premium бесплатно</b>!\n\n"
+        f"Пригласи друга — получите оба <b>50% скидку</b> на Premium!\n\n"
         f"<b>Твой код:</b> <code>{code}</code>\n\n"
         f"<b>Статистика:</b>\n"
         f"👥 Приглашено: {stats.get('total', 0)}\n"
@@ -642,7 +642,7 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
         f"<b>Как это работает:</b>\n"
         f"1. Отправь другу: <code>referral {code}</code>\n"
         f"2. Друг вводит эту команду\n"
-        f"3. Вы оба получаете месяц Premium!",
+        f"3. Вы оба получаете 50% скидку!",
     )
 
 

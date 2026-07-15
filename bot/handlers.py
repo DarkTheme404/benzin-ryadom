@@ -353,7 +353,7 @@ async def cmd_start(message: Message):
                     await message.answer(
                         f"🎉 <b>Добро пожаловать!</b>\n\n"
                         f"Ты использовал реферальный код!\n"
-                        f"Твой друг получил месяц Premium.\n\n"
+                        f"Ты и твой друг получили 50% скидку на Premium.\n\n"
                         f"👇 <b>Главное меню:</b>",
                         reply_markup=main_menu_keyboard(),
                     )
@@ -1493,7 +1493,7 @@ async def cmd_referral(message: Message):
         if data.get("ok"):
             await message.answer(
                 f"🎉 <b>Реферал применён!</b>\n\n"
-                f"Твой друг получил месяц Premium.\n"
+                f"Ты и твой друг получили 50% скидку на Premium.\n"
                 f"Спасибо что пользуетесь «Бензин рядом»!",
             )
         else:
@@ -1539,7 +1539,7 @@ async def cmd_referral(message: Message):
     ])
     await message.answer(
         f"🎁 <b>Реферальная программа</b>\n\n"
-        f"Пригласи друга — получи <b>месяц Premium бесплатно</b>!\n\n"
+        f"Пригласи друга — получите оба <b>50% скидку</b> на Premium!\n\n"
         f"<b>Твой код:</b> <code>{code}</code>\n"
         f"<b>Ссылка:</b> {link}\n\n"
         f"<b>Статистика:</b>\n"
@@ -1549,7 +1549,7 @@ async def cmd_referral(message: Message):
         f"<b>Как это работает:</b>\n"
         f"1. Отправь код другу\n"
         f"2. Друг вводит /referral {code}\n"
-        f"3. Вы оба получаете месяц Premium!\n\n"
+        f"3. Вы оба получаете 50% скидку!\n\n"
         f"💡 Код работает в TG, VK и Mini App",
         reply_markup=kb,
     )

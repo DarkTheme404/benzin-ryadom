@@ -296,8 +296,19 @@
         <h3 class="profile-section-title">🎁 Реферальная программа</h3>
         <div class="referral-section" id="referral-section">
           <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">
-            Пригласи друга — получи месяц Premium бесплатно!
+            Пригласи друга — получите оба <b style="color:#22c55e;">50% скидку</b> на Premium!
           </div>
+
+          <!-- Активная скидка -->
+          <div id="discount-status" style="display:none;background:linear-gradient(135deg,#22c55e15,#22c55e08);border:1px solid #22c55e33;border-radius:12px;padding:14px;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <span style="font-size:18px;">🏷️</span>
+              <span style="font-size:13px;font-weight:600;color:#22c55e;">Твоя скидка активна</span>
+            </div>
+            <div style="font-size:22px;font-weight:800;color:#22c55e;" id="discount-percent">50%</div>
+            <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Действует до <span id="discount-expires">—</span></div>
+          </div>
+
           <div style="background:var(--bg-card);border-radius:12px;padding:16px;margin-bottom:12px;">
             <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Твой код</div>
             <div style="font-size:20px;font-weight:800;color:var(--accent);letter-spacing:2px;" id="referral-code">Загрузка...</div>
