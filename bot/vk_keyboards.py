@@ -200,6 +200,31 @@ def vk_main_menu() -> str:
     return vk_keyboard(rows)
 
 
+def vk_admin_keyboard() -> str:
+    """Клавиатура для админа VK — добавляет кнопку рассылки."""
+    import os
+    use_callback = _is_callback_mode()
+    rows = []
+    # Основное меню
+    rows.append([
+        _callback_button(VK_BTN_FIND, {"a": "find"}, "primary") if use_callback
+        else _button(VK_BTN_FIND, "primary"),
+        _callback_button(VK_BTN_PREMIUM, {"a": "premium"}, "positive") if use_callback
+        else _button(VK_BTN_PREMIUM, "positive"),
+    ])
+    # Admin кнопки
+    rows.append([
+        _callback_button("📢 Рассылка", {"a": "broadcast"}, "positive"),
+    ])
+    rows.append([
+        _callback_button(VK_BTN_PROFILE, {"a": "profile"}) if use_callback
+        else _button(VK_BTN_PROFILE),
+        _callback_button(VK_BTN_HELP, {"a": "help"}) if use_callback
+        else _button(VK_BTN_HELP),
+    ])
+    return vk_keyboard(rows)
+
+
 def vk_city_keyboard() -> str:
     """Выбор города — callback-кнопки с payload {a: "city", c: <name>}."""
     from keyboards import TOP_CITIES

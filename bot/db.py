@@ -376,6 +376,20 @@ async def _migrate_sqlite(db):
     """)
     await db.execute("CREATE INDEX IF NOT EXISTS idx_pending_link_tg ON pending_link_confirmations (to_tg_id, status)")
 
+    # === founder_purchases — Founder Pack покупки ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS founder_purchases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount INTEGER NOT NULL DEFAULT 1990,
+            payment_token TEXT,
+            status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'failed')),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            paid_at TEXT
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_founder_purchases_user ON founder_purchases (user_id)")
+
 
 async def _create_indexes_sqlite(db):
     """Создаёт индексы (можно безопасно вызывать повторно)."""
@@ -536,6 +550,26 @@ async def _create_schema_pg(pool):
             """)
         except Exception as e:
             logger.warning(f"PG migration pending_link_confirmations: {e}")
+
+        # 1f. Founder Pack purchases
+        try:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS founder_purchases (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    amount INTEGER NOT NULL DEFAULT 1990,
+                    payment_token TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    paid_at TIMESTAMPTZ
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_founder_purchases_user
+                ON founder_purchases (user_id)
+            """)
+        except Exception as e:
+            logger.warning(f"PG migration founder_purchases: {e}")
 
         # 2b. Reports: новые колонки для качеств/очередей/лимитов
         new_report_cols = [
@@ -1189,6 +1223,33 @@ async def mark_user_blocked(telegram_id: int) -> None:
                 "UPDATE users SET is_blocked = TRUE WHERE telegram_id = $1",
                 telegram_id,
             )
+
+
+async def get_all_tg_user_ids() -> list[int]:
+    """Возвращает список всех Telegram ID активных пользователей."""
+    rows = await _fetch(
+        "SELECT telegram_id FROM users WHERE telegram_id > 0 AND (is_blocked IS NULL OR is_blocked = 0)"
+    )
+    return [r["telegram_id"] if isinstance(r, dict) else r[0] for r in rows]
+
+
+async def get_all_vk_user_ids() -> list[int]:
+    """Возвращает список всех VK peer_id активных пользователей."""
+    rows = await _fetch(
+        "SELECT vk_id FROM users WHERE vk_id > 0 AND (is_blocked IS NULL OR is_blocked = 0)"
+    )
+    return [r["vk_id"] if isinstance(r, dict) else r[0] for r in rows]
+
+
+async def get_broadcast_stats() -> dict:
+    """Возвращает статистику для рассылки."""
+    tg_rows = await _fetch("SELECT COUNT(*) as cnt FROM users WHERE telegram_id > 0 AND (is_blocked IS NULL OR is_blocked = 0)")
+    vk_rows = await _fetch("SELECT COUNT(*) as cnt FROM users WHERE vk_id > 0 AND (is_blocked IS NULL OR is_blocked = 0)")
+    total_rows = await _fetch("SELECT COUNT(*) as cnt FROM users WHERE (is_blocked IS NULL OR is_blocked = 0)")
+    tg_count = tg_rows[0]["cnt"] if tg_rows else 0
+    vk_count = vk_rows[0]["cnt"] if vk_rows else 0
+    total_count = total_rows[0]["cnt"] if total_rows else 0
+    return {"tg": tg_count, "vk": vk_count, "total": total_count}
 
 
 async def get_or_create_user(message) -> int:
@@ -3547,12 +3608,25 @@ PREMIUM_PLANS = {
         "price": 500,
         "period_days": 30,
         "features": [
-            "price_history", "export_csv", "offline_map",  # экономи
-            "route_fuel", "forecast_7d", "fuel_alarm",    # стандарт
-            "anti_traffic", "sos_elite",                  # свои
+            "price_history", "export_csv", "offline_map",
+            "route_fuel", "forecast_7d", "fuel_alarm",
+            "anti_traffic", "sos_elite",
         ],
         "icon": "👑",
         "tagline": "Анти-пробка и SOS-режим",
+    },
+    "founder": {
+        "code": "founder",
+        "name": "Founder Pack",
+        "price": 1990,
+        "period_days": 36500,
+        "features": [
+            "price_history", "export_csv", "offline_map",
+            "route_fuel", "forecast_7d", "fuel_alarm",
+            "anti_traffic", "sos_elite",
+        ],
+        "icon": "🏆",
+        "tagline": "Пожизненный Элит + Founder-бейдж",
     },
 }
 
@@ -3567,7 +3641,7 @@ FEATURE_TIER = {
     "sos_elite": "elite",
 }
 
-TIER_RANK = {"economy": 1, "standard": 2, "elite": 3}
+TIER_RANK = {"economy": 1, "standard": 2, "elite": 3, "founder": 4}
 
 
 def get_plan(tier: str) -> dict | None:
@@ -3770,6 +3844,122 @@ async def is_premium(user_id: int) -> bool:
     """Проверяет, есть ли у пользователя активный премиум."""
     sub = await get_user_premium(user_id)
     return sub is not None
+
+
+async def is_founder(user_id: int) -> bool:
+    """Проверяет, является ли пользователем Founder."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT 1 FROM founder_purchases WHERE user_id = ? AND status = 'paid' LIMIT 1",
+            user_id, one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM founder_purchases WHERE user_id = $1 AND status = 'paid' LIMIT 1",
+                user_id,
+            )
+    return row is not None
+
+
+async def get_founder_info(user_id: int) -> dict | None:
+    """Возвращает инфо о Founder-покупке или None."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT * FROM founder_purchases WHERE user_id = ? AND status = 'paid' LIMIT 1",
+            user_id, one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM founder_purchases WHERE user_id = $1 AND status = 'paid' LIMIT 1",
+                user_id,
+            )
+    return dict(row) if row else None
+
+
+async def create_founder_purchase(user_id: int, amount: int = 1990, payment_token: str = "") -> dict:
+    """Создаёт запись о Founder-покупке."""
+    if USE_SQLITE:
+        await _execute(
+            """INSERT INTO founder_purchases (user_id, amount, payment_token, status, created_at)
+               VALUES (?, ?, ?, 'pending', datetime('now'))""",
+            user_id, amount, payment_token,
+        )
+        row = await _fetch(
+            "SELECT * FROM founder_purchases WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+            user_id, one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO founder_purchases (user_id, amount, payment_token, status, created_at)
+                   VALUES ($1, $2, $3, 'pending', NOW())""",
+                user_id, amount, payment_token,
+            )
+            row = await conn.fetchrow(
+                "SELECT * FROM founder_purchases WHERE user_id = $1 ORDER BY id DESC LIMIT 1",
+                user_id,
+            )
+    return dict(row) if row else {}
+
+
+async def confirm_founder_purchase(payment_token: str) -> bool:
+    """Подтверждает Founder-покупку и активирует пожизненный Elite."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT * FROM founder_purchases WHERE payment_token = ? AND status = 'pending' LIMIT 1",
+            payment_token, one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM founder_purchases WHERE payment_token = $1 AND status = 'pending' LIMIT 1",
+                payment_token,
+            )
+    if not row:
+        return False
+
+    user_id = row["user_id"]
+
+    # Обновляем статус покупки
+    if USE_SQLITE:
+        await _execute(
+            "UPDATE founder_purchases SET status = 'paid', paid_at = datetime('now') WHERE payment_token = ?",
+            payment_token,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE founder_purchases SET status = 'paid', paid_at = NOW() WHERE payment_token = $1",
+                payment_token,
+            )
+
+    # Активируем пожизненный Elite
+    await activate_premium(user_id, "founder", days=36500, payment_id=f"founder_{payment_token}", amount=1990)
+    return True
+
+
+async def get_founders_list() -> list[dict]:
+    """Возвращает список всех Founder-пользователей."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT fp.user_id, fp.created_at, u.first_name, u.username
+               FROM founder_purchases fp
+               LEFT JOIN users u ON fp.user_id = u.user_id
+               WHERE fp.status = 'paid'
+               ORDER BY fp.created_at ASC"""
+        )
+    else:
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT fp.user_id, fp.created_at, u.first_name, u.username
+                   FROM founder_purchases fp
+                   LEFT JOIN users u ON fp.user_id = u.user_id
+                   WHERE fp.status = 'paid'
+                   ORDER BY fp.created_at ASC"""
+            )
+    return [dict(r) for r in rows]
 
 
 # === Запросы на оплату (для VK Pay) ===

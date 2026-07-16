@@ -2392,6 +2392,11 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/premium/payment-callback", handle_premium_payment_callback)
     app.router.add_get("/api/premium/payment-status", handle_premium_payment_status)
     app.router.add_get("/api/premium/pending", handle_premium_pending_payments)
+    # Founder Pack
+    app.router.add_get("/api/founder/status", handle_founder_status)
+    app.router.add_post("/api/founder/purchase", handle_founder_purchase)
+    app.router.add_get("/api/founder/list", handle_founder_list)
+    app.router.add_post("/api/founder/payment-callback", handle_founder_payment_callback)
     app.router.add_get("/api/referral/discount-status", handle_referral_discount_status)
     # Account linking
     app.router.add_post("/api/account/link/create", handle_account_link_create)
@@ -2451,19 +2456,23 @@ async def handle_premium_status(request):
     if not tid:
         return json_resp({"error": "telegram_id required"}, status=400)
     try:
-        from db import get_user_id_by_any, get_user_premium
+        from db import get_user_id_by_any, get_user_premium, is_founder, get_founder_info
         uid = await get_user_id_by_any(int(tid))
         if not uid:
-            return json_resp({"active": False, "tier": None, "expires_at": None})
+            return json_resp({"active": False, "tier": None, "expires_at": None, "founder": False})
         sub = await get_user_premium(uid)
+        founder = await is_founder(uid)
+        founder_info = await get_founder_info(uid) if founder else None
         if not sub:
-            return json_resp({"active": False, "tier": None, "expires_at": None})
+            return json_resp({"active": False, "tier": None, "expires_at": None, "founder": founder})
         return json_resp({
             "active": True,
             "tier": sub.get("tier"),
             "started_at": str(sub.get("started_at", "")),
             "expires_at": str(sub.get("expires_at", "")),
             "payment_method": sub.get("payment_method"),
+            "founder": founder,
+            "founder_purchased_at": str(founder_info.get("created_at", "")) if founder_info else None,
         })
     except Exception as e:
         logger.warning(f"premium_status: {e}")
@@ -2486,7 +2495,7 @@ async def handle_premium_activate(request):
     tier = body.get("tier")
     if not tid or not tier:
         return json_resp({"error": "telegram_id and tier required"}, status=400)
-    if tier not in ("economy", "standard", "elite"):
+    if tier not in ("economy", "standard", "elite", "founder"):
         return json_resp({"error": "invalid tier"}, status=400)
     from db import get_user_id_by_any, upsert_user, upsert_user_vk, activate_premium, get_plan
     uid = await get_user_id_by_any(int(tid))
@@ -2539,6 +2548,147 @@ async def handle_premium_pending_payments(request):
     from db import get_pending_payments
     payments = await get_pending_payments(limit=50)
     return json_resp({"payments": payments, "count": len(payments)})
+
+
+# === Founder Pack ===
+
+async def handle_founder_status(request):
+    """GET /api/founder/status?telegram_id=X или vk_user_id=X — статус Founder."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+    from db import get_user_id_by_any, is_founder, get_founder_info
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"ok": True, "founder": False})
+    founder = await is_founder(uid)
+    if founder:
+        info = await get_founder_info(uid)
+        return json_resp({
+            "ok": True,
+            "founder": True,
+            "purchased_at": str(info.get("created_at", "")) if info else None,
+        })
+    return json_resp({"ok": True, "founder": False})
+
+
+async def handle_founder_purchase(request):
+    """POST /api/founder/purchase — создаёт платёж Founder Pack (1990₽, пожизненный Elite)."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    tid = body.get("telegram_id") or body.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+
+    from db import get_user_id_by_any, upsert_user, upsert_user_vk, is_founder, create_founder_purchase
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        if body.get("vk_user_id"):
+            await upsert_user_vk(int(tid))
+        else:
+            await upsert_user(int(tid), username=None, first_name="Founder")
+        uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user creation failed"}, status=500)
+
+    # Уже Founder?
+    if await is_founder(uid):
+        return json_resp({"error": "Вы уже являетесь Founder"}, status=400)
+
+    import secrets as _secrets
+    token = f"founder-{_secrets.token_urlsafe(24)}"
+    await create_founder_purchase(uid, amount=1990, payment_token=token)
+
+    from yoomoney_pay import create_payment as yoomoney_create, is_configured as ym_configured
+    if not ym_configured():
+        return json_resp({
+            "ok": False,
+            "error": "YooMoney not configured",
+            "payment_token": token,
+            "amount": 1990,
+        }, status=503)
+
+    desc = "Бензин рядом · Founder Pack · 1990₽ · Пожизненный Elite"
+    result = yoomoney_create(amount=1990, description=desc, payment_token=token)
+    if not result.get("ok"):
+        return json_resp({
+            "ok": False,
+            "error": result.get("error", "YooMoney error"),
+            "payment_token": token,
+            "amount": 1990,
+        }, status=503)
+
+    return json_resp({
+        "ok": True,
+        "payment_token": token,
+        "method": "yoomoney",
+        "amount": 1990,
+        "tier": "founder",
+        "description": desc,
+        "payment_url": result["payment_url"],
+        "label": result["label"],
+        "receiver": result["receiver"],
+    })
+
+
+async def handle_founder_list(request):
+    """GET /api/founder/list — публичный список Founders."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    from db import get_founders_list
+    founders = await get_founders_list()
+    return json_resp({
+        "ok": True,
+        "count": len(founders),
+        "founders": [
+            {
+                "name": f.get("first_name") or "Founder",
+                "username": f.get("username"),
+                "purchased_at": str(f.get("created_at", ""))[:10],
+            }
+            for f in founders
+        ],
+    })
+
+
+async def handle_founder_payment_callback(request):
+    """POST /api/founder/payment-callback — YooMoney callback для Founder Pack."""
+    if request.method != "POST":
+        return web.Response(status=405, text="method not allowed")
+
+    from vkpay import parse_callback, verify_signature
+    raw_body = await request.text()
+    sig_header = request.headers.get("X-Signature", "")
+    if not sig_header:
+        logger.warning("Founder Pay callback: missing X-Signature header")
+        return web.Response(status=403, text="missing signature")
+
+    if not verify_signature(raw_body, sig_header):
+        logger.warning("Invalid Founder Pay callback signature")
+        return web.Response(status=403, text="invalid signature")
+
+    data = parse_callback(raw_body)
+    if not data:
+        return web.Response(status=400, text="invalid payload")
+    if data.get("status") != "paid":
+        return web.Response(status=200, text="ok")
+
+    token = data.get("extra")
+    if not token:
+        return web.Response(status=400, text="missing extra")
+
+    from db import confirm_founder_purchase
+    result = await confirm_founder_purchase(token)
+    if result:
+        logger.info(f"Founder Pack purchased: token={token}")
+    return web.Response(status=200, text="ok")
 
 
 async def handle_referral_discount_status(request):
@@ -2988,7 +3138,7 @@ async def handle_premium_trial(request):
     days = body.get("days", 3)
     if not tid:
         return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
-    if tier not in ("economy", "standard", "elite"):
+    if tier not in ("economy", "standard", "elite", "founder"):
         return json_resp({"error": "invalid tier"}, status=400)
     if not isinstance(days, int) or days < 1 or days > 30:
         return json_resp({"error": "invalid days (1-30)"}, status=400)
@@ -3111,6 +3261,10 @@ async def handle_account_info(request):
         sub = await get_user_premium(uid)
         is_prem = bool(sub and sub.get("tier"))
 
+        # Получаем Founder статус
+        from db import is_founder
+        founder = await is_founder(uid)
+
         # Определяем linked_via
         linked_via = None
         linked_vk_id = None
@@ -3160,6 +3314,7 @@ async def handle_account_info(request):
             "is_premium": is_prem,
             "premium_tier": sub.get("tier") if sub else None,
             "premium_expires_at": str(sub.get("expires_at", "")) if sub else None,
+            "is_founder": founder,
         })
     except Exception as e:
         logger.exception(f"account_info error: {e}")
@@ -4008,7 +4163,7 @@ async def handle_premium_create_payment(request):
     tier = body.get("tier")
     if not tid or not tier:
         return json_resp({"error": "telegram_id and tier required"}, status=400)
-    if tier not in ("economy", "standard", "elite"):
+    if tier not in ("economy", "standard", "elite", "founder"):
         return json_resp({"error": "invalid tier"}, status=400)
 
     from db import (

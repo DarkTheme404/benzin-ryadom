@@ -37,13 +37,12 @@
     const status = getPremiumStatus();
     const feature = window.PREMIUM_CATALOG[featureId];
     if (!feature) return false;
-    if (!status.active) return true;  // Free — все заблокировано
-    // Проверяем уровень тарифа
-    const tierOrder = { economy: 1, standard: 2, elite: 3 };
+    if (!status.active) return true;
+    const tierOrder = { economy: 1, standard: 2, elite: 3, founder: 4 };
     const requiredTier = feature.tier || 'economy';
     const userTier = status.tier || 'economy';
     if ((tierOrder[userTier] || 0) < (tierOrder[requiredTier] || 0)) {
-      return true;  // Тариф недостаточный
+      return true;
     }
     return false;
   }

@@ -1047,7 +1047,8 @@ async def cmd_premium(message: Message):
                 "Тарифы:\n"
                 "📊 <b>Эконом</b> — 100₽/мес\n"
                 "🗺️ <b>Стандарт</b> — 250₽/мес\n"
-                "👑 <b>Элит</b> — 500₽/мес\n\n"
+                "👑 <b>Элит</b> — 500₽/мес\n"
+                "🏆 <b>Founder Pack</b> — 1990₽ навсегда\n\n"
                 "💳 Оплата: /premium → выбери тариф\n"
                 "Или открой 🌐 Mini App → Профиль → Premium",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1086,7 +1087,7 @@ async def _cmd_premium_impl(message: Message):
         else:
             exp_dt = exp
         days_left = max(0, (exp_dt - _dt.now()).days) if exp_dt else 0
-        tier_name = {"economy": "📊 Эконом", "standard": "🗺️ Стандарт", "elite": "👑 Элит"}.get(sub.get("tier"), sub.get("tier"))
+        tier_name = {"economy": "📊 Эконом", "standard": "🗺️ Стандарт", "elite": "👑 Элит", "founder": "🏆 Founder"}.get(sub.get("tier"), sub.get("tier"))
         tier_features = {
             "economy": "📈 График цен · 📦 CSV-экспорт · 🗺️ Офлайн-карта",
             "standard": "📈 График цен · 📦 CSV · 🗺️ Офлайн · 🛣 Маршрут A→B · 🔮 Прогноз · 🔔 Будильник",
@@ -1125,6 +1126,10 @@ async def _cmd_premium_impl(message: Message):
         "├ Всё из Стандарт\n"
         "├ 🚗 Антипробка (цены+пробки)\n"
         "└ 🆘 SOS-режим (помощь 50 км)\n\n"
+        "🏆 <b>Founder Pack</b> — <b>1990₽ навсегда</b>\n"
+        "├ Пожизненный Элит\n"
+        "├ 🏆 Founder-бейдж\n"
+        "└ 📋 Имя в списке основателей\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🧮 <b>Калькулятор:</b>\n"
         "Если заправляешь 40л/мес × 2 раза,\n"
@@ -1137,6 +1142,7 @@ async def _cmd_premium_impl(message: Message):
             InlineKeyboardButton(text="📊 100₽", callback_data="buy_economy"),
             InlineKeyboardButton(text="🗺️ 250₽", callback_data="buy_standard"),
             InlineKeyboardButton(text="👑 500₽", callback_data="buy_elite"),
+            InlineKeyboardButton(text="🏆 1990₽", callback_data="buy_founder"),
         ],
         [InlineKeyboardButton(text="🎁 7 дней бесплатно", callback_data="premium_trial")],
         [InlineKeyboardButton(text="🌐 Mini App", url=settings.BACKEND_URL)],
@@ -1150,7 +1156,7 @@ async def buy_tier_callback(callback: CallbackQuery):
     logger.info(f"buy_tier_callback: data={callback.data} user={callback.from_user.id}")
     await callback.answer()
     tier = callback.data.replace("buy_", "")
-    if tier not in ("economy", "standard", "elite"):
+    if tier not in ("economy", "standard", "elite", "founder"):
         logger.warning(f"buy_tier_callback: invalid tier {tier}")
         return
     uid = await _ensure_callback_user(callback)
@@ -1162,13 +1168,16 @@ async def buy_tier_callback(callback: CallbackQuery):
         logger.warning(f"buy_tier_callback: no plan for tier {tier}")
         return
 
+    # Founder Pack uses separate endpoint
+    endpoint = "/api/founder/purchase" if tier == "founder" else "/api/premium/create-payment"
+
     # Вызываем наш API чтобы получить payment_url
     import aiohttp
     backend = settings.BACKEND_URL
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{backend}/api/premium/create-payment",
+                f"{backend}{endpoint}",
                 json={"telegram_id": callback.from_user.id, "tier": tier},
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as r:
@@ -3973,6 +3982,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(cmd_referral, Command("referral"))
     dp.message.register(cmd_broadcast, Command("broadcast"))
     dp.message.register(cmd_freetrial, Command("freetrial"))
+    dp.message.register(cmd_post, Command("post"))
     dp.callback_query.register(link_create_callback, F.data == "link:create")
     dp.callback_query.register(link_enter_callback, F.data == "link:enter")
     dp.callback_query.register(link_confirm_callback, F.data.startswith("link_confirm:"))
@@ -4124,35 +4134,55 @@ ADMIN_TG_IDS = [772577887]  # darkt30
 
 
 async def cmd_broadcast(message: Message):
-    """Рассылает сообщение всем пользователям бота. Только для admin."""
+    """Рассылает сообщение всем пользователям бота. Только для admin.
+
+    Использование:
+      /broadcast <текст> — отправить всем
+      /broadcast preview <текст> — показать превью (не отправляет)
+    """
     if message.from_user.id not in ADMIN_TG_IDS:
         return
-    # Текст рассылки — аргумент после /broadcast
     text = (message.text or "").replace("/broadcast", "", 1).strip()
     if not text:
         await message.answer(
             "📢 <b>Рассылка</b>\n\n"
-            "Использование: <code>/broadcast текст сообщения</code>\n\n"
+            "Использование:\n"
+            "<code>/broadcast текст</code> — отправить всем\n"
+            "<code>/broadcast preview текст</code> — превью\n\n"
+            "Поддерживается HTML: &lt;b&gt;жирный&lt;/b&gt;, &lt;i&gt;курсив&lt;/i&gt;, &lt;code&gt;код&lt;/code&gt;\n\n"
             "Пример:\n"
-            "<code>/broadcast 🎉 Premium запущен! 3 дня бесплатно → /premium</code>"
+            "<code>/broadcast 🏆 &lt;b&gt;Founder Pack&lt;/b&gt; — 1990₽ навсегда!</code>"
         )
         return
-    # Получаем всех юзеров из БД
-    import db as _db
-    users = await _db._fetch(
-        "SELECT telegram_id FROM users WHERE telegram_id > 0",
-    )
+
+    # Preview mode
+    if text.lower().startswith("preview "):
+        preview_text = text[8:]
+        await message.answer(
+            "👁 <b>Превью рассылки:</b>\n\n"
+            + preview_text
+            + "\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📏 Длина: {len(preview_text)} символов\n"
+            "✅ Для отправки: /broadcast текст"
+        )
+        return
+
+    from db import get_all_tg_user_ids
+    user_ids = await get_all_tg_user_ids()
+    if not user_ids:
+        await message.answer("⚠️ Нет пользователей для рассылки")
+        return
+
     sent = 0
     failed = 0
-    await message.answer(f"📢 Начинаю рассылку для {len(users)} юзеров...")
-    for row in users:
-        tid = row["telegram_id"] if isinstance(row, dict) else row[0]
+    await message.answer(f"📢 Начинаю рассылку для {len(user_ids)} юзеров...")
+    for tid in user_ids:
         try:
-            await message.bot.send_message(chat_id=tid, text=text)
+            await message.bot.send_message(chat_id=tid, text=text, parse_mode="HTML")
             sent += 1
         except Exception:
             failed += 1
-        # Rate limit
         import asyncio as _aio
         await _aio.sleep(0.05)
     await message.answer(f"✅ Рассылка завершена: {sent} отправлено, {failed} ошибок")
@@ -4179,3 +4209,73 @@ async def cmd_freetrial(message: Message):
         return
     sub = await _db.activate_premium(uid, "standard", days=3, payment_id=f"admin_trial_{tid}")
     await message.answer(f"✅ Trial выдан: {tid} → standard на 3 дня (до {sub.get('expires_at', '')[:10]})")
+
+
+# === /post — отправить пост в канал (admin) ===
+async def cmd_post(message: Message):
+    """Отправляет пост в канал @benzyn_ryadom. Только для admin.
+
+    Использование:
+      /post <текст> — отправить в канал
+      /post founder — отправить пост Founder Pack
+      /post update — отправить пост об обновлении
+      /post trial — отправить пост-приглашение
+      /post preview <текст> — превью (не отправляет)
+    """
+    if message.from_user.id not in ADMIN_TG_IDS:
+        return
+
+    from config import settings as _settings
+    import os
+
+    channel_id = os.getenv("CHANNEL_CHAT_ID", "")
+    if not channel_id:
+        await message.answer("❌ CHANNEL_CHAT_ID не задан в env")
+        return
+
+    text = (message.text or "").replace("/post", "", 1).strip()
+
+    if not text:
+        await message.answer(
+            "📢 <b>Пост в канал</b>\n\n"
+            "Использование:\n"
+            "<code>/post текст</code> — отправить\n"
+            "<code>/post founder</code> — Founder Pack\n"
+            "<code>/post update</code> — обновление\n"
+            "<code>/post trial</code> — приглашение\n"
+            "<code>/post preview текст</code> — превью"
+        )
+        return
+
+    # Preview mode
+    if text.lower().startswith("preview "):
+        preview_text = text[8:]
+        await message.answer(
+            "👁 <b>Превью поста:</b>\n\n"
+            + preview_text
+            + "\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📏 Длина: {len(preview_text)} символов\n"
+            "✅ Для отправки: /post текст"
+        )
+        return
+
+    # Preset posts
+    from announcements import FOUNDER_PACK_CHANNEL, UPDATE_ANNOUNCEMENT_V14, TRIAL_INVITE
+    if text.lower() == "founder":
+        text = FOUNDER_PACK_CHANNEL
+    elif text.lower() == "update":
+        text = UPDATE_ANNOUNCEMENT_V14
+    elif text.lower() == "trial":
+        text = TRIAL_INVITE
+
+    try:
+        await message.bot.send_message(
+            chat_id=channel_id,
+            text=text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        await message.answer(f"✅ Пост отправлен в канал ({channel_id})")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка отправки: {e}")

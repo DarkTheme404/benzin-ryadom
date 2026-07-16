@@ -145,6 +145,17 @@ window.PREMIUM_TIERS_DISPLAY = [
     pitch: 'Безопасность + экономия',
     color: '#8b5cf6',
   },
+  {
+    code: 'founder',
+    name: 'Founder Pack',
+    icon: '🏆',
+    price: 1990,
+    period: 36500,
+    headline: 'Пожизненный Elite',
+    pitch: 'Навсегда + Founder-бейдж',
+    badge: 'Ограничен',
+    color: '#f59e0b',
+  },
 ];
 
 // Подборки фич для разных ситуаций

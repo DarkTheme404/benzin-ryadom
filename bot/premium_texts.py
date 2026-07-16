@@ -20,6 +20,7 @@ TIER_ICONS = {
     "economy": "📊",
     "standard": "🗺️",
     "elite": "👑",
+    "founder": "🏆",
 }
 
 # Описания тарифов
@@ -27,6 +28,7 @@ TIER_TITLES = {
     "economy": "Эконом",
     "standard": "Стандарт",
     "elite": "Элит",
+    "founder": "Founder Pack",
 }
 
 
@@ -49,7 +51,10 @@ def format_tier_text(tier: str, plan: dict, show_features: bool = True) -> str:
     price = plan["price"]
     period = plan["period_days"]
 
-    text = f"{icon} <b>{title}</b> — {price}₽/{period}дн.\n"
+    if tier == "founder":
+        text = f"{icon} <b>{title}</b> — {price}₽ навсегда\n"
+    else:
+        text = f"{icon} <b>{title}</b> — {price}₽/{period}дн.\n"
     if show_features:
         for f in plan["features"]:
             text += f"  {FEATURE_NAMES.get(f, f)}\n"

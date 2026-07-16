@@ -280,6 +280,21 @@
           </ul>
           <button class="btn btn-tier btn-elite" data-tier="elite">Выбрать за 500₽</button>
         </div>
+        <div class="premium-tier tier-featured" data-tier="founder" style="border-color: #f59e0b; background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.02));">
+          <div class="tier-badge" style="background: #f59e0b; color: #000;">🏆 Ограниченный</div>
+          <div class="tier-header">
+            <span class="tier-icon">🏆</span>
+            <span class="tier-name">Founder Pack</span>
+            <span class="tier-price" style="color: #f59e0b;">1990₽ навсегда</span>
+          </div>
+          <div style="font-size: 11px; color: #fbbf24; margin: 4px 0 8px;">Пожизненный Elite + Founder-бейдж</div>
+          <ul class="tier-features">
+            <li>👑 <b>Пожизненный Elite</b> — все фичи навсегда</li>
+            <li>🏆 <b>Founder-бейдж</b> — особый статус</li>
+            <li>📋 <b>Имя в списке основателей</b> — навсегда</li>
+          </ul>
+          <button class="btn btn-tier" data-tier="founder" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: #000; font-weight: 700;">Купить за 1990₽</button>
+        </div>
         <div style="text-align: center; font-size: 11px; color: var(--text-secondary); margin-top: 12px;">
           💳 Оплата через ЮMoney · Отмена в любой момент
         </div>
@@ -376,6 +391,13 @@
             <div class="account-info">
               <div class="account-label">Premium</div>
               <div class="account-value" id="account-premium">—</div>
+            </div>
+          </div>
+          <div class="account-row" id="founder-badge-row" style="display: none;">
+            <div class="account-icon">🏆</div>
+            <div class="account-info">
+              <div class="account-label">Founder</div>
+              <div class="account-value" id="account-founder">Основатель</div>
             </div>
           </div>
         </div>
@@ -830,6 +852,6 @@
 <script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="/app/app.js?v=16"></script>
+<script src="/app/app.js?v=17"></script>
 </body>
 </html>

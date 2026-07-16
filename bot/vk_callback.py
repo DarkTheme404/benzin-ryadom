@@ -49,6 +49,7 @@ from vk_keyboards import (
     vk_review_rating_keyboard,
     vk_premium_keyboard,
     vk_donate_keyboard,
+    vk_admin_keyboard,
     _callback_button,
     _link_button,
     vk_keyboard,
@@ -709,7 +710,7 @@ async def handle_premium(peer_id: int) -> None:
         if info:
             days_left = (info["expires_at"] - datetime.now()).days if isinstance(info["expires_at"], datetime) else 30
             tier = info.get("tier", "")
-            tier_name = {"economy": "📊 Эконом", "standard": "🗺️ Стандарт", "elite": "👑 Элит"}.get(tier, tier)
+            tier_name = {"economy": "📊 Эконом", "standard": "🗺️ Стандарт", "elite": "👑 Элит", "founder": "🏆 Founder"}.get(tier, tier)
             tier_features = {
                 "economy": "📈 График цен · 📦 CSV-экспорт · 🗺️ Офлайн-карта",
                 "standard": "📈 График цен · 📦 CSV · 🗺️ Офлайн · 🛣 Маршрут A→B · 🔮 Прогноз · 🔔 Будильник",
@@ -747,6 +748,10 @@ async def handle_premium(peer_id: int) -> None:
         "├ Всё из Стандарт\n"
         "├ 🚗 Антипробка (цены+пробки)\n"
         "└ 🆘 SOS-режим (помощь 50 км)\n\n"
+        "🏆 <b>Founder Pack</b> — <b>1990₽ навсегда</b>\n"
+        "├ Пожизненный Элит\n"
+        "├ 🏆 Founder-бейдж\n"
+        "└ 📋 Имя в списке основателей\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🧮 <b>Калькулятор:</b>\n"
         "40л/мес × 2 заправки × 3₽/л = <b>240₽/мес</b> экономии\n"
@@ -1462,6 +1467,46 @@ async def process_message_new(event: dict) -> None:
     elif low in ("/menu", "menu"):
         _clear_state(peer_id)
         await _vk_send(peer_id, "Главное меню:", vk_main_menu())
+    elif low.startswith("/broadcast") or low.startswith("broadcast "):
+        # VK broadcast — admin only
+        import os
+        vk_admin_ids = [int(x) for x in os.getenv("VK_ADMIN_IDS", "772577887").split(",") if x.strip().isdigit()]
+        if peer_id not in vk_admin_ids:
+            await _vk_send(peer_id, "⛔ Нет доступа", vk_main_menu())
+            return
+
+        broadcast_text = text.replace("/broadcast", "", 1).replace("broadcast", "", 1).strip()
+        if not broadcast_text:
+            from db import get_broadcast_stats
+            stats = await get_broadcast_stats()
+            await _vk_send(peer_id,
+                f"📢 <b>Рассылка VK</b>\n\n"
+                f"👥 VK юзеров: {stats['vk']}\n"
+                f"👥 TG юзеров: {stats['tg']}\n"
+                f"📊 Всего: {stats['total']}\n\n"
+                "Для отправки текста:\n"
+                "<code>broadcast текст сообщения</code>",
+                vk_main_menu())
+            return
+
+        from db import get_all_vk_user_ids
+        user_ids = await get_all_vk_user_ids()
+        if not user_ids:
+            await _vk_send(peer_id, "⚠️ Нет VK пользователей для рассылки", vk_main_menu())
+            return
+
+        sent = 0
+        failed = 0
+        for uid in user_ids:
+            try:
+                await _vk_send(uid, broadcast_text)
+                sent += 1
+            except Exception:
+                failed += 1
+            import asyncio as _aio
+            await _aio.sleep(0.1)
+
+        await _vk_send(peer_id, f"✅ VK рассылка: {sent} отправлено, {failed} ошибок", vk_admin_keyboard())
     else:
         # Контекстный ввод
         state = _get_state(peer_id)
@@ -1835,6 +1880,55 @@ async def process_message_event(event: dict) -> None:
         separator = "&" if "?" in direct_url else "?"
         app_url = f"{direct_url}{separator}vk_user_id={peer_id}"
         await _vk_send(peer_id, f"👉 Открой приложение:\n{app_url}", vk_main_menu())
+
+    elif action == "broadcast":
+        # VK broadcast — admin only
+        from db import get_all_vk_user_ids, get_broadcast_stats
+        from config import settings as _settings
+
+        # Check admin (same as TG admin)
+        ADMIN_VK_IDS = [772577887]  # darkt30's TG ID used as reference
+        # For VK, we check if the user is in the admin list via TG ID lookup
+        # Since VK peer_id != TG ID, we need another approach
+        # We'll use a simple VK admin list from env
+        import os
+        vk_admin_ids = [int(x) for x in os.getenv("VK_ADMIN_IDS", "772577887").split(",") if x.strip().isdigit()]
+
+        if peer_id not in vk_admin_ids:
+            await _vk_send(peer_id, "⛔ Нет доступа", vk_main_menu())
+            return
+
+        user_ids = await get_all_vk_user_ids()
+        if not user_ids:
+            await _vk_send(peer_id, "⚠️ Нет VK пользователей для рассылки", vk_main_menu())
+            return
+
+        # The text is in the payload, e.g. {"a": "broadcast", "text": "..."}
+        broadcast_text = payload.get("text", "")
+        if not broadcast_text:
+            stats = await get_broadcast_stats()
+            await _vk_send(peer_id,
+                f"📢 <b>Рассылка VK</b>\n\n"
+                f"👥 VK юзеров: {stats['vk']}\n"
+                f"👥 TG юзеров: {stats['tg']}\n"
+                f"📊 Всего: {stats['total']}\n\n"
+                "Для отправки текста используй TG бот:\n"
+                "<code>/broadcast текст</code>",
+                vk_admin_keyboard())
+            return
+
+        sent = 0
+        failed = 0
+        for uid in user_ids:
+            try:
+                await _vk_send(uid, broadcast_text)
+                sent += 1
+            except Exception:
+                failed += 1
+            import asyncio as _aio
+            await _aio.sleep(0.1)
+
+        await _vk_send(peer_id, f"✅ VK рассылка: {sent} отправлено, {failed} ошибок", vk_admin_keyboard())
 
     else:
         logger.warning("Unknown action: %r", action)

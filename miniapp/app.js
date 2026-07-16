@@ -2088,13 +2088,15 @@
           // Premium статус
           const premRow = document.getElementById('account-premium-row');
           const premEl = document.getElementById('account-premium');
+          const founderRow = document.getElementById('founder-badge-row');
+          const founderEl = document.getElementById('account-founder');
           if (accRes.is_premium && accRes.premium_tier) {
             if (premRow) premRow.style.display = 'flex';
-            // Красиво форматируем
             const tierNames = {
               'economy': '📊 Эконом',
               'standard': '🗺️ Стандарт',
               'elite': '👑 Элит',
+              'founder': '🏆 Founder',
             };
             const tierName = tierNames[accRes.premium_tier] || accRes.premium_tier;
             let expDate = '';
@@ -2108,11 +2110,19 @@
               premEl.textContent = `${tierName} ✅${expDate}`;
               premEl.style.color = '#fbbf24';
             }
+            // Показываем Founder badge
+            if (accRes.is_founder) {
+              if (founderRow) founderRow.style.display = 'flex';
+              if (founderEl) founderEl.textContent = 'Основатель 🏆';
+            } else {
+              if (founderRow) founderRow.style.display = 'none';
+            }
             // Скрываем trial кнопку для premium
             const trialBtnProfile2 = document.getElementById('btn-trial-profile');
             if (trialBtnProfile2) trialBtnProfile2.style.display = 'none';
           } else {
             if (premRow) premRow.style.display = 'none';
+            if (founderRow) founderRow.style.display = 'none';
             // Показываем trial кнопку для non-premium
             const trialBtnProfile = document.getElementById('btn-trial-profile');
             if (trialBtnProfile) trialBtnProfile.style.display = 'block';
@@ -3533,7 +3543,7 @@
 
   // Boot
   // Version check — force reload if old version is cached
-  const APP_VERSION = '11';
+  const APP_VERSION = '12';
   try {
     const stored = localStorage.getItem('benzin_app_version');
     if (stored && stored !== APP_VERSION) {
