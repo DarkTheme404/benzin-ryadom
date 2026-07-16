@@ -34,17 +34,6 @@
     }
     if (!window.vkBridge) {
       console.warn('VK Bridge not loaded after 3s — running without VK features');
-      // Try to detect VK from URL params even without bridge
-      try {
-        const urlParams = new URLSearchParams(window.location.search);
-        const vkUid = urlParams.get('vk_user_id');
-        if (vkUid) {
-          state.vkUserId = parseInt(vkUid);
-          platform.vk = true;
-          applyTheme();
-          console.log('VK detected from URL params, vk_user_id:', state.vkUserId);
-        }
-      } catch (e) {}
       return false;
     }
     try {
