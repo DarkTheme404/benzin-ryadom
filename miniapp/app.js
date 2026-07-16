@@ -298,30 +298,29 @@
 
   function getTgId() {
     if (tg?.initDataUnsafe?.user?.id) return tg.initDataUnsafe.user.id;
-    if (platform.vk) {
-      if (state.vkUserId) return state.vkUserId;
-      // Fallback: parse from URL params
-      try {
-        const urlParams = new URLSearchParams(window.location.search);
-        const vkUid = urlParams.get('vk_user_id');
+    if (platform.vk && state.vkUserId) return state.vkUserId;
+    // Fallback: parse from URL params or hash (works in browser mode too)
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const vkUid = urlParams.get('vk_user_id');
+      if (vkUid) {
+        state.vkUserId = parseInt(vkUid);
+        platform.vk = true;
+        return state.vkUserId;
+      }
+    } catch (e) {}
+    try {
+      const hash = window.location.hash.substring(1);
+      if (hash) {
+        const hp = new URLSearchParams(hash);
+        const vkUid = hp.get('vk_user_id');
         if (vkUid) {
           state.vkUserId = parseInt(vkUid);
+          platform.vk = true;
           return state.vkUserId;
         }
-      } catch (e) {}
-      // Fallback: parse from hash (VK sometimes puts params in hash)
-      try {
-        const hash = window.location.hash.substring(1);
-        if (hash) {
-          const hp = new URLSearchParams(hash);
-          const vkUid = hp.get('vk_user_id');
-          if (vkUid) {
-            state.vkUserId = parseInt(vkUid);
-            return state.vkUserId;
-          }
-        }
-      } catch (e) {}
-    }
+      }
+    } catch (e) {}
     return null;
   }
 
@@ -3168,15 +3167,15 @@
     // Load pending confirmations
     loadPendingConfirmations();
 
-    // === Link by username/ID from Mini App ===
-    const initiateBtn = $('#btn-link-initiate');
-    if (initiateBtn) {
-      initiateBtn.addEventListener('click', async () => {
-        const input = $('#link-target-input');
+    // === Link VK from Mini App ===
+    const linkVkBtn = $('#btn-link-vk');
+    if (linkVkBtn) {
+      linkVkBtn.addEventListener('click', async () => {
+        const input = $('#link-vk-username');
         const status = $('#link-initiate-status');
         const target = (input?.value || '').trim().replace(/^@/, '');
         if (!target) {
-          if (status) { status.textContent = '❌ Введи username или ID'; status.style.color = '#ef4444'; }
+          if (status) { status.textContent = '❌ Введи VK username или ID'; status.style.color = '#ef4444'; }
           return;
         }
         const uid = getTgId();
@@ -3193,16 +3192,51 @@
             body: JSON.stringify(body),
           });
           if (res.ok) {
-            if (status) { status.textContent = '✅ Запрос отправлен! Ожидай подтверждения.'; status.style.color = '#34d399'; }
+            if (status) { status.textContent = '✅ Запрос отправлен в VK! Ожидай подтверждения.'; status.style.color = '#34d399'; }
             showToast('Запрос отправлен!', 'success');
             input.value = '';
           } else {
             if (status) { status.textContent = '❌ ' + (res.error || 'Ошибка'); status.style.color = '#ef4444'; }
-            showToast('Ошибка: ' + (res.error || 'неизвестно'), 'error');
           }
         } catch (e) {
           if (status) { status.textContent = '❌ ' + (e.message || 'Ошибка соединения'); status.style.color = '#ef4444'; }
-          showToast('Ошибка: ' + (e.message || 'соединения'), 'error');
+        }
+      });
+    }
+
+    // === Link TG from Mini App ===
+    const linkTgBtn = $('#btn-link-tg');
+    if (linkTgBtn) {
+      linkTgBtn.addEventListener('click', async () => {
+        const input = $('#link-tg-username');
+        const status = $('#link-initiate-status');
+        const target = (input?.value || '').trim().replace(/^@/, '');
+        if (!target) {
+          if (status) { status.textContent = '❌ Введи TG username или ID'; status.style.color = '#ef4444'; }
+          return;
+        }
+        const uid = getTgId();
+        if (!uid) {
+          if (status) { status.textContent = '❌ Не удалось определить ID'; status.style.color = '#ef4444'; }
+          return;
+        }
+        const body = platform.vk
+          ? { from_vk_user_id: uid, target_username: target }
+          : { from_telegram_id: uid, target_username: target };
+        try {
+          const res = await api('/api/account/link/initiate', {
+            method: 'POST',
+            body: JSON.stringify(body),
+          });
+          if (res.ok) {
+            if (status) { status.textContent = '✅ Запрос отправлен в Telegram! Ожидай подтверждения.'; status.style.color = '#34d399'; }
+            showToast('Запрос отправлен!', 'success');
+            input.value = '';
+          } else {
+            if (status) { status.textContent = '❌ ' + (res.error || 'Ошибка'); status.style.color = '#ef4444'; }
+          }
+        } catch (e) {
+          if (status) { status.textContent = '❌ ' + (e.message || 'Ошибка соединения'); status.style.color = '#ef4444'; }
         }
       });
     }
