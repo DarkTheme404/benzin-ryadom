@@ -1830,10 +1830,11 @@ async def process_message_event(event: dict) -> None:
                 await show_station(peer_id, station)
 
     elif action == "open_app":
-        # Открыть приложение (отправляем ссылку, т.к. open_link работает надёжнее open_app)
         import os
         direct_url = os.getenv("VK_MINI_APP_DIRECT_URL", f"{settings.BACKEND_URL}/v2")
-        await _vk_send(peer_id, f"👉 Открой приложение:\n{direct_url}", vk_main_menu())
+        separator = "&" if "?" in direct_url else "?"
+        app_url = f"{direct_url}{separator}vk_user_id={peer_id}"
+        await _vk_send(peer_id, f"👉 Открой приложение:\n{app_url}", vk_main_menu())
 
     else:
         logger.warning("Unknown action: %r", action)

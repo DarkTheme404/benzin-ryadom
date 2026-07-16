@@ -167,6 +167,8 @@ def vk_main_menu() -> str:
     app_id = os.getenv("VK_MINI_APP_ID", "")
     if app_id and app_id.isdigit():
         rows.append([_vkapp_button("📱 Открыть приложение", int(app_id))])
+    elif use_callback:
+        rows.append([_callback_button("📱 Открыть приложение", {"a": "open_app"}, "primary")])
     rows.append([
         _callback_button(VK_BTN_SUBSCRIBE, {"a": "subscribe"}) if use_callback
         else _button(VK_BTN_SUBSCRIBE),
