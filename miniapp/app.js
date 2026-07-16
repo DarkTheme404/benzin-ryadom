@@ -26,7 +26,34 @@
   }
 
   // VK Bridge detection + init
-  // Подождём до полной загрузки DOM и доступности window.vkBridge
+  // First: try to detect VK from URL params (works even without bridge)
+  (() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const vkUid = urlParams.get('vk_user_id');
+      if (vkUid) {
+        state.vkUserId = parseInt(vkUid);
+        platform.vk = true;
+        console.log('VK detected from URL params:', state.vkUserId);
+      }
+    } catch (e) {}
+    // Also check hash fragment
+    if (!state.vkUserId) {
+      try {
+        const hash = window.location.hash.substring(1);
+        if (hash) {
+          const hp = new URLSearchParams(hash);
+          const vkUid = hp.get('vk_user_id');
+          if (vkUid) {
+            state.vkUserId = parseInt(vkUid);
+            platform.vk = true;
+            console.log('VK detected from hash:', state.vkUserId);
+          }
+        }
+      } catch (e) {}
+    }
+  })();
+
   const vkBridgePromise = (async () => {
     // Если bridge ещё не загружен — ждём до 3 сек
     for (let i = 0; i < 30; i++) {
@@ -35,6 +62,17 @@
     }
     if (!window.vkBridge) {
       console.warn('VK Bridge not loaded after 3s — running without VK features');
+      // Try to detect VK from URL params even without bridge
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const vkUid = urlParams.get('vk_user_id');
+        if (vkUid) {
+          state.vkUserId = parseInt(vkUid);
+          platform.vk = true;
+          applyTheme();
+          console.log('VK detected from URL params, vk_user_id:', state.vkUserId);
+        }
+      } catch (e) {}
       return false;
     }
     try {
@@ -271,9 +309,29 @@
 
   function getTgId() {
     if (tg?.initDataUnsafe?.user?.id) return tg.initDataUnsafe.user.id;
-    // VK uses vk_user_id from launch params
     if (platform.vk) {
-      return state.vkUserId;
+      if (state.vkUserId) return state.vkUserId;
+      // Fallback: parse from URL params
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const vkUid = urlParams.get('vk_user_id');
+        if (vkUid) {
+          state.vkUserId = parseInt(vkUid);
+          return state.vkUserId;
+        }
+      } catch (e) {}
+      // Fallback: parse from hash (VK sometimes puts params in hash)
+      try {
+        const hash = window.location.hash.substring(1);
+        if (hash) {
+          const hp = new URLSearchParams(hash);
+          const vkUid = hp.get('vk_user_id');
+          if (vkUid) {
+            state.vkUserId = parseInt(vkUid);
+            return state.vkUserId;
+          }
+        }
+      } catch (e) {}
     }
     return null;
   }
@@ -1909,17 +1967,19 @@
       } catch (e) {
         console.warn('VKWebAppGetUserInfo failed, using fallback:', e);
         if (fallbackVkId) {
-          dom.profileName.textContent = 'VK User';
-          dom.profileId.textContent = 'VK ID: ' + fallbackVkId;
-          dom.profileAvatar.textContent = 'V';
-          dom.profileBigAvatar.textContent = 'V';
+          let userName = 'VK User';
           try {
-            await api('/api/user/ensure-vk', {
+            const ensureRes = await api('/api/user/ensure-vk', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({vk_user_id: fallbackVkId}),
             });
+            if (ensureRes && ensureRes.first_name) userName = ensureRes.first_name;
           } catch (e2) { console.warn('ensure-vk fallback failed:', e2); }
+          dom.profileName.textContent = userName;
+          dom.profileId.textContent = 'VK ID: ' + fallbackVkId;
+          dom.profileAvatar.textContent = userName[0].toUpperCase();
+          dom.profileBigAvatar.textContent = userName[0].toUpperCase();
         } else {
           dom.profileName.textContent = 'Гость';
           dom.profileId.textContent = '';

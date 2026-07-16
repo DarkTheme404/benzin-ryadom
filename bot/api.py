@@ -2832,7 +2832,20 @@ async def handle_user_ensure_vk(request):
     if not uid:
         return json_resp({"error": "failed to create user"}, status=500)
 
-    return json_resp({"ok": True, "user_id": uid, "is_new": is_new})
+    # Return user info from DB
+    first_name = None
+    try:
+        if USE_SQLITE:
+            row = await db._fetch("SELECT first_name, username FROM users WHERE id = ?", uid, one=True)
+        else:
+            async with db._db.acquire() as conn:
+                row = await conn.fetchrow("SELECT first_name, username FROM users WHERE id = $1", uid)
+        if row:
+            first_name = row["first_name"]
+    except Exception:
+        pass
+
+    return json_resp({"ok": True, "user_id": uid, "is_new": is_new, "first_name": first_name})
 
 
 async def handle_account_info(request):
