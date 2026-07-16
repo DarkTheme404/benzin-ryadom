@@ -1928,9 +1928,9 @@
 
   // ============= PROFILE =============
   async function loadProfile() {
-    // Ensure VK Bridge is initialized before accessing VK data
-    if (platform.vk || window.vkBridge) {
-      try { await vkBridgePromise; } catch (e) {}
+    // Ensure VK Bridge is initialized before accessing VK data (only in VK context)
+    if (!platform.tg) {
+      try { await Promise.race([vkBridgePromise, new Promise(r => setTimeout(r, 3000))]); } catch (e) {}
     }
 
     const user = tg?.initDataUnsafe?.user;
@@ -3338,6 +3338,14 @@
     }
   }
 
+  // ============= GLOBAL EXPORTS (for premium-ui.js and other scripts) =============
+  window.getTgId = getTgId;
+  window.api = api;
+  window.showToast = showToast;
+  window.showLoading = showLoading;
+  window.hideLoading = hideLoading;
+  window.loadProfile = loadProfile;
+
   // ============= INIT =============
   async function init() {
     bindEvents();
@@ -3419,7 +3427,7 @@
 
   // Boot
   // Version check — force reload if old version is cached
-  const APP_VERSION = '9';
+  const APP_VERSION = '10';
   try {
     const stored = localStorage.getItem('benzin_app_version');
     if (stored && stored !== APP_VERSION) {
