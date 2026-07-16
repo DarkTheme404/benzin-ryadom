@@ -26,39 +26,6 @@
   }
 
   // VK Bridge detection + init
-  // First: try to detect VK from URL params (works even without bridge)
-  (() => {
-    try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const vkUid = urlParams.get('vk_user_id');
-      if (vkUid) {
-        state.vkUserId = parseInt(vkUid);
-        platform.vk = true;
-        console.log('VK detected from URL params:', state.vkUserId);
-      }
-    } catch (e) {}
-    // Also check hash fragment
-    if (!state.vkUserId) {
-      try {
-        const hash = window.location.hash.substring(1);
-        if (hash) {
-          const hp = new URLSearchParams(hash);
-          const vkUid = hp.get('vk_user_id');
-          if (vkUid) {
-            state.vkUserId = parseInt(vkUid);
-            platform.vk = true;
-            console.log('VK detected from hash:', state.vkUserId);
-          }
-        }
-      } catch (e) {}
-    }
-  })();
-
-  // Apply theme if VK was detected from URL params
-  if (platform.vk) {
-    try { applyTheme(); } catch (e) {}
-  }
-
   const vkBridgePromise = (async () => {
     // Если bridge ещё не загружен — ждём до 3 сек
     for (let i = 0; i < 30; i++) {
@@ -220,6 +187,34 @@
     },
     cities: [], // popular cities
   };
+
+  // Detect VK from URL params (works even without bridge)
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const vkUid = urlParams.get('vk_user_id');
+    if (vkUid) {
+      state.vkUserId = parseInt(vkUid);
+      platform.vk = true;
+      console.log('VK detected from URL params:', state.vkUserId);
+    }
+  } catch (e) {}
+  if (!state.vkUserId) {
+    try {
+      const hash = window.location.hash.substring(1);
+      if (hash) {
+        const hp = new URLSearchParams(hash);
+        const vkUid = hp.get('vk_user_id');
+        if (vkUid) {
+          state.vkUserId = parseInt(vkUid);
+          platform.vk = true;
+          console.log('VK detected from hash:', state.vkUserId);
+        }
+      }
+    } catch (e) {}
+  }
+  if (platform.vk) {
+    try { applyTheme(); } catch (e) {}
+  }
 
   // ============= DOM =============
   const $ = (sel, root = document) => root.querySelector(sel);
