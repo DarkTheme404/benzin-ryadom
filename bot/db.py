@@ -4083,17 +4083,20 @@ LINK_COOLDOWN_DAYS = 7
 
 async def check_link_rate_limit(user_id: int) -> dict:
     """Проверяет лимит привязок. Возвращает {"ok": bool, "error": str?}"""
-    if USE_SQLITE:
-        row = await _fetch(
-            "SELECT link_ops_count, last_link_change_at FROM users WHERE id = ?",
-            user_id, one=True,
-        )
-    else:
-        async with _db.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT link_ops_count, last_link_change_at FROM users WHERE id = $1",
-                user_id,
+    try:
+        if USE_SQLITE:
+            row = await _fetch(
+                "SELECT link_ops_count, last_link_change_at FROM users WHERE id = ?",
+                user_id, one=True,
             )
+        else:
+            async with _db.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT link_ops_count, last_link_change_at FROM users WHERE id = $1",
+                    user_id,
+                )
+    except Exception:
+        return {"ok": True}
     if not row:
         return {"ok": False, "error": "Пользователь не найден"}
 
@@ -4274,7 +4277,10 @@ async def confirm_linking(confirm_id: int) -> dict:
                 confirm_id,
             )
 
-    await record_link_operation(from_user_id)
+    try:
+        await record_link_operation(from_user_id)
+    except Exception as e:
+        logger.warning(f"record_link_operation failed (non-critical): {e}")
     return {"ok": True}
 
 

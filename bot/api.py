@@ -2700,7 +2700,7 @@ async def handle_account_link_confirm_action(request):
         result = await confirm_linking(int(confirm_id))
     except Exception as e:
         logger.exception(f"confirm_linking error: {e}")
-        return json_resp({"error": str(e)}, status=500)
+        return json_resp({"error": "internal error: " + str(e)[:200]}, status=500)
     if result.get("ok"):
         return json_resp(result)
     return json_resp(result, status=400)
