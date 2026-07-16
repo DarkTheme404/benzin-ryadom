@@ -436,16 +436,21 @@ async def handle_link(peer_id: int, text: str = "") -> None:
 
     # === link_help — инструкция ===
     if subcmd == "link_help" or (subcmd == "link" and arg == "help"):
+        tg_link = f"https://t.me/benzyn_ryadom_bot?start=link_vk_{peer_id}"
+        kb = vk_keyboard([
+            [_link_button("📱 Привязать в Telegram", tg_link)],
+            [_callback_button("◀️ Назад", {"a": "link"}, "secondary")],
+        ])
         await _vk_send(peer_id,
             "🔗 <b>Привязка аккаунтов</b>\n\n"
             "Premium работает и в TG, и в VK, и в Mini App.\n\n"
             "<b>Быстрый способ:</b>\n"
-            "1. Нажми «🔗 Ввести TG ID»\n"
-            "2. Введи свой Telegram ID\n"
-            "3. Подтверди в Telegram\n\n"
+            "Нажми кнопку ниже — откроется TG бот.\n"
+            "Нажми «/start» — готово.\n\n"
             "<b>Через код:</b>\n"
             "Создай код и введи его в другом боте.\n"
             "⏱ Код действует 10 минут.",
+            kb,
         )
         return
 
@@ -1450,18 +1455,6 @@ async def process_message_new(event: dict) -> None:
         elif state.get("awaiting") == "link_code":
             _clear_state(peer_id)
             await handle_link(peer_id, f"link_use {text.strip()}")
-        elif state.get("awaiting") == "link_tg_id":
-            _clear_state(peer_id)
-            # Deep link работает лучше — просто открываем TG бота
-            tg_link = f"https://t.me/benzyn_ryadom_bot?start=link_vk_{peer_id}"
-            kb = vk_keyboard([
-                [_link_button("📱 Привязать в Telegram", tg_link)],
-                [_callback_button("◀️ Назад", {"a": "link"}, "secondary")],
-            ])
-            await _vk_send(peer_id,
-                "📱 Нажми кнопку ниже — откроется TG бот.\nНажми «/start» — привяжется автоматически.",
-                kb,
-            )
         else:
             await handle_text_search(peer_id, text)
 
@@ -1596,19 +1589,6 @@ async def process_message_event(event: dict) -> None:
         await _vk_send(peer_id,
             "📥 <b>Введи 6-значный код</b>\n\n"
             "Отправь код одним сообщением.\n⏱ Действует 10 минут.",
-        )
-
-    elif action == "link_tg_prompt":
-        tg_link = f"https://t.me/benzyn_ryadom_bot?start=link_vk_{peer_id}"
-        kb = vk_keyboard([
-            [_link_button("📱 Привязать в Telegram", tg_link)],
-            [_callback_button("◀️ Назад", {"a": "link"}, "secondary")],
-        ])
-        await _vk_send(peer_id,
-            "🔗 <b>Привязка к Telegram</b>\n\n"
-            "Нажми кнопку ниже — откроется TG бот.\n"
-            "Нажми «/start» — аккаунты привяжутся автоматически.",
-            kb,
         )
 
     elif action == "alarm":
