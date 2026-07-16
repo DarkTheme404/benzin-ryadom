@@ -1456,7 +1456,19 @@ async def process_message_new(event: dict) -> None:
             else:
                 await _vk_send(peer_id, "❌ Введи числовой Telegram ID (например: 772577887)")
         else:
-            await handle_text_search(peer_id, text)
+            # Если юзер ввёл просто число без состояния — может это TG ID?
+            if text.strip().isdigit() and len(text.strip()) >= 5:
+                await _vk_send(peer_id,
+                    "💡 Похоже, ты ввёл Telegram ID.\n\n"
+                    "Чтобы привязать аккаунт:\n"
+                    "1. Нажми «🔗 Привязать» в меню\n"
+                    "2. Нажми «🔗 Ввести TG ID»\n"
+                    "3. Введи свой ID\n\n"
+                    "Или напиши <code>link ID</code> (например: <code>link 772577887</code>)",
+                    vk_main_menu(),
+                )
+            else:
+                await handle_text_search(peer_id, text)
 
 
 # === Callback event router ===
