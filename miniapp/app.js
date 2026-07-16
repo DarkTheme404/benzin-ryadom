@@ -1928,8 +1928,8 @@
 
   // ============= PROFILE =============
   async function loadProfile() {
-    // Ensure VK Bridge is initialized before accessing VK data (only in VK context)
-    if (!platform.tg) {
+    // Ensure VK Bridge is initialized before accessing VK data (only in VK context, skip if URL-detected)
+    if (!platform.tg && !state.vkUserId) {
       try { await Promise.race([vkBridgePromise, new Promise(r => setTimeout(r, 3000))]); } catch (e) {}
     }
 
@@ -1943,41 +1943,49 @@
     } else if (platform.vk) {
       // Use launch params vk_user_id as fallback
       const fallbackVkId = state.vkUserId;
-      try {
-        const userInfo = await window.vkBridge.send('VKWebAppGetUserInfo', {});
-        dom.profileName.textContent = userInfo.first_name;
-        dom.profileId.textContent = 'VK ID: ' + userInfo.id;
-        state.vkUserId = userInfo.id;
-        dom.profileAvatar.textContent = userInfo.first_name[0].toUpperCase();
-        dom.profileBigAvatar.textContent = userInfo.first_name[0].toUpperCase();
-        // Ensure VK user exists in DB
+      let hasVKBridge = !!(window.vkBridge && state.vkLaunchParams);
+      if (hasVKBridge) {
+        // Real VK Bridge — try VKWebAppGetUserInfo with timeout
         try {
-          await api('/api/user/ensure-vk', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({vk_user_id: userInfo.id}),
-          });
-        } catch (e) { console.warn('ensure-vk failed:', e); }
-      } catch (e) {
-        console.warn('VKWebAppGetUserInfo failed, using fallback:', e);
-        if (fallbackVkId) {
-          let userName = 'VK User';
+          const userInfo = await Promise.race([
+            window.vkBridge.send('VKWebAppGetUserInfo', {}),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('bridge timeout')), 3000)),
+          ]);
+          dom.profileName.textContent = userInfo.first_name;
+          dom.profileId.textContent = 'VK ID: ' + userInfo.id;
+          state.vkUserId = userInfo.id;
+          dom.profileAvatar.textContent = userInfo.first_name[0].toUpperCase();
+          dom.profileBigAvatar.textContent = userInfo.first_name[0].toUpperCase();
           try {
-            const ensureRes = await api('/api/user/ensure-vk', {
+            await api('/api/user/ensure-vk', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({vk_user_id: fallbackVkId}),
+              body: JSON.stringify({vk_user_id: userInfo.id}),
             });
-            if (ensureRes && ensureRes.first_name) userName = ensureRes.first_name;
-          } catch (e2) { console.warn('ensure-vk fallback failed:', e2); }
-          dom.profileName.textContent = userName;
-          dom.profileId.textContent = 'VK ID: ' + fallbackVkId;
-          dom.profileAvatar.textContent = userName[0].toUpperCase();
-          dom.profileBigAvatar.textContent = userName[0].toUpperCase();
-        } else {
-          dom.profileName.textContent = 'Гость';
-          dom.profileId.textContent = '';
+          } catch (e) { console.warn('ensure-vk failed:', e); }
+        } catch (e) {
+          console.warn('VKWebAppGetUserInfo failed:', e);
+          hasVKBridge = false;
         }
+      }
+      if (!hasVKBridge && fallbackVkId) {
+        // Browser mode or bridge failed — load from DB via ensure-vk
+        let userName = 'VK User';
+        try {
+          const ensureRes = await api('/api/user/ensure-vk', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({vk_user_id: fallbackVkId}),
+          });
+          if (ensureRes && ensureRes.first_name) userName = ensureRes.first_name;
+        } catch (e2) { console.warn('ensure-vk failed:', e2); }
+        dom.profileName.textContent = userName;
+        dom.profileId.textContent = 'VK ID: ' + fallbackVkId;
+        dom.profileAvatar.textContent = userName[0].toUpperCase();
+        dom.profileBigAvatar.textContent = userName[0].toUpperCase();
+      } else if (!hasVKBridge && !fallbackVkId) {
+        dom.profileName.textContent = 'Гость';
+        dom.profileId.textContent = '';
       }
     } else {
       dom.profileName.textContent = 'Гость';
@@ -3427,7 +3435,7 @@
 
   // Boot
   // Version check — force reload if old version is cached
-  const APP_VERSION = '10';
+  const APP_VERSION = '11';
   try {
     const stored = localStorage.getItem('benzin_app_version');
     if (stored && stored !== APP_VERSION) {
