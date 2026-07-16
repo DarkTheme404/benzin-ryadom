@@ -179,6 +179,8 @@ async def _migrate_sqlite(db):
         await db.execute("ALTER TABLE users ADD COLUMN link_code_expires_at TEXT")
     if "linked_user_id" not in user_cols:
         await db.execute("ALTER TABLE users ADD COLUMN linked_user_id INTEGER")
+    if "screen_name" not in user_cols:
+        await db.execute("ALTER TABLE users ADD COLUMN screen_name TEXT")
     # Миграция: убираем UNIQUE constraint с telegram_id (для VK юзеров с telegram_id=0)
     # Создаём partial unique index — telegram_id уникален только когда > 0
     try:
@@ -483,6 +485,7 @@ async def _create_schema_pg(pool):
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS link_code TEXT")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS link_code_expires_at TIMESTAMPTZ")
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS linked_user_id BIGINT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS screen_name TEXT")
         except Exception as e:
             logger.warning(f"PG migration users link fields: {e}")
 
@@ -1742,18 +1745,25 @@ async def get_user_id_by_vk_id(vk_id: int) -> int | None:
         return row["id"] if row else None
 
 
-async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") -> int:
+async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "", screen_name: str = "") -> int:
     """Создаёт/обновляет пользователя по VK ID. Возвращает user_id."""
     if USE_SQLITE:
         row = await _fetch(
             "SELECT id FROM users WHERE vk_id = ?", (vk_id,), one=True,
         )
         if row:
-            await _execute(
-                "UPDATE users SET first_name = ?, last_active_at = datetime('now') WHERE id = ?",
-                first_name, row["id"] if isinstance(row, dict) else row[0],
-            )
-            return row["id"] if isinstance(row, dict) else row[0]
+            uid = row["id"] if isinstance(row, dict) else row[0]
+            if screen_name:
+                await _execute(
+                    "UPDATE users SET first_name = ?, screen_name = ?, last_active_at = datetime('now') WHERE id = ?",
+                    first_name, screen_name, uid,
+                )
+            else:
+                await _execute(
+                    "UPDATE users SET first_name = ?, last_active_at = datetime('now') WHERE id = ?",
+                    first_name, uid,
+                )
+            return uid
         # Fallback: может быть старая запись с telegram_id=peer_id (до фикса)
         row = await _fetch(
             "SELECT id FROM users WHERE telegram_id = ? AND vk_id IS NULL", (vk_id,), one=True,
@@ -1792,10 +1802,16 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "") 
                 "SELECT id FROM users WHERE vk_id = $1", vk_id,
             )
             if row:
-                await conn.execute(
-                    "UPDATE users SET first_name = $1, last_active_at = NOW() WHERE id = $2",
-                    first_name, row["id"],
-                )
+                if screen_name:
+                    await conn.execute(
+                        "UPDATE users SET first_name = $1, screen_name = $2, last_active_at = NOW() WHERE id = $3",
+                        first_name, screen_name, row["id"],
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE users SET first_name = $1, last_active_at = NOW() WHERE id = $2",
+                        first_name, row["id"],
+                    )
                 return row["id"]
             # Fallback: старая запись с telegram_id=peer_id (до фикса)
             row = await conn.fetchrow(
@@ -4112,6 +4128,29 @@ async def find_tg_user_by_username(username: str) -> int | None:
         return row["telegram_id"] if row else None
     except Exception as e:
         logger.warning(f"find_tg_user_by_username error: {e}")
+        return None
+
+
+async def find_vk_user_by_screen_name(screen_name: str) -> int | None:
+    """Находит vk_id по screen_name (VK username). Возвращает None если не найден."""
+    clean = screen_name.strip().lstrip("@").lower()
+    if not clean:
+        return None
+    try:
+        if USE_SQLITE:
+            row = await _fetch(
+                "SELECT vk_id FROM users WHERE LOWER(screen_name) = ? AND vk_id IS NOT NULL",
+                clean, one=True,
+            )
+        else:
+            async with _db.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT vk_id FROM users WHERE LOWER(screen_name) = $1 AND vk_id IS NOT NULL",
+                    clean,
+                )
+        return row["vk_id"] if row else None
+    except Exception as e:
+        logger.warning(f"find_vk_user_by_screen_name error: {e}")
         return None
 
 

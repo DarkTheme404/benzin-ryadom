@@ -2840,6 +2840,43 @@ async def handle_account_link_initiate(request):
         target_tg_id = await find_tg_user_by_username(target)
         if target_tg_id:
             target_uid = await get_user_id_by_telegram_id(target_tg_id)
+        else:
+            # Try VK API to resolve screen_name → vk_id
+            from db import find_vk_user_by_screen_name, upsert_user_vk
+            target_vk_id = await find_vk_user_by_screen_name(target)
+            if target_vk_id:
+                target_uid = await get_user_id_by_vk_id(target_vk_id)
+            else:
+                # Try VK API users.get by screen_name
+                try:
+                    vk_token = os.environ.get("VK_TOKEN", "")
+                    if vk_token:
+                        async with aiohttp.ClientSession() as sess:
+                            async with sess.get(
+                                "https://api.vk.com/method/users.get",
+                                params={
+                                    "user_ids": target,
+                                    "access_token": vk_token,
+                                    "v": "5.199",
+                                    "fields": "screen_name",
+                                },
+                                timeout=aiohttp.ClientTimeout(total=5),
+                            ) as r:
+                                data = await r.json()
+                                if data.get("response") and len(data["response"]) > 0:
+                                    vk_user = data["response"][0]
+                                    resolved_id = vk_user.get("id")
+                                    if resolved_id:
+                                        target_vk_id = resolved_id
+                                        target_uid = await get_user_id_by_vk_id(resolved_id)
+                                        if not target_uid:
+                                            target_uid = await upsert_user_vk(
+                                                resolved_id,
+                                                first_name=vk_user.get("first_name", ""),
+                                                screen_name=vk_user.get("screen_name", target),
+                                            )
+                except Exception as e:
+                    logger.warning(f"VK API resolve screen_name failed: {e}")
 
     if not target_uid:
         return json_resp({"error": "Пользователь не найден. Проверь username или ID."}, status=404)

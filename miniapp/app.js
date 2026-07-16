@@ -3115,12 +3115,17 @@
     if (saveVkIdBtn) {
       saveVkIdBtn.addEventListener('click', () => {
         const input = document.getElementById('vk-id-input');
-        const val = (input?.value || '').trim();
-        if (!val || isNaN(parseInt(val))) {
-          showToast('Введи числовой VK ID', 'error');
+        const val = (input?.value || '').trim().replace(/^@/, '');
+        if (!val) {
+          showToast('Введи VK username или ID', 'error');
           return;
         }
-        state.vkUserId = parseInt(val);
+        const numId = parseInt(val);
+        if (!isNaN(numId)) {
+          state.vkUserId = numId;
+        } else {
+          state.vkUserId = val;
+        }
         platform.vk = true;
         try { localStorage.setItem('benzin_vk_user_id', val); } catch (e) {}
         showToast('VK ID сохранён!', 'success');
