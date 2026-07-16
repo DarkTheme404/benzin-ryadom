@@ -25,6 +25,40 @@
     }
   }
 
+  // ============= STATE (must be before VK Bridge IIFE to avoid TDZ) =============
+  const state = {
+    screen: 'home',
+    tab: 'home',
+    city: '',
+    cityRegion: '',
+    fuel: '',
+    maxPrice: 0,
+    network: '',
+    searchQuery: '',
+    stations: [],
+    userLocation: null, // { lat, lon }
+    selectedStation: null,
+    vkUserId: null,        // VK user ID
+    vkLaunchParams: null,  // VK launch params
+    tgUser: null,          // TG user info
+    reportSheet: {
+      stationId: null,
+      stationName: '',
+      fuel: '92',
+      available: true,
+      price: null,
+      queue: null,
+    },
+    reviewSheet: {
+      stationId: null,
+      stationName: '',
+      fuel: '92',
+      rating: 0,
+      comment: '',
+    },
+    cities: [], // popular cities
+  };
+
   // VK Bridge detection + init
   const vkBridgePromise = (async () => {
     // Если bridge ещё не загружен — ждём до 3 сек
@@ -142,40 +176,6 @@
       }
     }
   }
-
-  // ============= STATE =============
-  const state = {
-    screen: 'home',
-    tab: 'home',
-    city: '',
-    cityRegion: '',
-    fuel: '',
-    maxPrice: 0,
-    network: '',
-    searchQuery: '',
-    stations: [],
-    userLocation: null, // { lat, lon }
-    selectedStation: null,
-    vkUserId: null,        // VK user ID
-    vkLaunchParams: null,  // VK launch params
-    tgUser: null,          // TG user info
-    reportSheet: {
-      stationId: null,
-      stationName: '',
-      fuel: '92',
-      available: true,
-      price: null,
-      queue: null,
-    },
-    reviewSheet: {
-      stationId: null,
-      stationName: '',
-      fuel: '92',
-      rating: 0,
-      comment: '',
-    },
-    cities: [], // popular cities
-  };
 
   // Detect VK from URL params (works even without bridge)
   try {
@@ -1928,6 +1928,11 @@
 
   // ============= PROFILE =============
   async function loadProfile() {
+    // Ensure VK Bridge is initialized before accessing VK data
+    if (platform.vk || window.vkBridge) {
+      try { await vkBridgePromise; } catch (e) {}
+    }
+
     const user = tg?.initDataUnsafe?.user;
     if (user) {
       const name = user.first_name + (user.last_name ? ' ' + user.last_name : '');
@@ -3414,7 +3419,7 @@
 
   // Boot
   // Version check — force reload if old version is cached
-  const APP_VERSION = '8';
+  const APP_VERSION = '9';
   try {
     const stored = localStorage.getItem('benzin_app_version');
     if (stored && stored !== APP_VERSION) {
