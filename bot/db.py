@@ -4076,6 +4076,29 @@ async def link_accounts_by_vk(vk_id: int, telegram_id: int) -> dict:
     return {"ok": True, "vk_id": vk_id, "telegram_id": telegram_id}
 
 
+async def find_tg_user_by_username(username: str) -> int | None:
+    """Находит telegram_id по username (без @). Возвращает None если не найден."""
+    clean = username.strip().lstrip("@").lower()
+    if not clean:
+        return None
+    try:
+        if USE_SQLITE:
+            row = await _fetch(
+                "SELECT telegram_id FROM users WHERE LOWER(username) = ? AND telegram_id > 0",
+                clean, one=True,
+            )
+        else:
+            async with _db.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT telegram_id FROM users WHERE LOWER(username) = $1 AND telegram_id > 0",
+                    clean,
+                )
+        return row["telegram_id"] if row else None
+    except Exception as e:
+        logger.warning(f"find_tg_user_by_username error: {e}")
+        return None
+
+
 # === Rate limit привязки аккаунтов ===
 
 MAX_LINK_OPS_PER_MONTH = 3

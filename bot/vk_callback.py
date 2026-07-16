@@ -511,18 +511,36 @@ async def handle_link(peer_id: int, text: str = "") -> None:
                 await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
             return
         else:
-            tg_link = f"https://t.me/benzyn_ryadom_bot?start=link_vk_{peer_id}"
-            kb = vk_keyboard([
-                [_link_button("📱 Привязать в Telegram", tg_link)],
-                [_callback_button("◀️ Назад", {"a": "link"}, "secondary")],
-            ])
-            await _vk_send(peer_id,
-                f"💡 <b>Похоже, это TG username (@{arg_clean})</b>\n\n"
-                "Telegram ID — это число (например: 772577887).\n"
-                "Узнать свой ID: открой TG → напиши <code>/start</code> боту @userinfobot.\n\n"
-                "Или нажми кнопку ниже — привяжется автоматически:",
-                kb,
-            )
+            from db import find_tg_user_by_username
+            tg_id = await find_tg_user_by_username(arg_clean)
+            if tg_id:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            f"{backend}/api/account/link/request",
+                            json={"vk_user_id": peer_id, "telegram_id": tg_id},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as r:
+                            data = await r.json()
+                    if data.get("ok"):
+                        await _vk_send(peer_id,
+                            f"✅ <b>Нашёл @{arg_clean}!</b>\n\n"
+                            "Запрос на подтверждение отправлен в Telegram.\n"
+                            "После подтверждения аккаунты будут привязаны.\n\n"
+                            "⏱ Запрос действует 10 минут.",
+                        )
+                    else:
+                        err = data.get("error", "Неизвестная ошибка")
+                        await _vk_send(peer_id, f"❌ {err}")
+                except Exception as e:
+                    logger.exception(f"handle_link request by username error: {e}")
+                    await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
+            else:
+                await _vk_send(peer_id,
+                    f"❌ TG пользователь <b>@{arg_clean}</b> не найден.\n\n"
+                    "Возможно, он ещё не запускал бота.\n"
+                    "Попроси его написать <code>/start</code> в @benzyn_ryadom_bot.",
+                )
             return
 
     # === link_create — создать код ===
@@ -552,7 +570,7 @@ async def handle_link(peer_id: int, text: str = "") -> None:
 
     # === link — показать меню ===
     kb = vk_keyboard([
-        [_callback_button("🔗 Ввести TG ID", {"a": "link_tg_prompt"}, "primary")],
+        [_callback_button("🔗 Привязать TG", {"a": "link_tg_prompt"}, "primary")],
         [_callback_button("📤 Создать код", {"a": "link_create"}, "secondary")],
         [_callback_button("📥 Ввести код", {"a": "link_use_prompt"}, "secondary")],
         [_callback_button("◀️ Назад", {"a": "home"}, "secondary")],
@@ -560,12 +578,9 @@ async def handle_link(peer_id: int, text: str = "") -> None:
     await _vk_send(peer_id,
         "🔗 <b>Привязка аккаунта</b>\n\n"
         "Premium работает и в TG, и в VK, и в Mini App.\n\n"
-        "<b>Быстрый способ:</b>\n"
-        "Нажми «🔗 Ввести TG ID» и введи свой Telegram ID (число).\n"
-        "Или введи TG username (@darkt30) — бот подскажет что делать.\n\n"
-        "<b>Через код:</b>\n"
-        "Создай код и введи его в другом боте.\n\n"
-        "⏱ Код действует 10 минут.",
+        "Нажми «🔗 Привязать TG» и введи TG username\n"
+        "(например: <code>darkt30</code>) или числовой ID.\n\n"
+        "⏱ Запрос действует 10 минут.",
         kb,
     )
 
@@ -1612,11 +1627,9 @@ async def process_message_event(event: dict) -> None:
     elif action == "link_tg_prompt":
         _set_state(peer_id, {"awaiting": "link_tg_id"})
         await _vk_send(peer_id,
-            "🔗 <b>Введи Telegram ID</b>\n\n"
-            "Telegram ID — это число (например: 772577887).\n"
-            "Узнать: открой TG → напиши <code>/start</code> боту @userinfobot\n"
-            "или @getmyid_bot.\n\n"
-            "Можно ввести TG username (например: @darkt30) — бот подскажет.",
+            "🔗 <b>Введи TG username или ID</b>\n\n"
+            "Просто напиши username (например: <code>darkt30</code>)\n"
+            "или числовой ID (например: <code>772577887</code>).",
         )
 
     elif action == "alarm":
