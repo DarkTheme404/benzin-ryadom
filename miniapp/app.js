@@ -54,6 +54,11 @@
     }
   })();
 
+  // Apply theme if VK was detected from URL params
+  if (platform.vk) {
+    try { applyTheme(); } catch (e) {}
+  }
+
   const vkBridgePromise = (async () => {
     // Если bridge ещё не загружен — ждём до 3 сек
     for (let i = 0; i < 30; i++) {
