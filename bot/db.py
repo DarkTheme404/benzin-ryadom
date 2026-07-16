@@ -3982,6 +3982,10 @@ async def link_accounts(telegram_id: int, link_code: str) -> dict:
                 "UPDATE users SET linked_user_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE id = ?",
                 target_uid, current_uid,
             )
+            await _execute(
+                "UPDATE users SET linked_user_id = ? WHERE id = ?",
+                current_uid, target_uid,
+            )
         except Exception:
             # Fallback если linked_user_id колонки нет
             await _execute(
@@ -3996,6 +4000,10 @@ async def link_accounts(telegram_id: int, link_code: str) -> dict:
                        SET linked_user_id = $1, link_code = NULL, link_code_expires_at = NULL
                        WHERE id = $2""",
                     target_uid, current_uid,
+                )
+                await conn.execute(
+                    "UPDATE users SET linked_user_id = $1 WHERE id = $2",
+                    current_uid, target_uid,
                 )
             except Exception:
                 # Fallback если linked_user_id колонки нет
@@ -4045,18 +4053,26 @@ async def link_accounts_by_vk(vk_id: int, telegram_id: int) -> dict:
     if not rate.get("ok"):
         return rate
 
-    # Привязываем VK → TG
+    # Привязываем VK → TG (bidirectional)
     try:
         if USE_SQLITE:
             await _execute(
                 "UPDATE users SET linked_user_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE id = ?",
                 tg_uid, vk_uid,
             )
+            await _execute(
+                "UPDATE users SET linked_user_id = ? WHERE id = ?",
+                vk_uid, tg_uid,
+            )
         else:
             async with _db.acquire() as conn:
                 await conn.execute(
                     "UPDATE users SET linked_user_id = $1, link_code = NULL, link_code_expires_at = NULL WHERE id = $2",
                     tg_uid, vk_uid,
+                )
+                await conn.execute(
+                    "UPDATE users SET linked_user_id = $1 WHERE id = $2",
+                    vk_uid, tg_uid,
                 )
     except Exception:
         # Fallback

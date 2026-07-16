@@ -1889,6 +1889,8 @@
       dom.profileAvatar.textContent = user.first_name[0].toUpperCase();
       dom.profileBigAvatar.textContent = user.first_name[0].toUpperCase();
     } else if (platform.vk) {
+      // Use launch params vk_user_id as fallback
+      const fallbackVkId = state.vkUserId;
       try {
         const userInfo = await window.vkBridge.send('VKWebAppGetUserInfo', {});
         dom.profileName.textContent = userInfo.first_name;
@@ -1905,8 +1907,23 @@
           });
         } catch (e) { console.warn('ensure-vk failed:', e); }
       } catch (e) {
-        dom.profileName.textContent = 'Гость';
-        dom.profileId.textContent = '';
+        console.warn('VKWebAppGetUserInfo failed, using fallback:', e);
+        if (fallbackVkId) {
+          dom.profileName.textContent = 'VK User';
+          dom.profileId.textContent = 'VK ID: ' + fallbackVkId;
+          dom.profileAvatar.textContent = 'V';
+          dom.profileBigAvatar.textContent = 'V';
+          try {
+            await api('/api/user/ensure-vk', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({vk_user_id: fallbackVkId}),
+            });
+          } catch (e2) { console.warn('ensure-vk fallback failed:', e2); }
+        } else {
+          dom.profileName.textContent = 'Гость';
+          dom.profileId.textContent = '';
+        }
       }
     } else {
       dom.profileName.textContent = 'Гость';
@@ -1950,7 +1967,6 @@
           const tgEl = document.getElementById('account-tg-id');
           const isVkUser = platform.vk && accRes.vk_id;
           if (tgEl) {
-            // Для VK юзеров показываем их VK ID, для TG — telegram_id
             if (isVkUser) {
               tgEl.textContent = accRes.vk_id || '—';
             } else {
@@ -1961,22 +1977,25 @@
           // Если VK привязан — показываем VK row
           const vkRow = document.getElementById('account-vk-row');
           const vkEl = document.getElementById('account-vk-id');
-          // Показываем VK если: текущий юзер — VK (linked_via==='vk'),
-          // ИЛИ к TG-аккаунту привязан VK (linked_vk_id есть)
-          if (accRes.linked_via === 'vk' && accRes.vk_id) {
-            if (vkRow) vkRow.style.display = 'flex';
-            if (vkEl) vkEl.textContent = accRes.vk_id;
-          } else if (accRes.linked_vk_id) {
+          if (accRes.linked_vk_id) {
             if (vkRow) vkRow.style.display = 'flex';
             if (vkEl) vkEl.textContent = accRes.linked_vk_id;
+          } else if (accRes.linked_via === 'vk' && accRes.vk_id) {
+            if (vkRow) vkRow.style.display = 'flex';
+            if (vkEl) vkEl.textContent = accRes.vk_id;
           } else {
             if (vkRow) vkRow.style.display = 'none';
           }
 
-          // Если к этому TG-аккаунту привязан VK
+          // Если к этому аккаунту привязан другой (TG ←→ VK)
           const linkRow = document.getElementById('account-link-row');
           const linkEl = document.getElementById('account-link-to');
-          if (accRes.linked_vk_id) {
+          if (isVkUser && accRes.linked_telegram_id) {
+            // VK юзер — показываем привязанный TG
+            if (linkRow) linkRow.style.display = 'flex';
+            if (linkEl) linkEl.textContent = `TG ID: ${accRes.linked_telegram_id}`;
+          } else if (!isVkUser && accRes.linked_vk_id) {
+            // TG юзер — показываем привязанный VK
             if (linkRow) linkRow.style.display = 'flex';
             if (linkEl) linkEl.textContent = `VK ID: ${accRes.linked_vk_id}`;
           } else {
