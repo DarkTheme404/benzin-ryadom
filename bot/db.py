@@ -352,6 +352,28 @@ async def _migrate_sqlite(db):
     await db.execute("CREATE INDEX IF NOT EXISTS idx_referral_discounts_user ON referral_discounts (user_id, expires_at)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals (referrer_user_id)")
 
+    # === Миграция: rate limit привязки аккаунтов ===
+    async with db.execute("PRAGMA table_info(users)") as cur:
+        link_cols = {row[1] for row in await cur.fetchall()}
+    if "link_ops_count" not in link_cols:
+        await db.execute("ALTER TABLE users ADD COLUMN link_ops_count INTEGER DEFAULT 0")
+    if "last_link_change_at" not in link_cols:
+        await db.execute("ALTER TABLE users ADD COLUMN last_link_change_at TEXT")
+
+    # === pending_link_confirmations — запросы на привязку, ожидающие подтверждения ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS pending_link_confirmations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_user_id INTEGER NOT NULL,
+            to_tg_id INTEGER NOT NULL,
+            to_vk_id INTEGER,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_pending_link_tg ON pending_link_confirmations (to_tg_id, status)")
+
 
 async def _create_indexes_sqlite(db):
     """Создаёт индексы (можно безопасно вызывать повторно)."""
@@ -479,12 +501,38 @@ async def _create_schema_pg(pool):
 
         # 3c. Drop old UNIQUE constraint on telegram_id (он блокирует VK юзеров с telegram_id=0)
         try:
-            # PG: constraint name обычно users_telegram_id_key
             await conn.execute("""
                 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_telegram_id_key
             """)
         except Exception as e:
             logger.warning(f"PG drop telegram_id constraint: {e}")
+
+        # 3d. Rate limit для привязки аккаунтов
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS link_ops_count INTEGER DEFAULT 0")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_link_change_at TIMESTAMPTZ")
+        except Exception as e:
+            logger.warning(f"PG migration link rate limit: {e}")
+
+        # 3e. pending_link_confirmations
+        try:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS pending_link_confirmations (
+                    id SERIAL PRIMARY KEY,
+                    from_user_id INTEGER NOT NULL,
+                    to_tg_id INTEGER NOT NULL,
+                    to_vk_id INTEGER,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL
+                )
+            """)
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pending_link_tg
+                ON pending_link_confirmations (to_tg_id, status)
+            """)
+        except Exception as e:
+            logger.warning(f"PG migration pending_link_confirmations: {e}")
 
         # 2b. Reports: новые колонки для качеств/очередей/лимитов
         new_report_cols = [
@@ -3922,6 +3970,10 @@ async def link_accounts(telegram_id: int, link_code: str) -> dict:
     if target_uid == current_uid:
         return {"ok": False, "error": "Нельзя привязать аккаунт к самому себе"}
 
+    rate = await check_link_rate_limit(current_uid)
+    if not rate.get("ok"):
+        return rate
+
     linked_tg_id = info.get("telegram_id")
 
     if USE_SQLITE:
@@ -3954,6 +4006,7 @@ async def link_accounts(telegram_id: int, link_code: str) -> dict:
                     linked_tg_id, current_uid,
                 )
 
+    await record_link_operation(current_uid)
     return {
         "ok": True,
         "linked_to_telegram_id": linked_tg_id,
@@ -3988,6 +4041,10 @@ async def link_accounts_by_vk(vk_id: int, telegram_id: int) -> dict:
     if vk_uid == tg_uid:
         return {"ok": False, "error": "Это один и тот же аккаунт"}
 
+    rate = await check_link_rate_limit(vk_uid)
+    if not rate.get("ok"):
+        return rate
+
     # Привязываем VK → TG
     try:
         if USE_SQLITE:
@@ -4015,7 +4072,226 @@ async def link_accounts_by_vk(vk_id: int, telegram_id: int) -> dict:
                     telegram_id, vk_uid,
                 )
 
+    await record_link_operation(vk_uid)
     return {"ok": True, "vk_id": vk_id, "telegram_id": telegram_id}
+
+
+# === Rate limit привязки аккаунтов ===
+
+MAX_LINK_OPS_PER_MONTH = 3
+LINK_COOLDOWN_DAYS = 7
+
+async def check_link_rate_limit(user_id: int) -> dict:
+    """Проверяет лимит привязок. Возвращает {"ok": bool, "error": str?}"""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT link_ops_count, last_link_change_at FROM users WHERE id = ?",
+            user_id, one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT link_ops_count, last_link_change_at FROM users WHERE id = $1",
+                user_id,
+            )
+    if not row:
+        return {"ok": False, "error": "Пользователь не найден"}
+
+    ops = (row["link_ops_count"] if isinstance(row, dict) else row[0]) or 0
+    last_change = row["last_link_change_at"] if isinstance(row, dict) else row[1]
+
+    if ops >= MAX_LINK_OPS_PER_MONTH:
+        return {"ok": False, "error": f"Лимит привязок: {MAX_LINK_OPS_PER_MONTH} в месяц. Попробуй позже."}
+
+    if last_change:
+        if isinstance(last_change, str):
+            last_dt = datetime.fromisoformat(last_change.replace("Z", "+00:00"))
+        else:
+            last_dt = last_change
+        if datetime.now(timezone.utc) - last_dt < timedelta(days=LINK_COOLDOWN_DAYS):
+            remaining = timedelta(days=LINK_COOLDOWN_DAYS) - (datetime.now(timezone.utc) - last_dt)
+            hours = int(remaining.total_seconds() // 3600)
+            return {"ok": False, "error": f"Можно сменить привязку через {hours} ч."}
+
+    return {"ok": True}
+
+
+async def record_link_operation(user_id: int) -> None:
+    """Увеличивает счётчик операций и обновляет last_link_change_at."""
+    now = datetime.now(timezone.utc).isoformat()
+    if USE_SQLITE:
+        await _execute(
+            "UPDATE users SET link_ops_count = COALESCE(link_ops_count, 0) + 1, last_link_change_at = ? WHERE id = ?",
+            now, user_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE users SET link_ops_count = COALESCE(link_ops_count, 0) + 1, last_link_change_at = $1 WHERE id = $2",
+                now, user_id,
+            )
+
+
+async def reset_link_ops_monthly() -> None:
+    """Сброс лимитов раз в месяц (вызывать из cron/worker)."""
+    month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    if USE_SQLITE:
+        await _execute(
+            "UPDATE users SET link_ops_count = 0 WHERE last_link_change_at < ? OR last_link_change_at IS NULL",
+            month_ago,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE users SET link_ops_count = 0 WHERE last_link_change_at < $1 OR last_link_change_at IS NULL",
+                month_ago,
+            )
+
+
+# === Pending Link Confirmations (TG подтверждение привязки) ===
+
+async def create_pending_confirmation(from_user_id: int, to_tg_id: int, to_vk_id: int | None = None) -> int | None:
+    """Создаёт запрос на привязку. Возвращает confirmation_id."""
+    expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+    if USE_SQLITE:
+        await _execute(
+            """INSERT INTO pending_link_confirmations (from_user_id, to_tg_id, to_vk_id, expires_at)
+               VALUES (?, ?, ?, ?)""",
+            from_user_id, to_tg_id, to_vk_id, expires.isoformat(),
+        )
+        row = await _fetch("SELECT last_insert_rowid() as id", one=True)
+        return (row["id"] if isinstance(row, dict) else row[0])
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO pending_link_confirmations (from_user_id, to_tg_id, to_vk_id, expires_at)
+                   VALUES ($1, $2, $3, $4) RETURNING id""",
+                from_user_id, to_tg_id, to_vk_id, expires,
+            )
+            return row["id"] if row else None
+
+
+async def get_pending_confirmation(confirm_id: int) -> dict | None:
+    """Получает pending confirmation по ID."""
+    if USE_SQLITE:
+        row = await _fetch(
+            """SELECT * FROM pending_link_confirmations WHERE id = ? AND status = 'pending'""",
+            confirm_id, one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT * FROM pending_link_confirmations WHERE id = $1 AND status = 'pending'""",
+                confirm_id,
+            )
+    if not row:
+        return None
+    result = dict(row) if not USE_SQLITE else row
+    exp = result.get("expires_at")
+    if exp:
+        try:
+            exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00")) if isinstance(exp, str) else exp
+            if datetime.now(timezone.utc) > exp_dt:
+                return None
+        except Exception:
+            pass
+    return result
+
+
+async def get_pending_confirmation_for_tg(tg_id: int) -> list:
+    """Получает все pending confirmations для TG юзера."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT plc.*, u.first_name as from_name, u.username as from_username
+               FROM pending_link_confirmations plc
+               JOIN users u ON u.id = plc.from_user_id
+               WHERE plc.to_tg_id = ? AND plc.status = 'pending'
+               ORDER BY plc.created_at DESC""",
+            tg_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT plc.*, u.first_name as from_name, u.username as from_username
+                   FROM pending_link_confirmations plc
+                   JOIN users u ON u.id = plc.from_user_id
+                   WHERE plc.to_tg_id = $1 AND plc.status = 'pending'
+                   ORDER BY plc.created_at DESC""",
+                tg_id,
+            )
+    result = []
+    for r in (rows or []):
+        d = dict(r) if not USE_SQLITE else r
+        exp = d.get("expires_at")
+        if exp:
+            try:
+                exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00")) if isinstance(exp, str) else exp
+                if datetime.now(timezone.utc) > exp_dt:
+                    continue
+            except Exception:
+                pass
+        result.append(d)
+    return result
+
+
+async def confirm_linking(confirm_id: int) -> dict:
+    """Подтверждает привязку. Возвращает {"ok": True}."""
+    info = await get_pending_confirmation(confirm_id)
+    if not info:
+        return {"ok": False, "error": "Запрос не найден или истёк"}
+
+    from_user_id = info["from_user_id"]
+    to_tg_id = info["to_tg_id"]
+
+    to_uid = await get_user_id_by_telegram_id(to_tg_id)
+    if not to_uid:
+        to_uid = await upsert_user(to_tg_id)
+
+    if from_user_id == to_uid:
+        return {"ok": False, "error": "Нельзя привязать к самому себе"}
+
+    rate = await check_link_rate_limit(from_user_id)
+    if not rate.get("ok"):
+        return rate
+
+    if USE_SQLITE:
+        await _execute(
+            "UPDATE users SET linked_user_id = ?, link_code = NULL, link_code_expires_at = NULL WHERE id = ?",
+            to_uid, from_user_id,
+        )
+        await _execute(
+            "UPDATE pending_link_confirmations SET status = 'confirmed' WHERE id = ?",
+            confirm_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE users SET linked_user_id = $1, link_code = NULL, link_code_expires_at = NULL WHERE id = $2",
+                to_uid, from_user_id,
+            )
+            await conn.execute(
+                "UPDATE pending_link_confirmations SET status = 'confirmed' WHERE id = $1",
+                confirm_id,
+            )
+
+    await record_link_operation(from_user_id)
+    return {"ok": True}
+
+
+async def reject_linking(confirm_id: int) -> dict:
+    """Отклоняет привязку."""
+    if USE_SQLITE:
+        await _execute(
+            "UPDATE pending_link_confirmations SET status = 'rejected' WHERE id = ?",
+            confirm_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE pending_link_confirmations SET status = 'rejected' WHERE id = $1",
+                confirm_id,
+            )
+    return {"ok": True}
 
 
 async def get_user_id_by_any(telegram_id: int) -> int | None:

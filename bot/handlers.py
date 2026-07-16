@@ -1266,22 +1266,18 @@ async def cmd_link(message: Message):
 
     if not code:
         # Меню привязки
-        from keyboards import BTN_LINK
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📤 Создать код", callback_data="link:create")],
             [InlineKeyboardButton(text="📥 Ввести код", callback_data="link:enter")],
         ])
         await message.answer(
-            f"🔗 <b>Привязка аккаунтов</b>\n\n"
-            f"Чтобы Premium работал и в TG, и в VK, и в Mini App — привяжи аккаунт.\n\n"
-            f"<b>Как привязать VK к TG:</b>\n"
-            f"1. Нажми <b>«📤 Создать код»</b> — получишь 6-значный код\n"
-            f"2. Открой VK бот @benzyn_ryadom\n"
-            f"3. Напиши ему: <code>link_use 123456</code>\n\n"
-            f"<b>Как привязать MiniApp к TG:</b>\n"
-            f"1. Создай код (кнопка выше)\n"
-            f"2. Открой Mini App → Профиль → Привязка аккаунта\n"
-            f"3. Введи код\n\n"
+            f"🔗 <b>Привязка аккаунта</b>\n\n"
+            f"Premium работает и в TG, и в VK, и в Mini App.\n\n"
+            f"<b>Быстрый способ:</b>\n"
+            f"В VK боте нажми «🔗 Ввести TG ID» и введи свой ID.\n"
+            f"Тебе придёт запрос на подтверждение — нажми «✅ Подтвердить».\n\n"
+            f"<b>Через код:</b>\n"
+            f"Создай код и введи его в другом боте.\n\n"
             f"⏱ Код действует 10 минут.",
             reply_markup=kb,
         )
@@ -1345,15 +1341,9 @@ async def link_create_callback(callback: CallbackQuery):
         if data.get("ok"):
             code = data["code"]
             await callback.message.answer(
-                f"🔗 <b>Код для привязки:</b> <code>{code}</code>\n\n"
+                f"🔗 <b>Код:</b> <code>{code}</code>\n\n"
                 f"⏱ Действует 10 минут.\n\n"
-                f"<b>Чтобы привязать VK аккаунт:</b>\n"
-                f"1. Открой VK бот @benzyn_ryadom\n"
-                f"2. Напиши ему: <code>link_use {code}</code>\n\n"
-                f"<b>Чтобы привязать Mini App:</b>\n"
-                f"1. Открой Mini App → Профиль → Привязка аккаунта\n"
-                f"2. Введи код <code>{code}</code>\n\n"
-                f"После привязки Premium будет работать везде."
+                f"Вставь его в VK бот или Mini App для привязки."
             )
         else:
             err = data.get("error", "Неизвестная ошибка")
@@ -1369,10 +1359,8 @@ async def link_enter_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(LinkStates.waiting_code)
     await callback.message.answer(
-        "📥 <b>Введи 6-значный код</b>\n\n"
-        "Отправь код одним сообщением (например: <code>123456</code>)\n\n"
-        "Код создаётся в VK боте (команда <code>link</code>) или в Mini App.\n"
-        "⏱ Действует 10 минут.\n\n"
+        "📥 <b>Введи код привязки</b>\n\n"
+        "Отправь код одним сообщением.\n⏱ Действует 10 минут.\n\n"
         "Чтобы отменить — напиши /cancel",
     )
 
@@ -1391,6 +1379,77 @@ async def link_code_input_handler(message: Message, state: FSMContext):
     telegram_id = _tg_id(message)
     await state.clear()
     await _use_link_code(message, telegram_id, code)
+
+
+# === Подтверждение привязки аккаунтов ===
+
+async def notify_link_confirmation(bot, tg_id: int, confirm_id: int, from_name: str, from_vk_id: int | None = None):
+    """Отправляет TG юзеру запрос на подтверждение привязки."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    vk_info = f" (VK ID: {from_vk_id})" if from_vk_id else ""
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"link_confirm:{confirm_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"link_reject:{confirm_id}"),
+        ]
+    ])
+    await bot.send_message(
+        chat_id=tg_id,
+        text=(
+            f"🔗 <b>Запрос на привязку</b>\n\n"
+            f"Пользователь <b>{from_name}</b>{vk_info} хочет привязать свой аккаунт к твоему.\n\n"
+            f"После привязки Premium будет работать на обоих аккаунтах.\n"
+            f"⏱ Запрос действует 10 минут."
+        ),
+        reply_markup=kb,
+    )
+
+
+async def link_confirm_callback(callback: CallbackQuery):
+    """Подтверждение привязки."""
+    await callback.answer()
+    confirm_id = int(callback.data.split(":")[1])
+    import aiohttp
+    backend = settings.BACKEND_URL
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{backend}/api/account/link/confirm",
+                json={"confirmation_id": confirm_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+        if data.get("ok"):
+            await callback.message.edit_text(
+                "✅ <b>Аккаунт привязан!</b>\n\n"
+                "Premium теперь работает на обоих аккаунтах.",
+            )
+        else:
+            err = data.get("error", "Неизвестная ошибка")
+            await callback.message.edit_text(f"❌ <b>Не удалось привязать</b>\n\n{err}")
+    except Exception as e:
+        logger.exception(f"link_confirm error: {e}")
+        await callback.message.edit_text("❌ Ошибка соединения. Попробуй позже.")
+
+
+async def link_reject_callback(callback: CallbackQuery):
+    """Отклонение привязки."""
+    await callback.answer()
+    confirm_id = int(callback.data.split(":")[1])
+    import aiohttp
+    backend = settings.BACKEND_URL
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{backend}/api/account/link/reject",
+                json={"confirmation_id": confirm_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+        await callback.message.edit_text("❌ Привязка отклонена.")
+    except Exception as e:
+        logger.exception(f"link_reject error: {e}")
+        await callback.message.edit_text("❌ Ошибка соединения.")
 
 
 # === /alarm — Топливный будильник (Premium) ===
@@ -3916,6 +3975,8 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(cmd_freetrial, Command("freetrial"))
     dp.callback_query.register(link_create_callback, F.data == "link:create")
     dp.callback_query.register(link_enter_callback, F.data == "link:enter")
+    dp.callback_query.register(link_confirm_callback, F.data.startswith("link_confirm:"))
+    dp.callback_query.register(link_reject_callback, F.data.startswith("link_reject:"))
     dp.message.register(link_code_input_handler, StateFilter(LinkStates.waiting_code))
 
     # IMPORTANT: handle_main_button должен быть ПОСЛЕДНИМ —

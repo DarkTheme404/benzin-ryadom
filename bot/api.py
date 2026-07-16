@@ -2396,6 +2396,10 @@ def setup_app() -> web.Application:
     # Account linking
     app.router.add_post("/api/account/link/create", handle_account_link_create)
     app.router.add_post("/api/account/link/use", handle_account_link_use)
+    app.router.add_post("/api/account/link/request", handle_account_link_request)
+    app.router.add_post("/api/account/link/confirm", handle_account_link_confirm_action)
+    app.router.add_post("/api/account/link/reject", handle_account_link_reject_action)
+    app.router.add_get("/api/account/link/pending", handle_account_link_pending)
     # Fuel alarms
     app.router.add_post("/api/fuel-alarm/create", handle_fuel_alarm_create)
     app.router.add_post("/api/fuel-alarm/delete", handle_fuel_alarm_delete)
@@ -2612,6 +2616,130 @@ async def handle_account_link_use(request):
     if result.get("ok"):
         return json_resp(result)
     return json_resp(result, status=400)
+
+
+async def handle_account_link_request(request):
+    """POST /api/account/link/request — VK юзер вводит TG ID для привязки.
+
+    Body: {vk_user_id, telegram_id}
+    Создаёт pending confirmation, TG юзер получит запрос на подтверждение.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    vk_id = body.get("vk_user_id")
+    tg_id = body.get("telegram_id")
+    if not vk_id or not tg_id:
+        return json_resp({"error": "vk_user_id and telegram_id required"}, status=400)
+    from db import get_user_id_by_vk_id, get_user_id_by_telegram_id, upsert_user_vk, upsert_user, create_pending_confirmation, check_link_rate_limit
+    vk_uid = await get_user_id_by_vk_id(int(vk_id))
+    if not vk_uid:
+        vk_uid = await upsert_user_vk(int(vk_id))
+    if not vk_uid:
+        return json_resp({"error": "VK user not found"}, status=404)
+    rate = await check_link_rate_limit(vk_uid)
+    if not rate.get("ok"):
+        return json_resp({"error": rate["error"]}, status=429)
+    tg_uid = await get_user_id_by_telegram_id(int(tg_id))
+    if not tg_uid:
+        tg_uid = await upsert_user(int(tg_id))
+    if not tg_uid:
+        return json_resp({"error": "TG user not found. They need to /start the bot first."}, status=404)
+    if vk_uid == tg_uid:
+        return json_resp({"error": "Same account"}, status=400)
+    confirm_id = await create_pending_confirmation(vk_uid, int(tg_id), int(vk_id))
+    if not confirm_id:
+        return json_resp({"error": "Failed to create confirmation"}, status=500)
+    # Отправляем уведомление TG юзеру
+    try:
+        import aiohttp as _aiohttp
+        bot_token = os.environ.get("BOT_TOKEN", "")
+        if bot_token:
+            inline_keyboard = {
+                "inline_keyboard": [[
+                    {"text": "✅ Подтвердить", "callback_data": f"link_confirm:{confirm_id}"},
+                    {"text": "❌ Отклонить", "callback_data": f"link_reject:{confirm_id}"},
+                ]]
+            }
+            text = (
+                f"🔗 <b>Запрос на привязку</b>\n\n"
+                f"VK пользователь хочет привязать свой аккаунт к твоему.\n\n"
+                f"После привязки Premium будет работать на обоих аккаунтах.\n"
+                f"⏱ Запрос действует 10 минут."
+            )
+            async with _aiohttp.ClientSession() as sess:
+                await sess.post(
+                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                    json={"chat_id": int(tg_id), "text": text, "parse_mode": "HTML", "reply_markup": inline_keyboard},
+                    timeout=_aiohttp.ClientTimeout(total=10),
+                )
+    except Exception as e:
+        logger.warning(f"Failed to send TG link notification: {e}")
+    return json_resp({"ok": True, "confirmation_id": confirm_id, "message": "Запрос отправлен. Ожидай подтверждения в Telegram."})
+
+
+async def handle_account_link_confirm_action(request):
+    """POST /api/account/link/confirm — TG юзер подтверждает привязку.
+
+    Body: {confirmation_id}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    confirm_id = body.get("confirmation_id")
+    if not confirm_id:
+        return json_resp({"error": "confirmation_id required"}, status=400)
+    from db import confirm_linking
+    result = await confirm_linking(int(confirm_id))
+    if result.get("ok"):
+        return json_resp(result)
+    return json_resp(result, status=400)
+
+
+async def handle_account_link_reject_action(request):
+    """POST /api/account/link/reject — TG юзер отклоняет привязку.
+
+    Body: {confirmation_id}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    confirm_id = body.get("confirmation_id")
+    if not confirm_id:
+        return json_resp({"error": "confirmation_id required"}, status=400)
+    from db import reject_linking
+    result = await reject_linking(int(confirm_id))
+    return json_resp(result)
+
+
+async def handle_account_link_pending(request):
+    """GET /api/account/link/pending?telegram_id=xxx — получить pending confirmations."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tg_id = request.query.get("telegram_id")
+    if not tg_id:
+        return json_resp({"error": "telegram_id required"}, status=400)
+    from db import get_pending_confirmation_for_tg
+    confirmations = await get_pending_confirmation_for_tg(int(tg_id))
+    result = []
+    for c in confirmations:
+        result.append({
+            "id": c["id"] if isinstance(c, dict) else c["id"],
+            "from_name": c.get("from_name") or "Пользователь",
+            "from_username": c.get("from_username"),
+            "from_vk_id": c.get("to_vk_id"),
+            "created_at": str(c.get("created_at", "")),
+        })
+    return json_resp({"ok": True, "confirmations": result})
 
 
 async def handle_premium_trial(request):

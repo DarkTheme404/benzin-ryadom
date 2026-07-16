@@ -420,9 +420,10 @@ async def handle_link(peer_id: int, text: str = "") -> None:
     """Привязка VK аккаунта к TG.
 
     Команды:
-    - "link" или "🔗 Привязать" — показать меню (Создать код / Ввести код)
+    - "link" или "🔗 Привязать" — показать меню
     - "link_create" — создать 6-значный код
     - "link_use 123456" — использовать код (когда в TG сгенерировал код)
+    - "link <TG_ID>" — запросить привязку к TG юзеру (pending confirmation)
     - "link_help" — инструкция
     """
     import aiohttp
@@ -437,17 +438,14 @@ async def handle_link(peer_id: int, text: str = "") -> None:
     if subcmd == "link_help" or (subcmd == "link" and arg == "help"):
         await _vk_send(peer_id,
             "🔗 <b>Привязка аккаунтов</b>\n\n"
-            "Чтобы Premium работал и в TG, и в VK, и в Mini App:\n\n"
-            "<b>Вариант 1 — привязка VK к TG:</b>\n"
-            "1. Открой TG бот @benzyn_ryadom\n"
-            "2. Напиши ему: <code>/link</code>\n"
-            "3. Бот даст 6-значный код\n"
-            "4. Вернись сюда и напиши: <code>link_use 123456</code>\n\n"
-            "<b>Вариант 2 — привязка TG к VK:</b>\n"
-            "1. Напиши мне: <code>link_create</code>\n"
-            "2. Получишь 6-значный код\n"
-            "3. Введи его в TG боте: <code>/link 123456</code>\n\n"
-            "Код действует 10 минут.",
+            "Premium работает и в TG, и в VK, и в Mini App.\n\n"
+            "<b>Быстрый способ:</b>\n"
+            "1. Нажми «🔗 Ввести TG ID»\n"
+            "2. Введи свой Telegram ID\n"
+            "3. Подтверди в Telegram\n\n"
+            "<b>Через код:</b>\n"
+            "Создай код и введи его в другом боте.\n"
+            "⏱ Код действует 10 минут.",
         )
         return
 
@@ -480,6 +478,32 @@ async def handle_link(peer_id: int, text: str = "") -> None:
             await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
         return
 
+    # === link <TG_ID> — запросить привязку к TG юзеру ===
+    if subcmd == "link" and arg and arg.isdigit():
+        tg_id = int(arg)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{backend}/api/account/link/request",
+                    json={"vk_user_id": peer_id, "telegram_id": tg_id},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    data = await r.json()
+            if data.get("ok"):
+                await _vk_send(peer_id,
+                    "✅ <b>Запрос отправлен!</b>\n\n"
+                    "Пользователь получил запрос на подтверждение в Telegram.\n"
+                    "После подтверждения аккаунты будут привязаны.\n\n"
+                    "⏱ Запрос действует 10 минут.",
+                )
+            else:
+                err = data.get("error", "Неизвестная ошибка")
+                await _vk_send(peer_id, f"❌ {err}")
+        except Exception as e:
+            logger.exception(f"handle_link request error: {e}")
+            await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
+        return
+
     # === link_create — создать код ===
     if subcmd == "link_create":
         try:
@@ -493,14 +517,9 @@ async def handle_link(peer_id: int, text: str = "") -> None:
             if data.get("ok"):
                 code = data.get("code", "")
                 await _vk_send(peer_id,
-                    f"🔗 <b>Код для привязки к Telegram:</b>\n\n"
-                    f"<code>{code}</code>\n\n"
-                    f"Код действует 10 минут.\n\n"
-                    f"<b>Чтобы привязать:</b>\n"
-                    f"1. Открой TG бот @benzyn_ryadom\n"
-                    f"2. Напиши ему: <code>/link {code}</code>\n\n"
-                    f"После привязки Premium (если есть) будет работать везде.\n\n"
-                    f"📖 Подробнее: <code>link_help</code>",
+                    f"🔗 <b>Код:</b> <code>{code}</code>\n\n"
+                    f"⏱ Действует 10 минут.\n"
+                    f"Вставь его в TG бот или Mini App.",
                 )
             else:
                 err = data.get("error", "Неизвестная ошибка")
@@ -510,26 +529,22 @@ async def handle_link(peer_id: int, text: str = "") -> None:
             await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
         return
 
-    # === link — показать меню (по умолчанию) ===
-    # Создаём inline клавиатуру (payload-кнопки)
+    # === link — показать меню ===
     kb = vk_keyboard([
-        [_callback_button("📤 Создать код", {"a": "link_create"}, "primary")],
+        [_callback_button("🔗 Ввести TG ID", {"a": "link_tg_prompt"}, "primary")],
+        [_callback_button("📤 Создать код", {"a": "link_create"}, "secondary")],
         [_callback_button("📥 Ввести код", {"a": "link_use_prompt"}, "secondary")],
         [_callback_button("◀️ Назад", {"a": "home"}, "secondary")],
     ])
     await _vk_send(peer_id,
         "🔗 <b>Привязка аккаунта</b>\n\n"
-        "Чтобы Premium работал и в TG, и в VK, и в Mini App — привяжи аккаунт.\n\n"
-        "<b>Как привязать VK к TG:</b>\n"
-        "1. Нажми <b>«📤 Создать код»</b> — получишь 6-значный код\n"
-        "2. Открой TG бот @benzyn_ryadom\n"
-        "3. Напиши ему: <code>/link КОД</code>\n\n"
-        "<b>Как привязать TG к VK:</b>\n"
-        "1. Открой TG бот @benzyn_ryadom\n"
-        "2. Напиши: <code>/link</code> (получишь код)\n"
-        "3. Вернись сюда и нажми <b>«📥 Ввести код»</b>\n\n"
-        "⏱ Код действует 10 минут.\n"
-        "📖 Подробнее: <code>link_help</code>",
+        "Premium работает и в TG, и в VK, и в Mini App.\n\n"
+        "<b>Быстрый способ:</b>\n"
+        "Нажми «🔗 Ввести TG ID» и введи свой Telegram ID.\n"
+        "TG бот пришлёт запрос на подтверждение — нажми «✅ Подтвердить».\n\n"
+        "<b>Через код:</b>\n"
+        "Создай код и введи его в другом боте.\n\n"
+        "⏱ Код действует 10 минут.",
         kb,
     )
 
@@ -1432,9 +1447,14 @@ async def process_message_new(event: dict) -> None:
             # Показываем первую
             await show_station(peer_id, stations[0])
         elif state.get("awaiting") == "link_code":
-            # Ввод кода привязки
             _clear_state(peer_id)
             await handle_link(peer_id, f"link_use {text.strip()}")
+        elif state.get("awaiting") == "link_tg_id":
+            _clear_state(peer_id)
+            if text.strip().isdigit():
+                await handle_link(peer_id, f"link {text.strip()}")
+            else:
+                await _vk_send(peer_id, "❌ Введи числовой Telegram ID (например: 772577887)")
         else:
             await handle_text_search(peer_id, text)
 
@@ -1565,13 +1585,18 @@ async def process_message_event(event: dict) -> None:
         await handle_link(peer_id, "link_create")
 
     elif action == "link_use_prompt":
-        # Ставим state — следующее сообщение = код привязки
         _set_state(peer_id, {"awaiting": "link_code"})
         await _vk_send(peer_id,
             "📥 <b>Введи 6-значный код</b>\n\n"
-            "Отправь код одним сообщением (например: <code>123456</code>)\n\n"
-            "Код создаётся в TG боте через <code>/link</code> или в Mini App.\n"
-            "⏱ Действует 10 минут.",
+            "Отправь код одним сообщением.\n⏱ Действует 10 минут.",
+        )
+
+    elif action == "link_tg_prompt":
+        _set_state(peer_id, {"awaiting": "link_tg_id"})
+        await _vk_send(peer_id,
+            "🔗 <b>Введи свой Telegram ID</b>\n\n"
+            "Узнать ID: открой TG бот @userinfobot или @getmyid_bot.\n"
+            "Отправь ID одним сообщением.",
         )
 
     elif action == "alarm":

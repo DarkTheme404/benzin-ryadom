@@ -3082,12 +3082,25 @@
     if (linkTgBtn) {
       const vkId = state.vkUserId || getTgId();
       if (vkId && platform.vk) {
+        // VK user → "Войти через Telegram" (deep link)
         linkTgBtn.href = `https://t.me/benzyn_ryadom_bot?start=link_vk_${vkId}`;
         linkTgBtn.style.display = 'flex';
         linkTgBtn.addEventListener('click', () => {
           haptic('medium');
           showToast('Открой бота и нажми /start для привязки', 'info');
         });
+      } else if (!platform.vk && tg?.initDataUnsafe?.user?.id) {
+        // TG user → "Войти через VK" (open VK bot)
+        linkTgBtn.href = 'https://vk.com/benzyn_ryadom';
+        linkTgBtn.style.background = 'linear-gradient(135deg, #0077ff, #00aaff)';
+        linkTgBtn.innerHTML = '💬 Войти через VK';
+        linkTgBtn.style.display = 'flex';
+        linkTgBtn.addEventListener('click', () => {
+          haptic('medium');
+          showToast('В VK боте нажми «🔗 Ввести TG ID»', 'info');
+        });
+        // Load pending confirmations
+        loadPendingConfirmations();
       } else {
         linkTgBtn.style.display = 'none';
       }
@@ -3135,6 +3148,69 @@
         }
       });
     }
+
+    // Pending confirmations для TG юзеров
+    async function loadPendingConfirmations() {
+      const uid = getTgId();
+      if (!uid) return;
+      const container = document.getElementById('pending-confirmations');
+      if (!container) return;
+      try {
+        const res = await api(`/api/account/link/pending?telegram_id=${uid}`);
+        if (!res.ok || !res.confirmations || !res.confirmations.length) {
+          container.innerHTML = '';
+          return;
+        }
+        container.innerHTML = res.confirmations.map(c => `
+          <div style="background:var(--bg-elev);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;margin-bottom:8px;">
+            <div style="font-size:14px;font-weight:600;margin-bottom:6px;">🔗 Запрос на привязку</div>
+            <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">
+              VK ID: ${c.from_vk_id || '?'} хочет привязать аккаунт
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-primary" onclick="confirmLink(${c.id})" style="flex:1;padding:8px;font-size:13px;border-radius:8px;">✅ Подтвердить</button>
+              <button class="btn btn-outline" onclick="rejectLink(${c.id})" style="flex:1;padding:8px;font-size:13px;border-radius:8px;color:#ef4444;border-color:#ef4444;">❌ Отклонить</button>
+            </div>
+          </div>
+        `).join('');
+      } catch (e) {
+        container.innerHTML = '';
+      }
+    }
+
+    window.confirmLink = async function(confirmId) {
+      haptic('medium');
+      try {
+        const res = await api('/api/account/link/confirm', {
+          method: 'POST',
+          body: JSON.stringify({ confirmation_id: confirmId }),
+        });
+        if (res.ok) {
+          showToast('✅ Аккаунт привязан!', 'success');
+          loadPendingConfirmations();
+          loadProfile();
+        } else {
+          showToast('Ошибка: ' + (res.error || 'неизвестно'), 'error');
+        }
+      } catch (e) {
+        showToast('Ошибка соединения', 'error');
+      }
+    };
+
+    window.rejectLink = async function(confirmId) {
+      haptic('light');
+      try {
+        await api('/api/account/link/reject', {
+          method: 'POST',
+          body: JSON.stringify({ confirmation_id: confirmId }),
+        });
+        showToast('Привязка отклонена', 'info');
+        loadPendingConfirmations();
+      } catch (e) {
+        showToast('Ошибка соединения', 'error');
+      }
+    };
+
     $('#btn-premium').addEventListener('click', () => {
       haptic('medium');
       const tiers = document.getElementById('premium-tiers');
