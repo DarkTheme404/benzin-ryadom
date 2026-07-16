@@ -299,13 +299,14 @@
   function getTgId() {
     if (tg?.initDataUnsafe?.user?.id) return tg.initDataUnsafe.user.id;
     if (platform.vk && state.vkUserId) return state.vkUserId;
-    // Fallback: parse from URL params or hash (works in browser mode too)
+    // Fallback: parse from URL params or hash
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const vkUid = urlParams.get('vk_user_id');
-      if (vkUid) {
+      if (vkUid && !isNaN(parseInt(vkUid))) {
         state.vkUserId = parseInt(vkUid);
         platform.vk = true;
+        try { localStorage.setItem('benzin_vk_user_id', vkUid); } catch (e) {}
         return state.vkUserId;
       }
     } catch (e) {}
@@ -314,11 +315,21 @@
       if (hash) {
         const hp = new URLSearchParams(hash);
         const vkUid = hp.get('vk_user_id');
-        if (vkUid) {
+        if (vkUid && !isNaN(parseInt(vkUid))) {
           state.vkUserId = parseInt(vkUid);
           platform.vk = true;
+          try { localStorage.setItem('benzin_vk_user_id', vkUid); } catch (e) {}
           return state.vkUserId;
         }
+      }
+    } catch (e) {}
+    // Last fallback: localStorage (saved from previous session)
+    try {
+      const saved = localStorage.getItem('benzin_vk_user_id');
+      if (saved && !isNaN(parseInt(saved))) {
+        state.vkUserId = parseInt(saved);
+        platform.vk = true;
+        return state.vkUserId;
       }
     } catch (e) {}
     return null;
@@ -1991,6 +2002,17 @@
       dom.profileId.textContent = '';
     }
 
+    // Show manual VK ID input if no ID detected
+    const manualSection = document.getElementById('vk-id-manual');
+    if (manualSection) {
+      const currentId = getTgId();
+      if (!currentId && !tg?.initDataUnsafe?.user?.id) {
+        manualSection.style.display = 'block';
+      } else {
+        manualSection.style.display = 'none';
+      }
+    }
+
     // Load stats
     try {
       const tgId = getTgId();
@@ -3088,6 +3110,26 @@
     // City picker
     dom.citySearch.addEventListener('input', () => renderCities(dom.citySearch.value));
 
+    // Manual VK ID save
+    const saveVkIdBtn = document.getElementById('btn-save-vk-id');
+    if (saveVkIdBtn) {
+      saveVkIdBtn.addEventListener('click', () => {
+        const input = document.getElementById('vk-id-input');
+        const val = (input?.value || '').trim();
+        if (!val || isNaN(parseInt(val))) {
+          showToast('Введи числовой VK ID', 'error');
+          return;
+        }
+        state.vkUserId = parseInt(val);
+        platform.vk = true;
+        try { localStorage.setItem('benzin_vk_user_id', val); } catch (e) {}
+        showToast('VK ID сохранён!', 'success');
+        const manual = document.getElementById('vk-id-manual');
+        if (manual) manual.style.display = 'none';
+        loadProfile();
+      });
+    }
+
     // Profile actions
     $('#btn-share').addEventListener('click', () => {
       haptic('light');
@@ -3180,7 +3222,8 @@
         }
         const uid = getTgId();
         if (!uid) {
-          if (status) { status.textContent = '❌ Не удалось определить ID'; status.style.color = '#ef4444'; }
+          const hint = 'Открой Mini App через кнопку "📱 Открыть приложение" в VK боте.';
+          if (status) { status.textContent = '❌ ID не определён. ' + hint; status.style.color = '#ef4444'; }
           return;
         }
         const body = platform.vk
@@ -3205,9 +3248,9 @@
     }
 
     // === Link TG from Mini App ===
-    const linkTgBtn = $('#btn-link-tg');
-    if (linkTgBtn) {
-      linkTgBtn.addEventListener('click', async () => {
+    const linkTgBtn2 = $('#btn-link-tg');
+    if (linkTgBtn2) {
+      linkTgBtn2.addEventListener('click', async () => {
         const input = $('#link-tg-username');
         const status = $('#link-initiate-status');
         const target = (input?.value || '').trim().replace(/^@/, '');
@@ -3217,7 +3260,8 @@
         }
         const uid = getTgId();
         if (!uid) {
-          if (status) { status.textContent = '❌ Не удалось определить ID'; status.style.color = '#ef4444'; }
+          const hint = 'Открой Mini App через кнопку "📱 Открыть приложение" в VK боте.';
+          if (status) { status.textContent = '❌ ID не определён. ' + hint; status.style.color = '#ef4444'; }
           return;
         }
         const body = platform.vk
@@ -3393,6 +3437,15 @@
   window.showLoading = showLoading;
   window.hideLoading = hideLoading;
   window.loadProfile = loadProfile;
+
+  // Debug: log ID detection state on boot
+  console.log('getTgId debug:', {
+    tg_user: tg?.initDataUnsafe?.user?.id || null,
+    platform_vk: platform.vk,
+    state_vkUserId: state.vkUserId,
+    url: window.location.href,
+    ls_vk: localStorage.getItem('benzin_vk_user_id'),
+  });
 
   // ============= INIT =============
   async function init() {

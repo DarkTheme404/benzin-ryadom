@@ -186,6 +186,16 @@
         <div class="profile-id" id="profile-id">ID: —</div>
       </div>
 
+      <!-- VK ID manual entry (shown when auto-detect fails) -->
+      <div id="vk-id-manual" style="display: none; background: var(--bg-elev); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 12px; margin-bottom: 12px;">
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">💬 Введи свой VK ID</div>
+        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Найди свой ID в URL профиля VK (vk.com/id123456) или в настройках VK</div>
+        <div style="display: flex; gap: 8px;">
+          <input type="number" id="vk-id-input" placeholder="VK ID (число)" style="flex: 1; padding: 10px; background: var(--bg); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; color: var(--text); font-size: 14px;">
+          <button class="btn btn-primary" id="btn-save-vk-id" style="padding: 10px 16px; background: linear-gradient(135deg, #0077ff, #00aaff); color: white; border-radius: 8px; font-weight: 600; border: none; cursor: pointer;">OK</button>
+        </div>
+      </div>
+
       <!-- Stats cards -->
       <div class="stats-grid">
         <div class="stat-card">
