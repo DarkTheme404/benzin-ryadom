@@ -2702,6 +2702,27 @@ async def handle_account_link_confirm_action(request):
         logger.exception(f"confirm_linking error: {e}")
         return json_resp({"error": "internal error: " + str(e)[:200]}, status=500)
     if result.get("ok"):
+        from_vk_id = result.get("from_vk_id")
+        if from_vk_id:
+            try:
+                import aiohttp as _aiohttp
+                vk_token = os.environ.get("VK_TOKEN", "")
+                if vk_token:
+                    async with _aiohttp.ClientSession() as sess:
+                        await sess.post(
+                            "https://api.vk.com/method/messages.send",
+                            data={
+                                "user_id": from_vk_id,
+                                "message": "✅ <b>Аккаунт привязан!</b>\n\n"
+                                           "Premium теперь работает и в VK, и в TG, и в Mini App.",
+                                "random_id": int(time.time() * 1000) % (2**31),
+                                "access_token": vk_token,
+                                "v": "5.199",
+                            },
+                            timeout=_aiohttp.ClientTimeout(total=10),
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to notify VK user about linking: {e}")
         return json_resp(result)
     return json_resp(result, status=400)
 

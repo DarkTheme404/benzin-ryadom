@@ -4277,7 +4277,7 @@ async def get_pending_confirmation_for_tg(tg_id: int) -> list:
 
 
 async def confirm_linking(confirm_id: int) -> dict:
-    """Подтверждает привязку. Возвращает {"ok": True}."""
+    """Подтверждает привязку. Возвращает {"ok": True, "from_vk_id": ...}."""
     info = await get_pending_confirmation(confirm_id)
     if not info:
         return {"ok": False, "error": "Запрос не найден или истёк"}
@@ -4302,9 +4302,14 @@ async def confirm_linking(confirm_id: int) -> dict:
             to_uid, from_user_id,
         )
         await _execute(
+            "UPDATE users SET linked_user_id = ? WHERE id = ?",
+            from_user_id, to_uid,
+        )
+        await _execute(
             "UPDATE pending_link_confirmations SET status = 'confirmed' WHERE id = ?",
             confirm_id,
         )
+        from_row = await _fetch("SELECT vk_id FROM users WHERE id = ?", from_user_id, one=True)
     else:
         async with _db.acquire() as conn:
             await conn.execute(
@@ -4312,15 +4317,22 @@ async def confirm_linking(confirm_id: int) -> dict:
                 to_uid, from_user_id,
             )
             await conn.execute(
+                "UPDATE users SET linked_user_id = $1 WHERE id = $2",
+                from_user_id, to_uid,
+            )
+            await conn.execute(
                 "UPDATE pending_link_confirmations SET status = 'confirmed' WHERE id = $1",
                 confirm_id,
             )
+            from_row = await conn.fetchrow("SELECT vk_id FROM users WHERE id = $1", from_user_id)
+
+    from_vk_id = from_row["vk_id"] if from_row and from_row.get("vk_id") else None
 
     try:
         await record_link_operation(from_user_id)
     except Exception as e:
         logger.warning(f"record_link_operation failed (non-critical): {e}")
-    return {"ok": True}
+    return {"ok": True, "from_vk_id": from_vk_id}
 
 
 async def reject_linking(confirm_id: int) -> dict:
