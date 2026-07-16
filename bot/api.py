@@ -2400,6 +2400,8 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/account/link/confirm", handle_account_link_confirm_action)
     app.router.add_post("/api/account/link/reject", handle_account_link_reject_action)
     app.router.add_get("/api/account/link/pending", handle_account_link_pending)
+    app.router.add_post("/api/account/link/initiate", handle_account_link_initiate)
+    app.router.add_post("/api/account/unlink", handle_account_unlink)
     # Fuel alarms
     app.router.add_post("/api/fuel-alarm/create", handle_fuel_alarm_create)
     app.router.add_post("/api/fuel-alarm/delete", handle_fuel_alarm_delete)
@@ -2747,14 +2749,18 @@ async def handle_account_link_reject_action(request):
 
 
 async def handle_account_link_pending(request):
-    """GET /api/account/link/pending?telegram_id=xxx — получить pending confirmations."""
+    """GET /api/account/link/pending?telegram_id=xxx&vk_user_id=xxx — получить pending confirmations."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)
     tg_id = request.query.get("telegram_id")
-    if not tg_id:
-        return json_resp({"error": "telegram_id required"}, status=400)
-    from db import get_pending_confirmation_for_tg
-    confirmations = await get_pending_confirmation_for_tg(int(tg_id))
+    vk_id = request.query.get("vk_user_id")
+    from db import get_pending_confirmation_for_tg, get_pending_confirmation_for_vk
+    if vk_id:
+        confirmations = await get_pending_confirmation_for_vk(int(vk_id))
+    elif tg_id:
+        confirmations = await get_pending_confirmation_for_tg(int(tg_id))
+    else:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
     result = []
     for c in confirmations:
         result.append({
@@ -2765,6 +2771,168 @@ async def handle_account_link_pending(request):
             "created_at": str(c.get("created_at", "")),
         })
     return json_resp({"ok": True, "confirmations": result})
+
+
+async def handle_account_link_initiate(request):
+    """POST /api/account/link/initiate — начать привязку из Mini App.
+
+    Body: {from_telegram_id OR from_vk_user_id, target_username}
+    target_username: VK username/ID или TG username/ID того кого хотим привязать.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    from_tg = body.get("from_telegram_id")
+    from_vk = body.get("from_vk_user_id")
+    target = (body.get("target_username") or "").strip().lstrip("@")
+
+    if not target:
+        return json_resp({"error": "target_username required"}, status=400)
+    if not from_tg and not from_vk:
+        return json_resp({"error": "from_telegram_id or from_vk_user_id required"}, status=400)
+
+    from db import (
+        get_user_id_by_telegram_id, get_user_id_by_vk_id,
+        find_tg_user_by_username,
+        create_pending_confirmation, check_link_rate_limit,
+    )
+
+    sender_uid = None
+    if from_tg:
+        sender_uid = await get_user_id_by_telegram_id(int(from_tg))
+    elif from_vk:
+        sender_uid = await get_user_id_by_vk_id(int(from_vk))
+    if not sender_uid:
+        return json_resp({"error": "Сначала запусти бота"}, status=404)
+
+    rate = await check_link_rate_limit(sender_uid)
+    if not rate.get("ok"):
+        return json_resp({"error": rate["error"]}, status=429)
+
+    if USE_SQLITE:
+        s_row = await db._fetch("SELECT linked_user_id FROM users WHERE id = ?", sender_uid, one=True)
+        s_linked = (s_row["linked_user_id"] if isinstance(s_row, dict) else (s_row[0] if s_row else None))
+    else:
+        async with db._db.acquire() as conn:
+            s_row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", sender_uid)
+            s_linked = s_row["linked_user_id"] if s_row else None
+    if s_linked:
+        return json_resp({"error": "У тебя уже есть привязанный аккаунт. Сначала отвяжи текущий."}, status=400)
+
+    target_tg_id = None
+    target_vk_id = None
+    target_uid = None
+
+    if target.isdigit():
+        num = int(target)
+        target_uid = await get_user_id_by_vk_id(num)
+        if target_uid:
+            target_vk_id = num
+        else:
+            target_uid = await get_user_id_by_telegram_id(num)
+            if target_uid:
+                target_tg_id = num
+    else:
+        target_tg_id = await find_tg_user_by_username(target)
+        if target_tg_id:
+            target_uid = await get_user_id_by_telegram_id(target_tg_id)
+
+    if not target_uid:
+        return json_resp({"error": "Пользователь не найден. Проверь username или ID."}, status=404)
+    if sender_uid == target_uid:
+        return json_resp({"error": "Нельзя привязать к самому себе"}, status=400)
+
+    if USE_SQLITE:
+        t_row = await db._fetch("SELECT linked_user_id FROM users WHERE id = ?", target_uid, one=True)
+        t_linked = (t_row["linked_user_id"] if isinstance(t_row, dict) else (t_row[0] if t_row else None))
+    else:
+        async with db._db.acquire() as conn:
+            t_row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", target_uid)
+            t_linked = t_row["linked_user_id"] if t_row else None
+    if t_linked:
+        return json_resp({"error": "Этот пользователь уже привязан к другому аккаунту."}, status=400)
+
+    to_tg_id = target_tg_id or 0
+    to_vk_id = target_vk_id
+
+    confirm_id = await create_pending_confirmation(sender_uid, to_tg_id, to_vk_id)
+    if not confirm_id:
+        return json_resp({"error": "Failed to create confirmation"}, status=500)
+
+    if to_tg_id and to_tg_id > 0:
+        try:
+            import aiohttp as _aiohttp
+            bot_token = os.environ.get("BOT_TOKEN", "")
+            if bot_token:
+                kb = {"inline_keyboard": [[
+                    {"text": "✅ Подтвердить", "callback_data": f"link_confirm:{confirm_id}"},
+                    {"text": "❌ Отклонить", "callback_data": f"link_reject:{confirm_id}"},
+                ]]}
+                async with _aiohttp.ClientSession() as sess:
+                    await sess.post(
+                        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                        json={
+                            "chat_id": to_tg_id,
+                            "text": (
+                                "🔗 <b>Запрос на привязку</b>\n\n"
+                                "Хочешь привязать аккаунт?\n\n"
+                                "После привязки Premium будет работать на обоих аккаунтах.\n"
+                                "⏱ Запрос действует 10 минут."
+                            ),
+                            "parse_mode": "HTML",
+                            "reply_markup": kb,
+                        },
+                        timeout=_aiohttp.ClientTimeout(total=10),
+                    )
+        except Exception as e:
+            logger.warning(f"link initiate TG notify failed: {e}")
+
+    return json_resp({"ok": True, "confirmation_id": confirm_id, "message": "Запрос отправлен."})
+
+
+async def handle_account_unlink(request):
+    """POST /api/account/unlink — отвязать аккаунт.
+
+    Body: {telegram_id OR vk_user_id}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    from db import get_user_id_by_any, record_link_operation as _rec_link
+
+    tid = body.get("telegram_id") or body.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+
+    if USE_SQLITE:
+        row = await db._fetch("SELECT linked_user_id FROM users WHERE id = ?", uid, one=True)
+        linked_uid = (row["linked_user_id"] if isinstance(row, dict) else (row[0] if row else None))
+        if linked_uid:
+            await _execute("UPDATE users SET linked_user_id = NULL WHERE id = ?", uid)
+            await _execute("UPDATE users SET linked_user_id = NULL WHERE id = ?", linked_uid)
+        await _rec_link(uid)
+    else:
+        async with db._db.acquire() as conn:
+            row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", uid)
+            linked_uid = row["linked_user_id"] if row else None
+            if linked_uid:
+                await conn.execute("UPDATE users SET linked_user_id = NULL WHERE id = $1", uid)
+                await conn.execute("UPDATE users SET linked_user_id = NULL WHERE id = $1", linked_uid)
+        await _rec_link(uid)
+
+    return json_resp({"ok": True, "message": "Аккаунт отвязан."})
 
 
 async def handle_premium_trial(request):

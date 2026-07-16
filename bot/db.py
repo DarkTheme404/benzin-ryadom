@@ -4276,6 +4276,42 @@ async def get_pending_confirmation_for_tg(tg_id: int) -> list:
     return result
 
 
+async def get_pending_confirmation_for_vk(vk_id: int) -> list:
+    """Получает все pending confirmations для VK юзера."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT plc.*, u.first_name as from_name, u.username as from_username
+               FROM pending_link_confirmations plc
+               JOIN users u ON u.id = plc.from_user_id
+               WHERE plc.to_vk_id = ? AND plc.status = 'pending'
+               ORDER BY plc.created_at DESC""",
+            vk_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT plc.*, u.first_name as from_name, u.username as from_username
+                   FROM pending_link_confirmations plc
+                   JOIN users u ON u.id = plc.from_user_id
+                   WHERE plc.to_vk_id = $1 AND plc.status = 'pending'
+                   ORDER BY plc.created_at DESC""",
+                vk_id,
+            )
+    result = []
+    for r in (rows or []):
+        d = dict(r) if not USE_SQLITE else r
+        exp = d.get("expires_at")
+        if exp:
+            try:
+                exp_dt = datetime.fromisoformat(exp.replace("Z", "+00:00")) if isinstance(exp, str) else exp
+                if datetime.now(timezone.utc) > exp_dt:
+                    continue
+            except Exception:
+                pass
+        result.append(d)
+    return result
+
+
 async def confirm_linking(confirm_id: int) -> dict:
     """Подтверждает привязку. Возвращает {"ok": True, "from_vk_id": ...}."""
     info = await get_pending_confirmation(confirm_id)

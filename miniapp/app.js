@@ -2099,15 +2099,22 @@
 
           const statusEl = document.getElementById('accounts-status');
           if (statusEl) {
-            if (accRes.linked_telegram_id) {
+            if (accRes.linked_telegram_id || accRes.linked_user_id) {
               statusEl.textContent = '✅ Аккаунты привязаны — Premium работает везде';
               statusEl.style.color = '#34d399';
             } else if (accRes.is_premium) {
-              statusEl.textContent = 'Premium активен. Привяжите VK, чтобы работал там тоже.';
+              statusEl.textContent = 'Premium активен. Привяжи второй аккаунт чтобы работал там тоже.';
             } else {
-              statusEl.textContent = 'Привяжите VK аккаунт и купите Premium';
+              statusEl.textContent = 'Привяжи аккаунт чтобы Premium работал везде.';
             }
           }
+
+          // Show/hide link input vs unlink button based on linking status
+          const isLinked = !!(accRes.linked_user_id || accRes.linked_telegram_id);
+          const linkInputSection = document.getElementById('link-input-section');
+          const unlinkSection = document.getElementById('link-unlink-section');
+          if (linkInputSection) linkInputSection.style.display = isLinked ? 'none' : 'block';
+          if (unlinkSection) unlinkSection.style.display = isLinked ? 'block' : 'none';
         }
       }
     } catch (e) {
@@ -3158,86 +3165,85 @@
         }
       });
     }
-    // One-click link to Telegram
-    const linkTgBtn = $('#btn-link-tg');
-    if (linkTgBtn) {
-      const vkId = state.vkUserId || getTgId();
-      if (vkId && platform.vk) {
-        // VK user → "Войти через Telegram" (deep link)
-        linkTgBtn.href = `https://t.me/benzyn_ryadom_bot?start=link_vk_${vkId}`;
-        linkTgBtn.style.display = 'flex';
-        linkTgBtn.addEventListener('click', () => {
-          haptic('medium');
-          showToast('Открой бота и нажми /start для привязки', 'info');
-        });
-      } else if (!platform.vk && tg?.initDataUnsafe?.user?.id) {
-        // TG user → "Войти через VK" (open VK bot)
-        linkTgBtn.href = 'https://vk.com/benzyn_ryadom';
-        linkTgBtn.style.background = 'linear-gradient(135deg, #0077ff, #00aaff)';
-        linkTgBtn.innerHTML = '💬 Войти через VK';
-        linkTgBtn.style.display = 'flex';
-        linkTgBtn.addEventListener('click', () => {
-          haptic('medium');
-          showToast('В VK боте нажми «🔗 Ввести TG ID»', 'info');
-        });
-        // Load pending confirmations
-        loadPendingConfirmations();
-      } else {
-        linkTgBtn.style.display = 'none';
-      }
-    }
-    // Toggle code input
-    const codeToggle = $('#btn-link-code-toggle');
-    if (codeToggle) {
-      codeToggle.addEventListener('click', () => {
-        const section = $('#link-code-section');
-        if (section) section.style.display = section.style.display === 'none' ? 'block' : 'none';
-      });
-    }
-    const linkBtn = $('#btn-link-apply');
-    if (linkBtn) {
-      linkBtn.addEventListener('click', async () => {
-        const input = $('#link-code-input');
-        const status = $('#link-status');
-        const code = (input?.value || '').trim();
-        if (!/^\d{6}$/.test(code)) {
-          if (status) status.textContent = '❌ Введи 6-значный код';
+    // Load pending confirmations
+    loadPendingConfirmations();
+
+    // === Link by username/ID from Mini App ===
+    const initiateBtn = $('#btn-link-initiate');
+    if (initiateBtn) {
+      initiateBtn.addEventListener('click', async () => {
+        const input = $('#link-target-input');
+        const status = $('#link-initiate-status');
+        const target = (input?.value || '').trim().replace(/^@/, '');
+        if (!target) {
+          if (status) { status.textContent = '❌ Введи username или ID'; status.style.color = '#ef4444'; }
           return;
         }
         const uid = getTgId();
         if (!uid) {
-          if (status) status.textContent = '❌ Не удалось определить ID';
+          if (status) { status.textContent = '❌ Не удалось определить ID'; status.style.color = '#ef4444'; }
           return;
         }
+        const body = platform.vk
+          ? { from_vk_user_id: uid, target_username: target }
+          : { from_telegram_id: uid, target_username: target };
         try {
-          const res = await api('/api/account/link/use', {
+          const res = await api('/api/account/link/initiate', {
             method: 'POST',
-            body: JSON.stringify({ telegram_id: uid, code: code }),
+            body: JSON.stringify(body),
           });
           if (res.ok) {
-            if (status) status.textContent = `✅ Привязано к ${res.linked_to_name || 'пользователь'}`;
-            showToast('Аккаунт привязан!', 'success');
-            // Обновляем секцию "Мои аккаунты"
-            await loadProfile();
+            if (status) { status.textContent = '✅ Запрос отправлен! Ожидай подтверждения.'; status.style.color = '#34d399'; }
+            showToast('Запрос отправлен!', 'success');
+            input.value = '';
           } else {
-            if (status) status.textContent = '❌ ' + (res.error || 'Ошибка');
-            showToast('Ошибка: ' + (res.error || 'код неверный'), 'error');
+            if (status) { status.textContent = '❌ ' + (res.error || 'Ошибка'); status.style.color = '#ef4444'; }
+            showToast('Ошибка: ' + (res.error || 'неизвестно'), 'error');
           }
         } catch (e) {
-          if (status) status.textContent = '❌ ' + (e.message || 'Ошибка соединения');
+          if (status) { status.textContent = '❌ ' + (e.message || 'Ошибка соединения'); status.style.color = '#ef4444'; }
           showToast('Ошибка: ' + (e.message || 'соединения'), 'error');
         }
       });
     }
 
-    // Pending confirmations для TG юзеров
+    // === Unlink ===
+    const unlinkBtn = $('#btn-unlink');
+    if (unlinkBtn) {
+      unlinkBtn.addEventListener('click', async () => {
+        if (!confirm('Отвязать аккаунт? Premium перестанет работать на другом аккаунте.')) return;
+        haptic('medium');
+        const uid = getTgId();
+        if (!uid) return;
+        const body = platform.vk
+          ? { vk_user_id: uid }
+          : { telegram_id: uid };
+        try {
+          const res = await api('/api/account/unlink', {
+            method: 'POST',
+            body: JSON.stringify(body),
+          });
+          if (res.ok) {
+            showToast('Аккаунт отвязан', 'info');
+            await loadProfile();
+          } else {
+            showToast('Ошибка: ' + (res.error || 'неизвестно'), 'error');
+          }
+        } catch (e) {
+          showToast('Ошибка соединения', 'error');
+        }
+      });
+    }
+
+    // Pending confirmations
     async function loadPendingConfirmations() {
       const uid = getTgId();
       if (!uid) return;
       const container = document.getElementById('pending-confirmations');
       if (!container) return;
+      const idParam = platform.vk ? `vk_user_id=${uid}` : `telegram_id=${uid}`;
       try {
-        const res = await api(`/api/account/link/pending?telegram_id=${uid}`);
+        const res = await api(`/api/account/link/pending?${idParam}`);
         if (!res.ok || !res.confirmations || !res.confirmations.length) {
           container.innerHTML = '';
           return;
