@@ -80,7 +80,7 @@ FOUNDER_PACK_CHANNEL = """🏆 <b>Founder Pack — запускаем!</b>
   • Статус основателя — навсегда
 
 <b>Как купить:</b>
-  1. Открой @benzin_ryadom_bot
+  1. Открой @benzyn_ryadom_bot
   2. Нажми /premium
   3. Выбери 🏆 Founder Pack
 

@@ -3633,7 +3633,7 @@ async def handle_referral_code(request):
     if not uid:
         return json_resp({"error": "user not found"}, status=404)
     code = await create_referral_code(uid)
-    tg_link = f"https://t.me/benzin_ryadom_bot?start=ref_{code}"
+    tg_link = f"https://t.me/benzyn_ryadom_bot?start=ref_{code}"
     return json_resp({
         "ok": True,
         "code": code,

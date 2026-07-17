@@ -2303,7 +2303,7 @@
         if (shareBtn) {
           shareBtn.addEventListener('click', () => {
             const code = codeRes?.code || '';
-            const text = `🎁 Используй код ${code} в @benzin_ryadom_bot — получи 15% скидку на Premium!`;
+            const text = `🎁 Используй код ${code} в @benzyn_ryadom_bot — получи 15% скидку на Premium!`;
             if (navigator.share) {
               navigator.share({ text }).catch(() => {});
             } else {
