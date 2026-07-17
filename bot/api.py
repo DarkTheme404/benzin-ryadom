@@ -1082,7 +1082,7 @@ async def handle_price_history(request):
         days = 30
 
     # Premium check
-    tid = request.query.get("telegram_id")
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
     is_premium = False
     if tid:
         try:
@@ -1191,7 +1191,7 @@ async def handle_price_forecast(request):
         days = 7
 
     # Premium check
-    tid = request.query.get("telegram_id")
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
     is_premium = False
     if tid:
         try:
@@ -4003,7 +4003,7 @@ async def handle_route_fuel(request):
         fuel = "95"
 
     # Premium check
-    tid = request.query.get("telegram_id")
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
     is_premium = False
     user_tier = None
     if tid:
