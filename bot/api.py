@@ -3627,7 +3627,7 @@ async def handle_referral_apply(request):
     """POST /api/referral/apply — применяет реферальный код.
 
     Body: {telegram_id OR vk_user_id, code}
-    Выдаёт 50% скидку обоим (реферер + приглашённый).
+    Выдаёт 15% скидку приглашённому.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
@@ -3662,7 +3662,7 @@ async def handle_referral_apply(request):
         if success:
             return json_resp({
                 "ok": True,
-                "message": "Реферал применён! 50% скидка обоим.",
+                "message": "Реферал применён! 15% скидка тебе.",
             })
         else:
             return json_resp({"error": "failed to complete referral"}, status=500)
