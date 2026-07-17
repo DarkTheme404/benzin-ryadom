@@ -17,7 +17,7 @@
   <meta property="og:type" content="website">
   <meta property="og:title" content="Бензин рядом — карта АЗС">
   <meta property="og:description" content="Где есть бензин прямо сейчас — карта АЗС с реальным статусом топлива.">
-  <link rel="stylesheet" href="/app/style.css?v=12">
+  <link rel="stylesheet" href="/app/style.css?v=13">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -321,17 +321,24 @@
         <h3 class="profile-section-title">🎁 Реферальная программа</h3>
         <div class="referral-section" id="referral-section">
           <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">
-            Пригласи друга — получите оба <b style="color:#22c55e;">50% скидку</b> на Premium!
+            Пригласи друга — получи <b style="color:#22c55e;">50% комиссии</b> с каждой его оплаты!<br>
+            Твой друг получит <b style="color:#fbbf24;">15% скидку</b> на первую покупку.
           </div>
 
-          <!-- Активная скидка -->
-          <div id="discount-status" style="display:none;background:linear-gradient(135deg,#22c55e15,#22c55e08);border:1px solid #22c55e33;border-radius:12px;padding:14px;margin-bottom:12px;">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-              <span style="font-size:18px;">🏷️</span>
-              <span style="font-size:13px;font-weight:600;color:#22c55e;">Твоя скидка активна</span>
+          <!-- Баланс реферера -->
+          <div id="referrer-balance-card" style="display:none;background:linear-gradient(135deg,#f59e0b15,#f59e0b08);border:1px solid #f59e0b33;border-radius:12px;padding:14px;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <span style="font-size:18px;">💰</span>
+              <span style="font-size:13px;font-weight:600;color:#f59e0b;">Твой баланс</span>
             </div>
-            <div style="font-size:22px;font-weight:800;color:#22c55e;" id="discount-percent">50%</div>
-            <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">Действует до <span id="discount-expires">—</span></div>
+            <div style="font-size:28px;font-weight:800;color:#f59e0b;" id="ref-balance-amount">0₽</div>
+            <div style="display:flex;gap:12px;margin-top:6px;">
+              <span style="font-size:11px;color:var(--text-secondary);">Заработано: <b id="ref-total-earned">0₽</b></span>
+              <span style="font-size:11px;color:var(--text-secondary);">Выведено: <b id="ref-total-withdrawn">0₽</b></span>
+            </div>
+            <button class="btn btn-primary" id="btn-withdraw" style="width:100%;border-radius:10px;margin-top:10px;padding:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:600;">
+              💳 Вывести средства
+            </button>
           </div>
 
           <div style="background:var(--bg-card);border-radius:12px;padding:16px;margin-bottom:12px;">
@@ -347,6 +354,16 @@
               <div style="font-size:20px;font-weight:700;color:#34d399;" id="referral-completed">0</div>
               <div style="font-size:11px;color:var(--text-secondary);">Активировали</div>
             </div>
+            <div style="flex:1;background:var(--bg-card);border-radius:12px;padding:12px;text-align:center;">
+              <div style="font-size:20px;font-weight:700;color:#f59e0b;" id="ref-referral-earnings">0₽</div>
+              <div style="font-size:11px;color:var(--text-secondary);">Заработано</div>
+            </div>
+          </div>
+
+          <!-- Список приглашённых -->
+          <div id="referred-users-section" style="display:none;margin-bottom:12px;">
+            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">Твои приглашённые:</div>
+            <div id="referred-users-list"></div>
           </div>
           <button class="btn btn-primary" id="btn-share-referral" style="width:100%;border-radius:12px;">
             📤 Поделиться кодом
@@ -852,6 +869,6 @@
 <script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="/app/app.js?v=17"></script>
+<script src="/app/app.js?v=18"></script>
 </body>
 </html>

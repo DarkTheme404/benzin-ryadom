@@ -392,7 +392,7 @@ def premium_keyboard() -> InlineKeyboardMarkup:
     """Кнопки Premium."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🎁 Попробовать 7 дней бесплатно", callback_data="premium_trial")],
+            [InlineKeyboardButton(text="🎁 Попробовать 3 дня бесплатно", callback_data="premium_trial")],
             [InlineKeyboardButton(text="💎 Купить Premium", callback_data="buy_premium")],
             [InlineKeyboardButton(text="🏠 В начало", callback_data="go_home")],
         ],

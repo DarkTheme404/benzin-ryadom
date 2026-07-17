@@ -354,6 +354,60 @@ async def _migrate_sqlite(db):
     await db.execute("CREATE INDEX IF NOT EXISTS idx_referral_discounts_user ON referral_discounts (user_id, expires_at)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals (referrer_user_id)")
 
+    # === referral_relationships — permanent referral tracking ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            referred_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(referred_user_id)
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_ref_rel_referrer ON referral_relationships (referrer_user_id)")
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_ref_rel_referred ON referral_relationships (referred_user_id)")
+
+    # === referral_balances — баланс реферера ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_balances (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            total_earned INTEGER DEFAULT 0,
+            total_withdrawn INTEGER DEFAULT 0,
+            balance INTEGER DEFAULT 0,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # === referral_earnings — история начислений ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_earnings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            referred_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            payment_id INTEGER,
+            payment_amount INTEGER NOT NULL,
+            commission_percent INTEGER NOT NULL DEFAULT 50,
+            commission_amount INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_ref_earn_referrer ON referral_earnings (referrer_user_id)")
+
+    # === referral_withdrawals — заявки на вывод ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_withdrawals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount INTEGER NOT NULL,
+            method TEXT NOT NULL DEFAULT 'card',
+            details TEXT,
+            status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'paid')),
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            processed_at TEXT
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_ref_wd_user ON referral_withdrawals (user_id)")
+
     # === Миграция: rate limit привязки аккаунтов ===
     async with db.execute("PRAGMA table_info(users)") as cur:
         link_cols = {row[1] for row in await cur.fetchall()}
@@ -717,6 +771,72 @@ async def _create_schema_pg(pool):
             )
         except Exception as e:
             logger.warning(f"PG migration referral_discounts: {e}")
+
+        # 3.8. referral_relationships — permanent referral tracking
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS referral_relationships (
+                    id SERIAL PRIMARY KEY,
+                    referrer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    referred_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(referred_user_id)
+                )"""
+            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_ref_rel_referrer ON referral_relationships (referrer_user_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_ref_rel_referred ON referral_relationships (referred_user_id)")
+        except Exception as e:
+            logger.warning(f"PG migration referral_relationships: {e}")
+
+        # 3.9. referral_balances — баланс реферера
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS referral_balances (
+                    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    total_earned INTEGER DEFAULT 0,
+                    total_withdrawn INTEGER DEFAULT 0,
+                    balance INTEGER DEFAULT 0,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )"""
+            )
+        except Exception as e:
+            logger.warning(f"PG migration referral_balances: {e}")
+
+        # 3.10. referral_earnings — история начислений
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS referral_earnings (
+                    id SERIAL PRIMARY KEY,
+                    referrer_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    referred_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    payment_id INTEGER,
+                    payment_amount INTEGER NOT NULL,
+                    commission_percent INTEGER NOT NULL DEFAULT 50,
+                    commission_amount INTEGER NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )"""
+            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_ref_earn_referrer ON referral_earnings (referrer_user_id)")
+        except Exception as e:
+            logger.warning(f"PG migration referral_earnings: {e}")
+
+        # 3.11. referral_withdrawals — заявки на вывод
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS referral_withdrawals (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    amount INTEGER NOT NULL,
+                    method TEXT NOT NULL DEFAULT 'card',
+                    details TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    processed_at TIMESTAMPTZ
+                )"""
+            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_ref_wd_user ON referral_withdrawals (user_id)")
+        except Exception as e:
+            logger.warning(f"PG migration referral_withdrawals: {e}")
 
         # 4. Автоимпорт из SQLite если PG пуста
         try:
@@ -2987,7 +3107,6 @@ async def get_stats() -> dict:
             stats["reports_24h"] = (await cur.fetchone())[0]
         async with _db.execute("SELECT COUNT(DISTINCT city) as c FROM stations WHERE city IS NOT NULL") as cur:
             stats["cities_count"] = (await cur.fetchone())[0]
-        return stats
     else:
         async with _db.acquire() as conn:
             row = await conn.fetchrow("""
@@ -2998,6 +3117,258 @@ async def get_stats() -> dict:
                     (SELECT COUNT(DISTINCT city) FROM stations WHERE city IS NOT NULL) AS cities_count
             """)
         return dict(row)
+
+
+# === Referral Balance & Commission System ===
+
+async def get_referrer_for_user(user_id: int) -> int | None:
+    """Returns referrer_user_id for a referred user, or None."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT referrer_user_id FROM referral_relationships WHERE referred_user_id = ?",
+            user_id, one=True,
+        )
+    else:
+        row = await _fetch(
+            "SELECT referrer_user_id FROM referral_relationships WHERE referred_user_id = $1",
+            user_id, one=True,
+        )
+    if not row:
+        return None
+    return row["referrer_user_id"] if isinstance(row, dict) else row[0]
+
+
+async def record_referral_commission(user_id: int, payment_id: int, payment_amount: int) -> bool:
+    """Records 50% commission for the referrer of this user. Returns True if commission was recorded."""
+    referrer_id = await get_referrer_for_user(user_id)
+    if not referrer_id:
+        return False
+    commission = round(payment_amount * 0.50)
+    if commission <= 0:
+        return False
+
+    if USE_SQLITE:
+        await _execute(
+            """INSERT INTO referral_earnings (referrer_user_id, referred_user_id, payment_id, payment_amount, commission_percent, commission_amount)
+               VALUES (?, ?, ?, ?, 50, ?)""",
+            referrer_id, user_id, payment_id, payment_amount, commission,
+        )
+        await _execute(
+            """INSERT INTO referral_balances (user_id, total_earned, balance, updated_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                   total_earned = total_earned + excluded.total_earned,
+                   balance = balance + excluded.balance,
+                   updated_at = datetime('now')""",
+            referrer_id, commission, commission,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO referral_earnings (referrer_user_id, referred_user_id, payment_id, payment_amount, commission_percent, commission_amount)
+                   VALUES ($1, $2, $3, $4, 50, $5)""",
+                referrer_id, user_id, payment_id, payment_amount, commission,
+            )
+            await conn.execute(
+                """INSERT INTO referral_balances (user_id, total_earned, balance, updated_at)
+                   VALUES ($1, $2, $3, NOW())
+                   ON CONFLICT(user_id) DO UPDATE SET
+                       total_earned = referral_balances.total_earned + EXCLUDED.total_earned,
+                       balance = referral_balances.balance + EXCLUDED.balance,
+                       updated_at = NOW()""",
+                referrer_id, commission, commission,
+            )
+    return True
+
+
+async def get_referral_balance(user_id: int) -> dict:
+    """Returns referral balance info for the user."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT * FROM referral_balances WHERE user_id = ?",
+            user_id, one=True,
+        )
+    else:
+        row = await _fetch(
+            "SELECT * FROM referral_balances WHERE user_id = $1",
+            user_id, one=True,
+        )
+    if not row:
+        return {"total_earned": 0, "total_withdrawn": 0, "balance": 0}
+    d = dict(row) if isinstance(row, dict) else {
+        "total_earned": row[1], "total_withdrawn": row[2], "balance": row[3],
+    }
+    return d
+
+
+async def get_referral_earnings(user_id: int, limit: int = 50) -> list[dict]:
+    """Returns referral earnings history for the user."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT re.*, u.first_name, u.username
+               FROM referral_earnings re
+               LEFT JOIN users u ON re.referred_user_id = u.id
+               WHERE re.referrer_user_id = ?
+               ORDER BY re.created_at DESC LIMIT ?""",
+            user_id, limit,
+        )
+    else:
+        rows = await _fetch(
+            """SELECT re.*, u.first_name, u.username
+               FROM referral_earnings re
+               LEFT JOIN users u ON re.referred_user_id = u.id
+               WHERE re.referrer_user_id = $1
+               ORDER BY re.created_at DESC LIMIT $2""",
+            user_id, limit,
+        )
+    return [dict(r) if isinstance(r, dict) else r for r in (rows or [])]
+
+
+async def get_referred_users_list(referrer_user_id: int) -> list[dict]:
+    """Returns list of users this person referred with earnings."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT rr.referred_user_id, rr.created_at, u.first_name, u.username,
+                      COALESCE(SUM(re.commission_amount), 0) as total_commission,
+                      COUNT(re.id) as payment_count
+               FROM referral_relationships rr
+               LEFT JOIN users u ON rr.referred_user_id = u.id
+               LEFT JOIN referral_earnings re ON re.referred_user_id = rr.referred_user_id
+               WHERE rr.referrer_user_id = ?
+               GROUP BY rr.id
+               ORDER BY rr.created_at DESC""",
+            referrer_user_id,
+        )
+    else:
+        rows = await _fetch(
+            """SELECT rr.referred_user_id, rr.created_at, u.first_name, u.username,
+                      COALESCE(SUM(re.commission_amount), 0) as total_commission,
+                      COUNT(re.id) as payment_count
+               FROM referral_relationships rr
+               LEFT JOIN users u ON rr.referred_user_id = u.id
+               LEFT JOIN referral_earnings re ON re.referred_user_id = rr.referred_user_id
+               WHERE rr.referrer_user_id = $1
+               GROUP BY rr.id, rr.referred_user_id, rr.created_at, u.first_name, u.username
+               ORDER BY rr.created_at DESC""",
+            referrer_user_id,
+        )
+    return [dict(r) if isinstance(r, dict) else r for r in (rows or [])]
+
+
+async def request_withdrawal(user_id: int, amount: int, method: str, details: str) -> dict:
+    """Creates a withdrawal request."""
+    balance = await get_referral_balance(user_id)
+    if balance["balance"] < amount:
+        return {"ok": False, "error": "insufficient_balance"}
+    if amount < 100:
+        return {"ok": False, "error": "minimum_withdrawal_100"}
+
+    if USE_SQLITE:
+        await _execute(
+            "UPDATE referral_balances SET balance = balance - ?, updated_at = datetime('now') WHERE user_id = ?",
+            amount, user_id,
+        )
+        await _execute(
+            """INSERT INTO referral_withdrawals (user_id, amount, method, details)
+               VALUES (?, ?, ?, ?)""",
+            user_id, amount, method, details,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE referral_balances SET balance = balance - $1, updated_at = NOW() WHERE user_id = $2",
+                amount, user_id,
+            )
+            await conn.execute(
+                """INSERT INTO referral_withdrawals (user_id, amount, method, details)
+                   VALUES ($1, $2, $3, $4)""",
+                user_id, amount, method, details,
+            )
+    return {"ok": True, "message": "Заявка на вывод создана"}
+
+
+async def get_pending_withdrawals() -> list[dict]:
+    """Returns pending withdrawal requests for admin."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT rw.*, u.telegram_id, u.username, u.first_name
+               FROM referral_withdrawals rw
+               LEFT JOIN users u ON rw.user_id = u.id
+               WHERE rw.status = 'pending'
+               ORDER BY rw.created_at ASC"""
+        )
+    else:
+        rows = await _fetch(
+            """SELECT rw.*, u.telegram_id, u.username, u.first_name
+               FROM referral_withdrawals rw
+               LEFT JOIN users u ON rw.user_id = u.id
+               WHERE rw.status = 'pending'
+               ORDER BY rw.created_at ASC"""
+        )
+    return [dict(r) if isinstance(r, dict) else r for r in (rows or [])]
+
+
+async def process_withdrawal(withdrawal_id: int, status: str) -> bool:
+    """Approves or rejects a withdrawal. status = 'approved' | 'rejected' | 'paid'."""
+    if status not in ("approved", "rejected", "paid"):
+        return False
+
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT * FROM referral_withdrawals WHERE id = ? AND status = 'pending'",
+            withdrawal_id, one=True,
+        )
+        if not row:
+            return False
+        withdrawal = dict(row) if isinstance(row, dict) else {"user_id": row[1], "amount": row[2]}
+
+        if status == "rejected":
+            # Возвращаем деньги на баланс
+            await _execute(
+                "UPDATE referral_balances SET balance = balance + ?, updated_at = datetime('now') WHERE user_id = ?",
+                withdrawal["amount"], withdrawal["user_id"],
+            )
+
+        await _execute(
+            "UPDATE referral_withdrawals SET status = ?, processed_at = datetime('now') WHERE id = ?",
+            status, withdrawal_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM referral_withdrawals WHERE id = $1 AND status = 'pending'",
+                withdrawal_id,
+            )
+            if not row:
+                return False
+            withdrawal = dict(row)
+
+            if status == "rejected":
+                await conn.execute(
+                    "UPDATE referral_balances SET balance = balance + $1, updated_at = NOW() WHERE user_id = $2",
+                    withdrawal["amount"], withdrawal["user_id"],
+                )
+
+            await conn.execute(
+                "UPDATE referral_withdrawals SET status = $1, processed_at = NOW() WHERE id = $2",
+                status, withdrawal_id,
+            )
+    return True
+
+
+async def get_user_withdrawals(user_id: int, limit: int = 20) -> list[dict]:
+    """Returns withdrawal history for a user."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            "SELECT * FROM referral_withdrawals WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            user_id, limit,
+        )
+    else:
+        rows = await _fetch(
+            "SELECT * FROM referral_withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+            user_id, limit,
+        )
+    return [dict(r) if isinstance(r, dict) else r for r in (rows or [])]
 
 
 # === Push-уведомления ===
@@ -3937,6 +4308,13 @@ async def confirm_founder_purchase(payment_token: str) -> bool:
 
     # Активируем пожизненный Elite
     await activate_premium(user_id, "founder", days=36500, payment_id=f"founder_{payment_token}", amount=1990)
+
+    # Record referral commission (50% to referrer)
+    try:
+        await record_referral_commission(user_id, 0, 1990)
+    except Exception as e:
+        logger.warning(f"Failed to record founder referral commission: {e}")
+
     return True
 
 
@@ -3946,7 +4324,7 @@ async def get_founders_list() -> list[dict]:
         rows = await _fetch(
             """SELECT fp.user_id, fp.created_at, u.first_name, u.username
                FROM founder_purchases fp
-               LEFT JOIN users u ON fp.user_id = u.user_id
+               LEFT JOIN users u ON fp.user_id = u.id
                WHERE fp.status = 'paid'
                ORDER BY fp.created_at ASC"""
         )
@@ -3955,7 +4333,7 @@ async def get_founders_list() -> list[dict]:
             rows = await conn.fetch(
                 """SELECT fp.user_id, fp.created_at, u.first_name, u.username
                    FROM founder_purchases fp
-                   LEFT JOIN users u ON fp.user_id = u.user_id
+                   LEFT JOIN users u ON fp.user_id = u.id
                    WHERE fp.status = 'paid'
                    ORDER BY fp.created_at ASC"""
             )
@@ -4019,6 +4397,7 @@ async def confirm_payment(token: str) -> dict | None:
     """Подтверждает оплату и активирует премиум.
 
     Вызывается после успешной оплаты через VK Pay callback.
+    Также записывает комиссию 50% рефереру (если есть).
     """
     payment = await get_payment_by_token(token)
     if not payment:
@@ -4047,6 +4426,13 @@ async def confirm_payment(token: str) -> dict | None:
         payment_id=token,
         amount=payment["amount"],
     )
+
+    # Record referral commission (50% to referrer)
+    try:
+        await record_referral_commission(payment["user_id"], payment.get("id", 0), payment["amount"])
+    except Exception as e:
+        logger.warning(f"Failed to record referral commission: {e}")
+
     return sub
 
 
@@ -4909,8 +5295,7 @@ async def use_discount(discount_id: int) -> bool:
 
 
 async def complete_referral(code: str, referred_user_id: int, referred_telegram_id: int) -> bool:
-    """Завершает реферал: помечает как completed, выдаёт 50% скидку обоим (реферер + приглашённый)."""
-    from datetime import datetime, timedelta
+    """Завершает реферал: создаёт связь + 15% скидка приглашённому. Реферер получает 50% комиссии с оплат."""
     if USE_SQLITE:
         row = await _fetch(
             "SELECT referrer_user_id FROM referrals WHERE referral_code = ? AND status = 'active'",
@@ -4925,10 +5310,14 @@ async def complete_referral(code: str, referred_user_id: int, referred_telegram_
                WHERE referral_code = ?""",
             referred_user_id, referred_telegram_id, code,
         )
-        # 50% скидка рефереру
-        await grant_referral_discount(referrer_id, percent=50, days=30)
-        # 50% скидка приглашённому
-        await grant_referral_discount(referred_user_id, percent=50, days=30)
+        # Create permanent relationship
+        await _execute(
+            """INSERT OR IGNORE INTO referral_relationships (referrer_user_id, referred_user_id)
+               VALUES (?, ?)""",
+            referrer_id, referred_user_id,
+        )
+        # 15% скидка только приглашённому (первый платёж)
+        await grant_referral_discount(referred_user_id, percent=15, days=90)
         return True
     else:
         async with _db.acquire() as conn:
@@ -4945,8 +5334,12 @@ async def complete_referral(code: str, referred_user_id: int, referred_telegram_
                    WHERE referral_code = $3""",
                 referred_user_id, referred_telegram_id, code,
             )
-            await grant_referral_discount(referrer_id, percent=50, days=30)
-            await grant_referral_discount(referred_user_id, percent=50, days=30)
+            await conn.execute(
+                """INSERT INTO referral_relationships (referrer_user_id, referred_user_id)
+                   VALUES ($1, $2) ON CONFLICT (referred_user_id) DO NOTHING""",
+                referrer_id, referred_user_id,
+            )
+            await grant_referral_discount(referred_user_id, percent=15, days=90)
             return True
 
 

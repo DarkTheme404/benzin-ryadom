@@ -200,7 +200,7 @@
             <div class="upsell-tier-name">${tier.name}</div>
             <div>
               <span class="upsell-tier-price">${tier.price}₽</span>
-              <span class="upsell-tier-price-suffix">/мес</span>
+              <span class="upsell-tier-price-suffix">${tier.code === 'founder' ? 'навсегда' : '/мес'}</span>
             </div>
           </div>
           <div class="upsell-tier-headline">${tier.headline}</div>
@@ -249,7 +249,7 @@
     const status = getPremiumStatus();
     if (!status.active || !status.tier) return '';
     const tier = status.tier;
-    const labels = { economy: '💎 Эконом', standard: '💎 Стандарт', elite: '💎 Элит' };
+    const labels = { economy: '💎 Эконом', standard: '💎 Стандарт', elite: '💎 Элит', founder: '🏆 Founder' };
     return `<span class="premium-badge premium-badge-${tier}">${labels[tier] || '💎 Premium'}</span>`;
   }
 

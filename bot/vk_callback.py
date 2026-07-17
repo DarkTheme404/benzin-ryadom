@@ -668,8 +668,8 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
         if data.get("ok"):
             await _vk_send(peer_id,
                 "🎉 <b>Реферал применён!</b>\n\n"
-                "Ты и твой друг получили 50% скидку на Premium.\n"
-                "Спасибо что пользуетесь «Бензин рядом»!",
+                "Ты получил 15% скидку на первую оплату Premium.\n"
+                "Твой пригласивший будет получать 50% с каждой твоей оплаты.",
             )
         else:
             err = data.get("error", "unknown")
@@ -681,21 +681,37 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
                 await _vk_send(peer_id, f"❌ Ошибка: {err}")
         return
 
-    # Показываем свой код
+    # Показываем свой код + баланс
     code = await create_referral_code(uid)
-    stats = await get_referral_stats(uid)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{settings.BACKEND_URL}/api/referral/balance",
+                params={"vk_user_id": peer_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                balance_data = await r.json()
+    except Exception:
+        balance_data = {"balance": {"total_earned": 0, "balance": 0}, "stats": {"total": 0, "completed": 0}}
+
+    balance = balance_data.get("balance", {})
+    stats = balance_data.get("stats", {})
 
     await _vk_send(peer_id,
         f"🎁 <b>Реферальная программа</b>\n\n"
-        f"Пригласи друга — получите оба <b>50% скидку</b> на Premium!\n\n"
+        f"Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!\n"
+        f"Твой друг получит <b>15% скидку</b> на первую покупку.\n\n"
         f"<b>Твой код:</b> <code>{code}</code>\n\n"
+        f"<b>💰 Баланс:</b> {balance.get('balance', 0)}₽\n"
+        f"<b>📊 Всего заработано:</b> {balance.get('total_earned', 0)}₽\n\n"
         f"<b>Статистика:</b>\n"
         f"👥 Приглашено: {stats.get('total', 0)}\n"
         f"✅ Активировали: {stats.get('completed', 0)}\n\n"
         f"<b>Как это работает:</b>\n"
         f"1. Отправь другу: <code>referral {code}</code>\n"
         f"2. Друг вводит эту команду\n"
-        f"3. Вы оба получаете 50% скидку!",
+        f"3. Ты получаешь 50% от каждой его оплаты!\n\n"
+        f"💡 Вывод средств — в Mini App",
     )
 
 
@@ -715,11 +731,13 @@ async def handle_premium(peer_id: int) -> None:
                 "economy": "📈 График цен · 📦 CSV-экспорт · 🗺️ Офлайн-карта",
                 "standard": "📈 График цен · 📦 CSV · 🗺️ Офлайн · 🛣 Маршрут A→B · 🔮 Прогноз · 🔔 Будильник",
                 "elite": "Всё из Стандарт + 🚗 Антипробка · 🆘 SOS-режим",
+                "founder": "Пожизненный Элит + 🏆 Founder-бейдж + 📋 Основатель",
             }
+            days_text = "навсегда" if tier == "founder" else f"{max(days_left, 0)} дн."
             text = (
                 f"✅ <b>У тебя Premium!</b>\n\n"
                 f"Тариф: <b>{tier_name}</b>\n"
-                f"Осталось: <b>{max(days_left, 0)} дн.</b>\n\n"
+                f"Осталось: <b>{days_text}</b>\n\n"
                 f"<b>Твои фичи:</b>\n{tier_features.get(tier, '')}\n\n"
                 f"💡 Открой Mini App для управления"
             )

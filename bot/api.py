@@ -2416,6 +2416,11 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/referral/code", handle_referral_code)
     app.router.add_post("/api/referral/apply", handle_referral_apply)
     app.router.add_get("/api/referral/stats", handle_referral_stats)
+    app.router.add_get("/api/referral/earnings", handle_referral_earnings)
+    app.router.add_get("/api/referral/balance", handle_referral_balance)
+    app.router.add_post("/api/referral/withdraw", handle_referral_withdraw)
+    app.router.add_get("/api/referral/withdrawals", handle_referral_withdrawals_list)
+    app.router.add_post("/api/referral/withdrawals/process", handle_referral_withdrawals_process)
     app.router.add_get("/api/account/info", handle_account_info)
     app.router.add_post("/api/user/ensure-vk", handle_user_ensure_vk)
     app.router.add_get("/api/export/csv", handle_export_csv)
@@ -3684,6 +3689,146 @@ async def handle_referral_stats(request):
     from db import get_referral_stats
     stats = await get_referral_stats(uid)
     return json_resp({"stats": stats})
+
+
+async def handle_referral_earnings(request):
+    """GET /api/referral/earnings?telegram_id=...&vk_user_id=... — история начислений."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+    from db import get_user_id_by_any, get_referral_earnings
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"ok": True, "earnings": []})
+    earnings = await get_referral_earnings(uid)
+    return json_resp({
+        "ok": True,
+        "earnings": [
+            {
+                "amount": e.get("commission_amount", 0),
+                "referred_name": e.get("first_name") or e.get("username") or "Пользователь",
+                "created_at": str(e.get("created_at", ""))[:10],
+            }
+            for e in earnings
+        ],
+    })
+
+
+async def handle_referral_balance(request):
+    """GET /api/referral/balance?telegram_id=...&vk_user_id=... — баланс + приглашённые."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+    from db import get_user_id_by_any, get_referral_balance, get_referred_users_list, get_referral_stats, get_user_withdrawals
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"ok": True, "balance": {"total_earned": 0, "total_withdrawn": 0, "balance": 0}, "referred_users": [], "stats": {"total": 0, "completed": 0}})
+    balance = await get_referral_balance(uid)
+    referred = await get_referred_users_list(uid)
+    stats = await get_referral_stats(uid)
+    withdrawals = await get_user_withdrawals(uid)
+    return json_resp({
+        "ok": True,
+        "balance": balance,
+        "referred_users": [
+            {
+                "name": r.get("first_name") or r.get("username") or "Пользователь",
+                "total_commission": r.get("total_commission", 0),
+                "payment_count": r.get("payment_count", 0),
+                "joined_at": str(r.get("created_at", ""))[:10],
+            }
+            for r in referred
+        ],
+        "stats": stats,
+        "withdrawals": [
+            {
+                "amount": w.get("amount", 0),
+                "status": w.get("status", "pending"),
+                "method": w.get("method", "card"),
+                "created_at": str(w.get("created_at", ""))[:10],
+            }
+            for w in withdrawals
+        ],
+    })
+
+
+async def handle_referral_withdraw(request):
+    """POST /api/referral/withdraw — заявка на вывод."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    tid = body.get("telegram_id") or body.get("vk_user_id")
+    amount = body.get("amount")
+    method = body.get("method", "card")
+    details = body.get("details", "")
+    if not tid or not amount:
+        return json_resp({"error": "telegram_id/vk_user_id and amount required"}, status=400)
+    if not isinstance(amount, int) or amount < 100:
+        return json_resp({"error": "minimum withdrawal is 100 RUB"}, status=400)
+    from db import get_user_id_by_any, request_withdrawal
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+    result = await request_withdrawal(uid, amount, method, details)
+    if result.get("ok"):
+        return json_resp({"ok": True, "message": "Заявка на вывод создана. Ожидайте обработки."})
+    return json_resp({"error": result.get("error", "unknown")}, status=400)
+
+
+async def handle_referral_withdrawals_list(request):
+    """GET /api/referral/withdrawals — список заявок на вывод (admin only)."""
+    admin_token = request.headers.get("X-Admin-Token", "")
+    if admin_token != os.environ.get("ADMIN_TOKEN", ""):
+        return json_resp({"error": "forbidden"}, status=403)
+    from db import get_pending_withdrawals
+    withdrawals = await get_pending_withdrawals()
+    return json_resp({
+        "ok": True,
+        "withdrawals": [
+            {
+                "id": w.get("id"),
+                "user_id": w.get("user_id"),
+                "telegram_id": w.get("telegram_id"),
+                "username": w.get("username"),
+                "first_name": w.get("first_name"),
+                "amount": w.get("amount"),
+                "method": w.get("method"),
+                "details": w.get("details"),
+                "status": w.get("status"),
+                "created_at": str(w.get("created_at", ""))[:16],
+            }
+            for w in withdrawals
+        ],
+    })
+
+
+async def handle_referral_withdrawals_process(request):
+    """POST /api/referral/withdrawals/process — обработать заявку (admin only)."""
+    admin_token = request.headers.get("X-Admin-Token", "")
+    if admin_token != os.environ.get("ADMIN_TOKEN", ""):
+        return json_resp({"error": "forbidden"}, status=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    withdrawal_id = body.get("id")
+    status = body.get("status")
+    if not withdrawal_id or not status:
+        return json_resp({"error": "id and status required"}, status=400)
+    if status not in ("approved", "rejected", "paid"):
+        return json_resp({"error": "status must be approved/rejected/paid"}, status=400)
+    from db import process_withdrawal
+    result = await process_withdrawal(withdrawal_id, status)
+    if result:
+        return json_resp({"ok": True, "message": f"Withdrawal {status}"})
+    return json_resp({"error": "withdrawal not found or already processed"}, status=404)
 
 
 async def handle_fuel_alarm_list(request):

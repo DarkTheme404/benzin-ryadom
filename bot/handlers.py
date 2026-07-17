@@ -353,7 +353,7 @@ async def cmd_start(message: Message):
                     await message.answer(
                         f"🎉 <b>Добро пожаловать!</b>\n\n"
                         f"Ты использовал реферальный код!\n"
-                        f"Ты и твой друг получили 50% скидку на Premium.\n\n"
+                        f"Ты получил 15% скидку на первую оплату Premium.\n\n"
                         f"👇 <b>Главное меню:</b>",
                         reply_markup=main_menu_keyboard(),
                     )
@@ -1092,11 +1092,13 @@ async def _cmd_premium_impl(message: Message):
             "economy": "📈 График цен · 📦 CSV-экспорт · 🗺️ Офлайн-карта",
             "standard": "📈 График цен · 📦 CSV · 🗺️ Офлайн · 🛣 Маршрут A→B · 🔮 Прогноз · 🔔 Будильник",
             "elite": "Всё из Стандарт + 🚗 Антипробка · 🆘 SOS-режим",
+            "founder": "Пожизненный Элит + 🏆 Founder-бейдж + 📋 Основатель",
         }
+        days_text = "навсегда" if sub.get("tier") == "founder" else f"{days_left} дн."
         text = (
             f"✅ <b>У тебя Premium!</b>\n\n"
             f"Тариф: <b>{tier_name}</b>\n"
-            f"Истекает: {str(exp)[:10]} (<b>{days_left} дн.</b>)\n\n"
+            f"Истекает: {str(exp)[:10]} (<b>{days_text}</b>)\n\n"
             f"<b>Твои фичи:</b>\n{tier_features.get(sub.get('tier'), '')}\n\n"
             f"💡 Смотри статистику в профиле /profile"
         )
@@ -1144,7 +1146,7 @@ async def _cmd_premium_impl(message: Message):
             InlineKeyboardButton(text="👑 500₽", callback_data="buy_elite"),
             InlineKeyboardButton(text="🏆 1990₽", callback_data="buy_founder"),
         ],
-        [InlineKeyboardButton(text="🎁 7 дней бесплатно", callback_data="premium_trial")],
+        [InlineKeyboardButton(text="🎁 3 дня бесплатно", callback_data="premium_trial")],
         [InlineKeyboardButton(text="🌐 Mini App", url=settings.BACKEND_URL)],
         [InlineKeyboardButton(text="🏠 Главная", callback_data="back_home")],
     ])
@@ -1561,8 +1563,8 @@ async def cmd_referral(message: Message):
         if data.get("ok"):
             await message.answer(
                 f"🎉 <b>Реферал применён!</b>\n\n"
-                f"Ты и твой друг получили 50% скидку на Premium.\n"
-                f"Спасибо что пользуетесь «Бензин рядом»!",
+                f"Ты получил 15% скидку на первую оплату Premium.\n"
+                f"Твой пригласивший будет получать 50% с каждой твоей оплаты.",
             )
         else:
             err = data.get("error", "unknown")
@@ -1576,7 +1578,7 @@ async def cmd_referral(message: Message):
                 await message.answer(f"❌ Ошибка: {err}")
         return
 
-    # /referral — показать свой код
+    # /referral — показать свой код + баланс
     import aiohttp
     backend = settings.BACKEND_URL
     try:
@@ -1588,37 +1590,50 @@ async def cmd_referral(message: Message):
             ) as r:
                 data = await r.json()
             async with session.get(
-                f"{backend}/api/referral/stats",
+                f"{backend}/api/referral/balance",
                 params={"telegram_id": telegram_id},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
-                stats_data = await r.json()
+                balance_data = await r.json()
     except Exception:
         data = {"code": "ERROR"}
-        stats_data = {"stats": {"total": 0, "completed": 0}}
+        balance_data = {"balance": {"total_earned": 0, "balance": 0}, "stats": {"total": 0, "completed": 0}}
 
     code = data.get("code", "?")
     link = data.get("link", "")
-    stats = stats_data.get("stats", {})
+    balance = balance_data.get("balance", {})
+    stats = balance_data.get("stats", {})
+    referred = balance_data.get("referred_users", [])
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Поделиться кодом", switch_inline_query=code)],
         [InlineKeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url=settings.BACKEND_URL))],
     ])
+
+    referred_text = ""
+    for r in referred[:5]:
+        referred_text += f"  • {r.get('name', '?')} — {r.get('total_commission', 0)}₽ ({r.get('payment_count', 0)} оплат)\n"
+    if len(referred) > 5:
+        referred_text += f"  ... и ещё {len(referred) - 5}\n"
+
     await message.answer(
         f"🎁 <b>Реферальная программа</b>\n\n"
-        f"Пригласи друга — получите оба <b>50% скидку</b> на Premium!\n\n"
+        f"Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!\n"
+        f"Твой друг получит <b>15% скидку</b> на первую покупку.\n\n"
         f"<b>Твой код:</b> <code>{code}</code>\n"
         f"<b>Ссылка:</b> {link}\n\n"
+        f"<b>💰 Баланс:</b> {balance.get('balance', 0)}₽\n"
+        f"<b>📊 Всего заработано:</b> {balance.get('total_earned', 0)}₽\n"
+        f"<b>💸 Выведено:</b> {balance.get('total_withdrawn', 0)}₽\n\n"
         f"<b>Статистика:</b>\n"
         f"👥 Приглашено: {stats.get('total', 0)}\n"
-        f"✅ Активировали: {stats.get('completed', 0)}\n"
-        f"⏳ Ожидают: {stats.get('pending', 0)}\n\n"
+        f"✅ Активировали: {stats.get('completed', 0)}\n\n"
+        f"<b>Твои приглашённые:</b>\n{referred_text if referred_text else '  Пока никого не пригласил\n'}\n"
         f"<b>Как это работает:</b>\n"
         f"1. Отправь код другу\n"
         f"2. Друг вводит /referral {code}\n"
-        f"3. Вы оба получаете 50% скидку!\n\n"
-        f"💡 Код работает в TG, VK и Mini App",
+        f"3. Ты получаешь 50% от каждой его оплаты!\n\n"
+        f"💡 Вывод средств — в Mini App",
         reply_markup=kb,
     )
 

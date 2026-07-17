@@ -2103,7 +2103,7 @@
             if (accRes.premium_expires_at) {
               const d = new Date(accRes.premium_expires_at);
               if (!isNaN(d.getTime())) {
-                expDate = ` до ${d.toLocaleDateString('ru-RU')}`;
+                expDate = accRes.premium_tier === 'founder' ? ' — навсегда' : ` до ${d.toLocaleDateString('ru-RU')}`;
               }
             }
             if (premEl) {
@@ -2206,37 +2206,93 @@
       console.error('loadSavings error:', e);
     }
 
-    // Load referral data
+    // Load referral data (balance + earnings)
     try {
       const tgId = getTgId();
       if (tgId) {
         const idParam = platform.vk ? `vk_user_id=${tgId}` : `telegram_id=${tgId}`;
-        const [codeRes, statsRes, discountRes] = await Promise.all([
+        const [codeRes, balanceRes] = await Promise.all([
           api(`/api/referral/code?${idParam}`).catch(() => null),
-          api(`/api/referral/stats?${idParam}`).catch(() => null),
-          api(`/api/referral/discount-status?${idParam}`).catch(() => null),
+          api(`/api/referral/balance?${idParam}`).catch(() => null),
         ]);
         if (codeRes && codeRes.code) {
           const codeEl = document.getElementById('referral-code');
           if (codeEl) codeEl.textContent = codeRes.code;
         }
-        if (statsRes && statsRes.stats) {
-          const s = statsRes.stats;
+
+        // Balance
+        if (balanceRes && balanceRes.ok) {
+          const bal = balanceRes.balance || {};
+          const stats = balanceRes.stats || {};
+          const referred = balanceRes.referred_users || [];
+
+          // Balance card
+          const balCard = document.getElementById('referrer-balance-card');
+          const balAmount = document.getElementById('ref-balance-amount');
+          const totalEarned = document.getElementById('ref-total-earned');
+          const totalWithdrawn = document.getElementById('ref-total-withdrawn');
+          if (balCard) balCard.style.display = 'block';
+          if (balAmount) balAmount.textContent = (bal.balance || 0) + '₽';
+          if (totalEarned) totalEarned.textContent = (bal.total_earned || 0) + '₽';
+          if (totalWithdrawn) totalWithdrawn.textContent = (bal.total_withdrawn || 0) + '₽';
+
+          // Stats
           const totalEl = document.getElementById('referral-total');
           const completedEl = document.getElementById('referral-completed');
-          if (totalEl) totalEl.textContent = s.total || 0;
-          if (completedEl) completedEl.textContent = s.completed || 0;
+          const earningsEl = document.getElementById('ref-referral-earnings');
+          if (totalEl) totalEl.textContent = stats.total || 0;
+          if (completedEl) completedEl.textContent = stats.completed || 0;
+          if (earningsEl) earningsEl.textContent = (bal.total_earned || 0) + '₽';
+
+          // Referred users list
+          if (referred.length > 0) {
+            const section = document.getElementById('referred-users-section');
+            const list = document.getElementById('referred-users-list');
+            if (section) section.style.display = 'block';
+            if (list) {
+              list.innerHTML = referred.map(r => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg-card);border-radius:10px;margin-bottom:6px;">
+                  <div>
+                    <div style="font-size:13px;font-weight:600;">${r.name || 'Пользователь'}</div>
+                    <div style="font-size:11px;color:var(--text-secondary);">${r.payment_count || 0} оплат</div>
+                  </div>
+                  <div style="font-size:14px;font-weight:700;color:#f59e0b;">${r.total_commission || 0}₽</div>
+                </div>
+              `).join('');
+            }
+          }
         }
 
-        // Discount status
-        if (discountRes && discountRes.discount) {
-          const d = discountRes.discount;
-          const dsEl = document.getElementById('discount-status');
-          const dpEl = document.getElementById('discount-percent');
-          const deEl = document.getElementById('discount-expires');
-          if (dsEl) dsEl.style.display = 'block';
-          if (dpEl) dpEl.textContent = d.percent + '%';
-          if (deEl) deEl.textContent = d.expires_at || '—';
+        // Withdraw button
+        const withdrawBtn = document.getElementById('btn-withdraw');
+        if (withdrawBtn) {
+          withdrawBtn.addEventListener('click', async () => {
+            const bal = balanceRes?.balance?.balance || 0;
+            if (bal < 100) {
+              showToast('Минимальная сумма вывода — 100₽', 'warning');
+              return;
+            }
+            // Show withdraw modal
+            const method = prompt('Способ вывода (card/yoomoney/sbp):', 'card') || 'card';
+            const details = prompt('Реквизиты (номер карты/кошелька):', '');
+            if (!details) return;
+            try {
+              const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+              const resp = await api('/api/referral/withdraw', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({[idParam]: tgId, amount: bal, method, details}),
+              });
+              if (resp.ok) {
+                showToast('Заявка на вывод создана!', 'success');
+                loadProfile();
+              } else {
+                showToast(resp.error || 'Ошибка', 'error');
+              }
+            } catch (e) {
+              showToast('Ошибка: ' + e.message, 'error');
+            }
+          });
         }
 
         // Share button
@@ -2244,7 +2300,7 @@
         if (shareBtn) {
           shareBtn.addEventListener('click', () => {
             const code = codeRes?.code || '';
-            const text = `🎁 Используй код ${code} в @benzin_ryadom_bot — получи 50% скидку на Premium!`;
+            const text = `🎁 Используй код ${code} в @benzin_ryadom_bot — получи 15% скидку на Premium!`;
             if (navigator.share) {
               navigator.share({ text }).catch(() => {});
             } else {
@@ -2273,7 +2329,7 @@
                 body: JSON.stringify({[idParam]: tgId, code}),
               });
               if (resp.ok) {
-                showToast('Реферал применён! 50% скидка обоим.', 'success');
+                showToast('Реферал применён! 15% скидка тебе.', 'success');
                 hapticNotify('success');
                 applyInput.value = '';
                 loadProfile();
@@ -3543,7 +3599,7 @@
 
   // Boot
   // Version check — force reload if old version is cached
-  const APP_VERSION = '12';
+  const APP_VERSION = '13';
   try {
     const stored = localStorage.getItem('benzin_app_version');
     if (stored && stored !== APP_VERSION) {
