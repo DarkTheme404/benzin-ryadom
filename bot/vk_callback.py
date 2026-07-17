@@ -697,19 +697,20 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
     balance = balance_data.get("balance", {})
     stats = balance_data.get("stats", {})
 
+    ref_link = f"https://t.me/benzyn_ryadom_bot?start=ref_{code}"
     await _vk_send(peer_id,
         f"🎁 <b>Реферальная программа</b>\n\n"
         f"Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!\n"
         f"Твой друг получит <b>15% скидку</b> на первую покупку.\n\n"
-        f"<b>Твой код:</b> <code>{code}</code>\n\n"
+        f"<b>Твоя ссылка:</b>\n{ref_link}\n\n"
         f"<b>💰 Баланс:</b> {balance.get('balance', 0)}₽\n"
         f"<b>📊 Всего заработано:</b> {balance.get('total_earned', 0)}₽\n\n"
         f"<b>Статистика:</b>\n"
         f"👥 Приглашено: {stats.get('total', 0)}\n"
         f"✅ Активировали: {stats.get('completed', 0)}\n\n"
         f"<b>Как это работает:</b>\n"
-        f"1. Отправь другу: <code>referral {code}</code>\n"
-        f"2. Друг вводит эту команду\n"
+        f"1. Отправь ссылку другу\n"
+        f"2. Друг переходит по ссылке\n"
         f"3. Ты получаешь 50% от каждой его оплаты!\n\n"
         f"💡 Вывод средств — в Mini App",
     )

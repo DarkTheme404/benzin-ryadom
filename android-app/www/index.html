@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0c0c14">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Бензин рядом</title>
+    <style>
+        :root {
+            --bg: #0c0c14;
+            --accent: #f59e0b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body {
+            width: 100%; height: 100%; overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg); color: #f0f0f5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        #splash {
+            position: fixed; inset: 0; z-index: 9999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background: var(--bg);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+        #splash.hide {
+            opacity: 0; transform: scale(1.08); pointer-events: none;
+        }
+        .splash-glow {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 320px; height: 320px; border-radius: 50%;
+            background: radial-gradient(circle, rgba(245,158,11,0.08) 0%, transparent 70%);
+            animation: glowPulse 3s ease-in-out infinite;
+        }
+        @keyframes glowPulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.6; }
+            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+        }
+        .splash-icon {
+            width: 120px; height: 120px; border-radius: 30px;
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 60px;
+            box-shadow: 0 20px 60px rgba(245,158,11,0.3), 0 0 100px rgba(245,158,11,0.1);
+            animation: iconEntrance 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
+            position: relative; z-index: 1;
+        }
+        @keyframes iconEntrance {
+            from { transform: scale(0) rotate(-20deg); opacity: 0; }
+            to { transform: scale(1) rotate(0); opacity: 1; }
+        }
+        .splash-title {
+            font-size: 30px; font-weight: 800; color: #f0f0f5;
+            letter-spacing: -0.8px; margin-top: 28px;
+            animation: fadeUp 0.6s ease-out 0.5s both;
+        }
+        .splash-sub {
+            font-size: 13px; color: rgba(240,240,245,0.3);
+            letter-spacing: 4px; text-transform: uppercase; font-weight: 500;
+            margin-top: 8px;
+            animation: fadeUp 0.6s ease-out 0.65s both;
+        }
+        .splash-loader {
+            margin-top: 64px; width: 40px; height: 3px;
+            background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden;
+            animation: fadeUp 0.6s ease-out 0.8s both;
+        }
+        .splash-loader::after {
+            content: ''; display: block; width: 40%; height: 100%;
+            background: var(--accent); border-radius: 2px;
+            animation: loaderSlide 1.2s ease-in-out infinite;
+        }
+        @keyframes loaderSlide {
+            0% { transform: translateX(-150%); }
+            100% { transform: translateX(400%); }
+        }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        #app-frame {
+            width: 100%; height: 100%; border: none;
+            position: fixed; inset: 0; z-index: 1;
+            opacity: 0; transition: opacity 0.4s ease;
+        }
+        #app-frame.visible { opacity: 1; }
+    </style>
+</head>
+<body>
+    <div id="splash">
+        <div class="splash-glow"></div>
+        <div class="splash-icon">⛽</div>
+        <div class="splash-title">Бензин рядом</div>
+        <div class="splash-sub">Найди дешёвое топливо</div>
+        <div class="splash-loader"></div>
+    </div>
+
+    <iframe id="app-frame" src="about:blank"></iframe>
+
+    <script>
+        const APP_URL = 'https://benzin-ryadom.onrender.com/app/index.html';
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const splash = document.getElementById('splash');
+            const frame = document.getElementById('app-frame');
+
+            frame.src = APP_URL;
+            frame.onload = () => {
+                setTimeout(() => {
+                    frame.classList.add('visible');
+                    splash.classList.add('hide');
+                    setTimeout(() => splash.remove(), 500);
+                }, 1500);
+            };
+        });
+    </script>
+</body>
+</html>

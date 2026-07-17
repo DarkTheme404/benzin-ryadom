@@ -2220,7 +2220,8 @@
         ]);
         if (codeRes && codeRes.code) {
           const codeEl = document.getElementById('referral-code');
-          if (codeEl) codeEl.textContent = codeRes.code;
+          const refLink = `https://t.me/benzyn_ryadom_bot?start=ref_${codeRes.code}`;
+          if (codeEl) codeEl.textContent = refLink;
         }
 
         // Balance
@@ -2303,7 +2304,8 @@
         if (shareBtn) {
           shareBtn.addEventListener('click', () => {
             const code = codeRes?.code || '';
-            const text = `🎁 Используй код ${code} в @benzyn_ryadom_bot — получи 15% скидку на Premium!`;
+            const refLink = `https://t.me/benzyn_ryadom_bot?start=ref_${code}`;
+            const text = `🎁 Перейди по ссылке — получи 15% скидку на Premium!\n${refLink}`;
             if (navigator.share) {
               navigator.share({ text }).catch(() => {});
             } else {
@@ -2319,9 +2321,17 @@
         const applyInput = document.getElementById('referral-input');
         if (applyBtn && applyInput) {
           applyBtn.addEventListener('click', async () => {
-            const code = applyInput.value.trim().toUpperCase();
+            let raw = applyInput.value.trim();
+            if (!raw) {
+              showToast('Вставь ссылку или код друга', 'warning');
+              return;
+            }
+            // Parse code from link or use raw
+            let code = raw.toUpperCase();
+            const refMatch = raw.match(/start=ref[_=](\w+)/i);
+            if (refMatch) code = refMatch[1].toUpperCase();
             if (!code) {
-              showToast('Введи код друга', 'warning');
+              showToast('Не удалось распознать код', 'warning');
               return;
             }
             try {
