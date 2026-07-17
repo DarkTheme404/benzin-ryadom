@@ -3286,18 +3286,17 @@ async def handle_user_register(request):
     if not uid:
         import hashlib
         seed = device_id or f"app_{name}_{vk_username or tg_username or ''}"
-        fake_tg_id = -abs(int(hashlib.md5(seed.encode()).hexdigest()[:8], 16))
+        fake_tg_id = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
 
-        # Проверяем, нет ли уже такого
         existing = await _fetch(
             "SELECT id FROM users WHERE telegram_id = ?", fake_tg_id, one=True
         )
         if existing:
             uid = existing["id"] if isinstance(existing, dict) else existing[0]
-            await upsert_user(abs(fake_tg_id), username=vk_username or tg_username, first_name=name)
+            await upsert_user(fake_tg_id, username=vk_username or tg_username, first_name=name)
         else:
-            await upsert_user(abs(fake_tg_id), username=vk_username or tg_username, first_name=name)
-            uid = await get_user_id_by_telegram_id(abs(fake_tg_id))
+            await upsert_user(fake_tg_id, username=vk_username or tg_username, first_name=name)
+            uid = await get_user_id_by_telegram_id(fake_tg_id)
 
     if not uid:
         return json_resp({"error": "failed to create user"}, status=500)
