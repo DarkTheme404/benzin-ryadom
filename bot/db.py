@@ -181,6 +181,10 @@ async def _migrate_sqlite(db):
         await db.execute("ALTER TABLE users ADD COLUMN linked_user_id INTEGER")
     if "screen_name" not in user_cols:
         await db.execute("ALTER TABLE users ADD COLUMN screen_name TEXT")
+    if "vk_profile_link" not in user_cols:
+        await db.execute("ALTER TABLE users ADD COLUMN vk_profile_link TEXT")
+    if "tg_profile_link" not in user_cols:
+        await db.execute("ALTER TABLE users ADD COLUMN tg_profile_link TEXT")
     # Миграция: убираем UNIQUE constraint с telegram_id (для VK юзеров с telegram_id=0)
     # Создаём partial unique index — telegram_id уникален только когда > 0
     try:

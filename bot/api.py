@@ -2442,6 +2442,7 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/referral/withdrawals/process", handle_referral_withdrawals_process)
     app.router.add_get("/api/account/info", handle_account_info)
     app.router.add_post("/api/user/ensure-vk", handle_user_ensure_vk)
+    app.router.add_post("/api/user/register", handle_user_register)
     app.router.add_get("/api/export/csv", handle_export_csv)
     app.router.add_get("/api/route/fuel", handle_route_fuel)
     app.router.add_get("/api/route/anti-traffic", handle_route_anti_traffic)
@@ -3225,6 +3226,110 @@ async def handle_user_ensure_vk(request):
         pass
 
     return json_resp({"ok": True, "user_id": uid, "is_new": is_new, "first_name": first_name})
+
+
+async def handle_user_register(request):
+    """POST /api/user/register — регистрация мобильного пользователя.
+
+    Body: {name, vk_link?, tg_link?, device_id?}
+    Создаёт пользователя в БД, привязывает VK/TG профили.
+    Возвращает: {ok, user_id, name, vk_link, tg_link}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    name = (body.get("name") or "").strip()[:64]
+    vk_link = (body.get("vk_link") or "").strip()[:256]
+    tg_link = (body.get("tg_link") or "").strip()[:256]
+    device_id = (body.get("device_id") or "").strip()[:128]
+
+    if not name:
+        return json_resp({"error": "name required"}, status=400)
+
+    # Извлекаем VK username/ID из ссылки
+    vk_username = None
+    if vk_link:
+        import re
+        m = re.search(r'vk\.com/(\w+)', vk_link)
+        if m:
+            vk_username = m.group(1)
+        elif vk_link.isdigit():
+            vk_username = vk_link
+
+    # Извлекаем TG username из ссылки
+    tg_username = None
+    if tg_link:
+        import re
+        m = re.search(r't\.me/(\w+)', tg_link)
+        if m:
+            tg_username = m.group(1)
+        elif tg_link.startswith('@'):
+            tg_username = tg_link[1:]
+        elif not tg_link.startswith('http'):
+            tg_username = tg_link.lstrip('@')
+
+    from db import USE_SQLITE, _fetch, upsert_user_vk, upsert_user, get_user_id_by_vk_id, get_user_id_by_telegram_id
+
+    # Пытаемся найти существующего пользователя по VK ID
+    uid = None
+    if vk_username and vk_username.isdigit():
+        uid = await get_user_id_by_vk_id(int(vk_username))
+        if not uid:
+            await upsert_user_vk(int(vk_username), first_name=name)
+            uid = await get_user_id_by_vk_id(int(vk_username))
+
+    # Если не нашли — создаём нового с уникальным telegram_id
+    if not uid:
+        import hashlib
+        seed = device_id or f"app_{name}_{vk_username or tg_username or ''}"
+        fake_tg_id = -abs(int(hashlib.md5(seed.encode()).hexdigest()[:8], 16))
+
+        # Проверяем, нет ли уже такого
+        existing = await _fetch(
+            "SELECT id FROM users WHERE telegram_id = ?", fake_tg_id, one=True
+        )
+        if existing:
+            uid = existing["id"] if isinstance(existing, dict) else existing[0]
+            await upsert_user(abs(fake_tg_id), username=vk_username or tg_username, first_name=name)
+        else:
+            await upsert_user(abs(fake_tg_id), username=vk_username or tg_username, first_name=name)
+            uid = await get_user_id_by_telegram_id(abs(fake_tg_id))
+
+    if not uid:
+        return json_resp({"error": "failed to create user"}, status=500)
+
+    # Сохраняем ссылки на профили
+    if vk_link or tg_link:
+        if USE_SQLITE:
+            await _fetch(
+                "UPDATE users SET vk_profile_link = ?, tg_profile_link = ?, first_name = ? WHERE id = ?",
+                vk_link or None, tg_link or None, name, uid,
+            )
+            await db._db.commit()
+        else:
+            async with db._db.acquire() as conn:
+                await conn.execute(
+                    "UPDATE users SET vk_profile_link = $1, tg_profile_link = $2, first_name = $3 WHERE id = $4",
+                    vk_link or None, tg_link or None, name, uid,
+                )
+
+    # Проверяем премиум
+    from db import get_user_premium
+    premium = await get_user_premium(uid)
+
+    return json_resp({
+        "ok": True,
+        "user_id": uid,
+        "name": name,
+        "vk_link": vk_link,
+        "tg_link": tg_link,
+        "premium": premium.get("tier") if premium else None,
+        "premium_expires": str(premium["expires_at"]) if premium and premium.get("expires_at") else None,
+    })
 
 
 async def handle_account_info(request):

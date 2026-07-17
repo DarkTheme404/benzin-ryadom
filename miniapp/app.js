@@ -299,6 +299,16 @@
   function getTgId() {
     if (tg?.initDataUnsafe?.user?.id) return tg.initDataUnsafe.user.id;
     if (platform.vk && state.vkUserId) return state.vkUserId;
+    // Standalone app: app_user_id from native wrapper
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const appId = urlParams.get('app_user_id');
+      if (appId && !isNaN(parseInt(appId))) {
+        state.appUserId = parseInt(appId);
+        state.isStandaloneApp = true;
+        return state.appUserId;
+      }
+    } catch (e) {}
     // Fallback: parse from URL params or hash
     try {
       const urlParams = new URLSearchParams(window.location.search);

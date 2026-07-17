@@ -5,117 +5,269 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#0c0c14">
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Бензин рядом</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
         :root {
-            --bg: #0c0c14;
-            --accent: #f59e0b;
+            --bg:#0c0c14;--bg2:#151520;--bg3:#1a1a28;
+            --accent:#f59e0b;--accent2:#d97706;--accent-dim:rgba(245,158,11,0.12);
+            --text:#f0f0f5;--dim:rgba(240,240,245,0.5);--muted:rgba(240,240,245,0.25);
+            --border:rgba(255,255,255,0.06);--focus:rgba(245,158,11,0.4);
+            --ok:#34d399;--err:#ef4444;--r:14px;
         }
-        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        html, body {
-            width: 100%; height: 100%; overflow: hidden;
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--bg); color: #f0f0f5;
-            -webkit-font-smoothing: antialiased;
-        }
+        *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+        html,body{width:100%;height:100%;overflow:hidden;font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
 
-        #splash {
-            position: fixed; inset: 0; z-index: 9999;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            background: var(--bg);
-            transition: opacity 0.5s ease, transform 0.5s ease;
-        }
-        #splash.hide {
-            opacity: 0; transform: scale(1.08); pointer-events: none;
-        }
-        .splash-glow {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 320px; height: 320px; border-radius: 50%;
-            background: radial-gradient(circle, rgba(245,158,11,0.08) 0%, transparent 70%);
-            animation: glowPulse 3s ease-in-out infinite;
-        }
-        @keyframes glowPulse {
-            0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.6; }
-            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
-        }
-        .splash-icon {
-            width: 120px; height: 120px; border-radius: 30px;
-            background: linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 60px;
-            box-shadow: 0 20px 60px rgba(245,158,11,0.3), 0 0 100px rgba(245,158,11,0.1);
-            animation: iconEntrance 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
-            position: relative; z-index: 1;
-        }
-        @keyframes iconEntrance {
-            from { transform: scale(0) rotate(-20deg); opacity: 0; }
-            to { transform: scale(1) rotate(0); opacity: 1; }
-        }
-        .splash-title {
-            font-size: 30px; font-weight: 800; color: #f0f0f5;
-            letter-spacing: -0.8px; margin-top: 28px;
-            animation: fadeUp 0.6s ease-out 0.5s both;
-        }
-        .splash-sub {
-            font-size: 13px; color: rgba(240,240,245,0.3);
-            letter-spacing: 4px; text-transform: uppercase; font-weight: 500;
-            margin-top: 8px;
-            animation: fadeUp 0.6s ease-out 0.65s both;
-        }
-        .splash-loader {
-            margin-top: 64px; width: 40px; height: 3px;
-            background: rgba(255,255,255,0.06); border-radius: 2px; overflow: hidden;
-            animation: fadeUp 0.6s ease-out 0.8s both;
-        }
-        .splash-loader::after {
-            content: ''; display: block; width: 40%; height: 100%;
-            background: var(--accent); border-radius: 2px;
-            animation: loaderSlide 1.2s ease-in-out infinite;
-        }
-        @keyframes loaderSlide {
-            0% { transform: translateX(-150%); }
-            100% { transform: translateX(400%); }
-        }
-        @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(16px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
+        /* === SPLASH === */
+        #splash{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--bg);transition:opacity .5s ease,transform .5s ease}
+        #splash.hide{opacity:0;transform:scale(1.06);pointer-events:none}
+        .s-glow{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:280px;height:280px;border-radius:50%;background:radial-gradient(circle,rgba(245,158,11,.08) 0%,transparent 70%);animation:gp 3s ease-in-out infinite}
+        @keyframes gp{0%,100%{transform:translate(-50%,-50%) scale(1);opacity:.6}50%{transform:translate(-50%,-50%) scale(1.15);opacity:1}}
+        .s-icon{width:110px;height:110px;border-radius:28px;background:linear-gradient(135deg,#f59e0b,#d97706,#b45309);display:flex;align-items:center;justify-content:center;font-size:56px;box-shadow:0 18px 50px rgba(245,158,11,.3);animation:ie .7s cubic-bezier(.34,1.56,.64,1) .2s both;position:relative;z-index:1}
+        @keyframes ie{from{transform:scale(0) rotate(-15deg);opacity:0}to{transform:scale(1) rotate(0);opacity:1}}
+        .s-title{font-size:28px;font-weight:800;letter-spacing:-.7px;margin-top:24px;animation:fu .5s ease-out .4s both}
+        .s-sub{font-size:12px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin-top:6px;animation:fu .5s ease-out .5s both}
+        .s-bar{margin-top:56px;width:36px;height:3px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden;animation:fu .5s ease-out .6s both}
+        .s-bar::after{content:'';display:block;width:40%;height:100%;background:var(--accent);border-radius:2px;animation:ls 1.2s ease-in-out infinite}
+        @keyframes ls{0%{transform:translateX(-150%)}100%{transform:translateX(400%)}}
+        @keyframes fu{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
 
-        #app-frame {
-            width: 100%; height: 100%; border: none;
-            position: fixed; inset: 0; z-index: 1;
-            opacity: 0; transition: opacity 0.4s ease;
-        }
-        #app-frame.visible { opacity: 1; }
+        /* === SCREENS === */
+        .scr{position:fixed;inset:0;z-index:5000;display:none;flex-direction:column;background:var(--bg);overflow-y:auto;-webkit-overflow-scrolling:touch}
+        .scr.active{display:flex}
+
+        /* === REG === */
+        .reg{flex:1;display:flex;flex-direction:column;min-height:100%;padding:0 22px;padding-top:env(safe-area-inset-top,16px);padding-bottom:env(safe-area-inset-bottom,16px)}
+        .reg-top{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px 0;min-height:35vh;position:relative}
+        .reg-top::before{content:'';position:absolute;top:-80px;left:50%;transform:translateX(-50%);width:360px;height:360px;border-radius:50%;background:radial-gradient(circle,rgba(245,158,11,.06) 0%,transparent 70%);pointer-events:none}
+        .r-icon{width:80px;height:80px;border-radius:22px;background:linear-gradient(135deg,#f59e0b,#d97706);display:flex;align-items:center;justify-content:center;font-size:40px;box-shadow:0 14px 40px rgba(245,158,11,.25);animation:fu .5s ease-out .1s both}
+        .r-title{font-size:24px;font-weight:800;letter-spacing:-.4px;margin-top:18px;text-align:center;animation:fu .5s ease-out .15s both}
+        .r-desc{font-size:13px;color:var(--dim);text-align:center;line-height:1.55;max-width:270px;margin-top:6px;animation:fu .5s ease-out .2s both}
+
+        .reg-form{padding-bottom:16px;animation:fu .5s ease-out .25s both}
+        .fg{margin-bottom:14px}
+        .fl{font-size:11px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;display:block}
+        .fi-w{position:relative}
+        .fi-i{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:16px;opacity:.35;pointer-events:none}
+        .fi{width:100%;height:50px;border:1.5px solid var(--border);border-radius:var(--r);background:var(--bg3);padding:0 14px 0 44px;font-family:inherit;font-size:14px;font-weight:500;color:var(--text);outline:none;transition:border-color .2s,box-shadow .2s,background .2s}
+        .fi::placeholder{color:var(--muted)}
+        .fi:focus{border-color:var(--focus);box-shadow:0 0 0 3px var(--accent-dim);background:rgba(26,26,40,.8)}
+        .fi.error{border-color:var(--err);box-shadow:0 0 0 3px rgba(239,68,68,.1)}
+        .fh{font-size:11px;color:var(--muted);margin-top:5px;padding-left:2px}
+        .fh.error{color:var(--err)}
+
+        .r-btn{width:100%;height:54px;border:none;border-radius:var(--r);background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;margin-top:6px;box-shadow:0 8px 24px rgba(245,158,11,.3);transition:transform .15s,box-shadow .15s;animation:fu .5s ease-out .3s both}
+        .r-btn:active{transform:scale(.97);box-shadow:0 4px 12px rgba(245,158,11,.2)}
+        .r-btn:disabled{opacity:.4;pointer-events:none}
+        .r-btn .spin{display:none;width:18px;height:18px;border:2px solid rgba(0,0,0,.2);border-top-color:#000;border-radius:50%;animation:sp .6s linear infinite;margin:0 auto}
+        .r-btn.loading .bt{display:none}.r-btn.loading .spin{display:block}
+
+        .r-skip{text-align:center;padding:14px 0 6px;animation:fu .5s ease-out .35s both}
+        .r-skip button{background:none;border:none;font-family:inherit;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;padding:8px 14px;border-radius:10px;transition:color .2s}
+        .r-skip button:active{color:var(--dim)}
+
+        .r-footer{text-align:center;padding:10px 0 16px;animation:fu .5s ease-out .4s both}
+        .r-footer p{font-size:10px;color:var(--muted);line-height:1.5}
+        .r-bots{display:flex;gap:8px;margin-top:10px}
+        .rb{flex:1;height:40px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg2);display:flex;align-items:center;justify-content:center;gap:6px;font-family:inherit;font-size:12px;font-weight:600;color:var(--dim);text-decoration:none;transition:border-color .2s}
+        .rb:active{background:var(--bg3)}.rb svg{width:16px;height:16px;flex-shrink:0}
+
+        /* === APP === */
+        #app{width:100%;height:100%;border:none;position:fixed;inset:0;z-index:1;opacity:0;transition:opacity .4s}
+        #app.vis{opacity:1}
+
+        /* === TOAST === */
+        .toast{position:fixed;top:50px;left:50%;transform:translateX(-50%) translateY(-16px);z-index:99999;padding:10px 20px;border-radius:var(--r);background:var(--ok);color:#000;font-size:13px;font-weight:700;box-shadow:0 8px 28px rgba(52,211,153,.3);opacity:0;transition:all .3s cubic-bezier(.34,1.56,.64,1);pointer-events:none}
+        .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+        @keyframes sp{to{transform:rotate(360deg)}}
+
+        /* === SUCCESS SCREEN === */
+        .success{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px 24px}
+        .success-icon{width:100px;height:100px;border-radius:50%;background:linear-gradient(135deg,#34d399,#10b981);display:flex;align-items:center;justify-content:center;font-size:48px;box-shadow:0 16px 48px rgba(52,211,153,.3);animation:bounceIn .6s cubic-bezier(.34,1.56,.64,1) both}
+        @keyframes bounceIn{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+        .success-title{font-size:24px;font-weight:800;margin-top:24px;animation:fu .4s ease-out .2s both}
+        .success-desc{font-size:14px;color:var(--dim);margin-top:8px;animation:fu .4s ease-out .3s both}
+        .success-premium{margin-top:20px;padding:14px 20px;background:linear-gradient(135deg,rgba(245,158,11,.1),rgba(245,158,11,.05));border:1px solid rgba(245,158,11,.2);border-radius:12px;animation:fu .4s ease-out .35s both}
+        .success-premium b{color:var(--accent)}
+        .success-btn{margin-top:28px;width:100%;max-width:280px;height:52px;border:none;border-radius:var(--r);background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-family:inherit;font-size:15px;font-weight:700;cursor:pointer;box-shadow:0 8px 24px rgba(245,158,11,.3);animation:fu .4s ease-out .4s both}
+        .success-btn:active{transform:scale(.97)}
     </style>
 </head>
 <body>
-    <div id="splash">
-        <div class="splash-glow"></div>
-        <div class="splash-icon">⛽</div>
-        <div class="splash-title">Бензин рядом</div>
-        <div class="splash-sub">Найди дешёвое топливо</div>
-        <div class="splash-loader"></div>
+
+<!-- SPLASH -->
+<div id="splash">
+    <div class="s-glow"></div>
+    <div class="s-icon">⛽</div>
+    <div class="s-title">Бензин рядом</div>
+    <div class="s-sub">Найди дешёвое топливо</div>
+    <div class="s-bar"></div>
+</div>
+
+<!-- TOAST -->
+<div id="toast" class="toast"></div>
+
+<!-- REGISTRATION -->
+<div id="reg-screen" class="scr">
+    <div class="reg">
+        <div class="reg-top">
+            <div class="r-icon">⛽</div>
+            <div class="r-title">Добро пожаловать</div>
+            <div class="r-desc">Зарегистрируйся, чтобы Premium работал везде и ты не терял данные</div>
+        </div>
+
+        <div class="reg-form">
+            <div class="fg">
+                <label class="fl">Как тебя зовут?</label>
+                <div class="fi-w"><span class="fi-i">👤</span>
+                    <input class="fi" id="r-name" type="text" placeholder="Имя" maxlength="64" autocomplete="name">
+                </div>
+                <div class="fh" id="r-name-h"></div>
+            </div>
+
+            <div class="fg">
+                <label class="fl">Ссылка на VK <span style="color:var(--muted);text-transform:none;letter-spacing:0;font-weight:400">(необязательно)</span></label>
+                <div class="fi-w"><span class="fi-i">💬</span>
+                    <input class="fi" id="r-vk" type="url" placeholder="https://vk.com/username" maxlength="256" inputmode="url">
+                </div>
+                <div class="fh">Premium из VK будет работать в приложении</div>
+            </div>
+
+            <div class="fg">
+                <label class="fl">Ссылка на Telegram <span style="color:var(--muted);text-transform:none;letter-spacing:0;font-weight:400">(необязательно)</span></label>
+                <div class="fi-w"><span class="fi-i">✈️</span>
+                    <input class="fi" id="r-tg" type="url" placeholder="https://t.me/username" maxlength="256" inputmode="url">
+                </div>
+                <div class="fh">Premium из Telegram будет работать в приложении</div>
+            </div>
+
+            <button class="r-btn" id="r-submit" onclick="doRegister()">
+                <span class="bt">Создать аккаунт</span>
+                <div class="spin"></div>
+            </button>
+        </div>
+
+        <div class="r-skip"><button onclick="doSkip()">Пропустить</button></div>
+
+        <div class="r-footer">
+            <p>Боты для уведомлений:</p>
+            <div class="r-bots">
+                <a class="rb" href="https://t.me/benzyn_ryadom_bot" target="_blank">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>
+                    Telegram
+                </a>
+                <a class="rb" href="https://vk.com/benzyn_ryadom" target="_blank">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.684 0H8.316C1.592 0 0 1.592 0 8.316v7.368C0 22.408 1.592 24 8.316 24h7.368C22.408 24 24 22.408 24 15.684V8.316C24 1.592 22.391 0 15.684 0zm3.692 17.123h-1.744c-.66 0-.864-.525-2.05-1.727-1.033-1-1.49-1.135-1.744-1.135-.356 0-.458.102-.458.593v1.575c0 .424-.135.678-1.253.678-1.846 0-3.896-1.12-5.339-3.202-2.17-3.042-2.763-5.32-2.763-5.778 0-.254.102-.491.593-.491h1.744c.44 0 .61.203.78.678.864 2.49 2.303 4.675 2.896 4.675.22 0 .322-.102.322-.66V9.721c-.068-1.186-.695-1.287-.695-1.71 0-.203.17-.407.44-.407h2.744c.373 0 .508.203.508.644v3.473c0 .372.17.508.271.508.22 0 .407-.136.813-.542 1.253-1.406 2.15-3.574 2.15-3.574.119-.254.322-.491.763-.491h1.744c.525 0 .644.27.525.644-.22 1.017-2.354 4.031-2.354 4.031-.186.305-.254.44 0 .78.186.254.796.78 1.203 1.253.745.847 1.32 1.558 1.473 2.05.17.49-.085.744-.576.744z"/></svg>
+                    ВКонтакте
+                </a>
+            </div>
+        </div>
     </div>
+</div>
 
-    <iframe id="app-frame" src="about:blank"></iframe>
+<!-- SUCCESS -->
+<div id="success-screen" class="scr">
+    <div class="success">
+        <div class="success-icon">✅</div>
+        <div class="success-title">Аккаунт создан!</div>
+        <div class="success-desc" id="s-welcome">Добро пожаловать</div>
+        <div class="success-premium" id="s-premium" style="display:none">
+            <span>💎 </span><b id="s-prem-tier">Premium</b> <span id="s-prem-expires"></span>
+        </div>
+        <button class="success-btn" onclick="goApp()">Перейти в приложение</button>
+    </div>
+</div>
 
-    <script>
-        const APP_URL = 'https://benzin-ryadom.onrender.com/app/index.html';
+<!-- APP -->
+<iframe id="app" src="about:blank"></iframe>
 
-        document.addEventListener('DOMContentLoaded', () => {
-            const splash = document.getElementById('splash');
-            const frame = document.getElementById('app-frame');
+<script>
+const API = 'https://benzin-ryadom.onrender.com';
+const APP_URL = API + '/app/index.html';
+const SK = 'benzin_app_user';
 
-            frame.src = APP_URL;
-            frame.onload = () => {
-                setTimeout(() => {
-                    frame.classList.add('visible');
-                    splash.classList.add('hide');
-                    setTimeout(() => splash.remove(), 500);
-                }, 1500);
-            };
+function getUser(){try{return JSON.parse(localStorage.getItem(SK)||'null')}catch{return null}}
+function saveUser(d){localStorage.setItem(SK,JSON.stringify(d))}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
+function hideScr(id){const e=document.getElementById(id);e.style.transition='opacity .3s ease,transform .3s ease';e.style.opacity='0';e.style.transform='scale(.96)';setTimeout(()=>e.classList.remove('active'),300)}
+
+function genDeviceId(){
+    let s=localStorage.getItem('benzin_did');
+    if(s)return s;
+    s='d_'+Date.now()+'_'+Math.random().toString(36).slice(2,10);
+    localStorage.setItem('benzin_did',s);
+    return s;
+}
+
+async function apiCall(path,body){
+    const r=await fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    return r.json();
+}
+
+async function doRegister(){
+    const n=document.getElementById('r-name');
+    const vk=document.getElementById('r-vk');
+    const tg=document.getElementById('r-tg');
+    const h=document.getElementById('r-name-h');
+    const b=document.getElementById('r-submit');
+    const name=n.value.trim();
+    if(!name){n.classList.add('error');h.textContent='Введи имя';h.classList.add('error');n.focus();return}
+    n.classList.remove('error');h.textContent='';h.classList.remove('error');
+    b.classList.add('loading');b.disabled=true;
+    try{
+        const res=await apiCall('/api/user/register',{
+            name,vk_link:vk.value.trim(),tg_link:tg.value.trim(),device_id:genDeviceId()
         });
-    </script>
+        if(res.ok){
+            saveUser(res);
+            hideScr('reg-screen');
+            document.getElementById('s-welcome').textContent='Добро пожаловать, '+res.name+'!';
+            if(res.premium){
+                document.getElementById('s-premium').style.display='block';
+                document.getElementById('s-prem-tier').textContent=res.premium;
+                document.getElementById('s-prem-expires').textContent=res.premium_expires?'до '+res.premium_expires:'';
+            }
+            document.getElementById('success-screen').classList.add('active');
+        }else{
+            toast(res.error||'Ошибка');b.classList.remove('loading');b.disabled=false;
+        }
+    }catch(e){toast('Ошибка сети');b.classList.remove('loading');b.disabled=false}
+}
+
+function doSkip(){
+    saveUser({name:'Гость',user_id:null,guest:true});
+    hideScr('reg-screen');
+    loadApp();
+}
+
+function goApp(){hideScr('success-screen');loadApp();}
+
+function loadApp(){
+    const f=document.getElementById('app');
+    const u=getUser();
+    let url=APP_URL;
+    if(u&&u.user_id)url+='?app_user_id='+u.user_id;
+    f.src=url;
+    f.onload=()=>f.classList.add('vis');
+}
+
+// Inputs
+document.addEventListener('DOMContentLoaded',()=>{
+    const ni=document.getElementById('r-name');
+    ni.addEventListener('input',()=>{ni.classList.remove('error');document.getElementById('r-name-h').textContent='';document.getElementById('r-name-h').classList.remove('error')});
+    ni.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();document.getElementById('r-vk').focus()}});
+    document.getElementById('r-vk').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();document.getElementById('r-tg').focus()}});
+    document.getElementById('r-tg').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doRegister()}});
+
+    const splash=document.getElementById('splash');
+    const user=getUser();
+    if(user&&user.user_id){
+        setTimeout(()=>{splash.classList.add('hide');setTimeout(()=>{splash.remove();loadApp()},500)},1200);
+    }else{
+        setTimeout(()=>{splash.classList.add('hide');setTimeout(()=>{splash.remove();document.getElementById('reg-screen').classList.add('active')},500)},1600);
+    }
+});
+</script>
 </body>
 </html>
