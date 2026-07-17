@@ -1468,7 +1468,7 @@ async def link_reject_callback(callback: CallbackQuery):
 async def cmd_alarm(message: Message):
     """Показывает список топливных будильников или инструкцию."""
     telegram_id = _tg_id(message)
-    uid = await _get_uid(telegram_id)
+    uid = await get_user_id_by_telegram_id(telegram_id)
     if not uid:
         await message.answer("Сначала нажми /start")
         return
@@ -1536,7 +1536,7 @@ async def cmd_alarm(message: Message):
 async def cmd_referral(message: Message):
     """Показывает реферальный код или применяет чужой."""
     telegram_id = _tg_id(message)
-    uid = await _get_uid(telegram_id)
+    uid = await get_user_id_by_telegram_id(telegram_id)
     if not uid:
         await message.answer("Сначала нажми /start")
         return
@@ -3424,7 +3424,7 @@ async def handle_report_extras_input(message: Message, state: FSMContext):
         status = data.get("report_status", "yes")
         if data.get("report_price_only"):
             # Сразу сохраняем
-            uid = await _ensure_message_user(message)
+            uid = await get_or_create_user(message)
             await add_report(
                 station_id=station_id,
                 user_id=uid,
@@ -3482,7 +3482,6 @@ async def handle_report_extras_input(message: Message, state: FSMContext):
             f"Что ещё добавить?",
             reply_markup=report_extras_keyboard(station_id, fuel, status),
         )
-    await callback.answer()
 
 
 # === Report flow: поиск АЗС по адресу ===

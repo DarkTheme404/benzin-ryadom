@@ -1835,12 +1835,13 @@
     }
     showLoading();
     try {
+      const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
       const body = {
         station_id: stationId,
         fuel_type: fuel,
         available,
-        telegram_id: tgId,
-        first_name: tg?.initDataUnsafe?.user?.first_name || 'User',
+        [idParam]: tgId,
+        first_name: tg?.initDataUnsafe?.user?.first_name || state.vkFirstName || 'User',
       };
       if (price) body.price = parseFloat(price);
       if (queue !== undefined && queue !== null && queue !== '') body.queue_size = parseInt(queue);
@@ -1898,12 +1899,13 @@
 
     showLoading();
     try {
+      const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
       const body = {
         station_id: stationId,
         fuel_type: fuel,
         rating: rating,
-        telegram_id: tgId,
-        first_name: tg?.initDataUnsafe?.user?.first_name || 'User',
+        [idParam]: tgId,
+        first_name: tg?.initDataUnsafe?.user?.first_name || state.vkFirstName || 'User',
       };
       if (comment && comment.trim()) body.comment = comment.trim();
       await api('/api/reviews', {
@@ -1964,6 +1966,7 @@
           dom.profileName.textContent = userInfo.first_name;
           dom.profileId.textContent = 'VK ID: ' + userInfo.id;
           state.vkUserId = userInfo.id;
+          state.vkFirstName = userInfo.first_name;
           dom.profileAvatar.textContent = userInfo.first_name[0].toUpperCase();
           dom.profileBigAvatar.textContent = userInfo.first_name[0].toUpperCase();
           try {

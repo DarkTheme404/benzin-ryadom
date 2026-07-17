@@ -599,8 +599,8 @@ async def handle_alarm(peer_id: int) -> None:
     is_premium = bool(sub and sub.get("tier"))
 
     if not is_premium:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💎 Купить Premium", callback_data="premium:start")],
+        kb = vk_keyboard([
+            [_callback_button("💎 Купить Premium", {"a": "premium"}, "positive")],
         ])
         await _vk_send(peer_id,
             "⛽ <b>Топливный будильник</b>\n\n"
@@ -658,7 +658,7 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{settings.BACKEND_URL}/api/referral/apply",
-                    json={"telegram_id": peer_id, "code": code},
+                    json={"vk_user_id": peer_id, "code": code},
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as r:
                     data = await r.json()

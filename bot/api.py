@@ -1472,6 +1472,7 @@ async def handle_create_report(request):
     fuel_type = data.get("fuel_type")
     available = data.get("available")
     telegram_id = data.get("telegram_id")
+    vk_user_id = data.get("vk_user_id")
     first_name = str(data.get("first_name", "MiniApp User"))[:64]
     price = data.get("price")
     queue_size = data.get("queue_size")
@@ -1495,6 +1496,8 @@ async def handle_create_report(request):
         )
     if telegram_id is not None and not isinstance(telegram_id, int):
         return json_resp({"error": "telegram_id must be int"}, status=400)
+    if vk_user_id is not None and not isinstance(vk_user_id, int):
+        return json_resp({"error": "vk_user_id must be int"}, status=400)
     if price is not None and (not isinstance(price, (int, float)) or price < 0 or price > 500):
         return json_resp({"error": "price must be 0..500"}, status=400)
     if queue_size is not None and (not isinstance(queue_size, int) or queue_size < 0 or queue_size > 100):
@@ -1514,6 +1517,10 @@ async def handle_create_report(request):
     if telegram_id:
         await upsert_user(telegram_id=telegram_id, first_name=first_name)
         user_id = await get_user_id_by_telegram_id(telegram_id)
+    elif vk_user_id:
+        from db import upsert_user_vk, get_user_id_by_vk_id
+        await upsert_user_vk(vk_user_id)
+        user_id = await get_user_id_by_vk_id(vk_user_id)
 
     report_id = await add_report(
         station_id=station_id,
@@ -1573,6 +1580,7 @@ async def handle_price_update(request):
     available = data.get("available", True)
     queue_size = data.get("queue_size")
     telegram_id = data.get("telegram_id")
+    vk_user_id = data.get("vk_user_id")
     first_name = str(data.get("first_name", "PriceUpdate"))[:64]
 
     if not station_id or not isinstance(station_id, int):
@@ -1586,6 +1594,10 @@ async def handle_price_update(request):
     if telegram_id:
         await upsert_user(telegram_id=telegram_id, first_name=first_name)
         user_id = await get_user_id_by_telegram_id(telegram_id)
+    elif vk_user_id:
+        from db import upsert_user_vk, get_user_id_by_vk_id
+        await upsert_user_vk(vk_user_id)
+        user_id = await get_user_id_by_vk_id(vk_user_id)
 
     report_id = await add_report(
         station_id=station_id,
@@ -1793,6 +1805,7 @@ async def handle_create_review(request):
     rating = data.get("rating")
     comment = data.get("comment")
     telegram_id = data.get("telegram_id")
+    vk_user_id = data.get("vk_user_id")
     first_name = str(data.get("first_name", "MiniApp User"))[:64]
 
     if not station_id or not isinstance(station_id, int):
@@ -1805,14 +1818,20 @@ async def handle_create_review(request):
         return json_resp({"error": "comment must be string ≤ 1000 chars"}, status=400)
     if telegram_id is not None and not isinstance(telegram_id, int):
         return json_resp({"error": "telegram_id must be int"}, status=400)
+    if vk_user_id is not None and not isinstance(vk_user_id, int):
+        return json_resp({"error": "vk_user_id must be int"}, status=400)
 
     user_id = None
     if telegram_id:
         await upsert_user(telegram_id=telegram_id, first_name=first_name)
         user_id = await get_user_id_by_telegram_id(telegram_id)
+    elif vk_user_id:
+        from db import upsert_user_vk, get_user_id_by_vk_id
+        await upsert_user_vk(vk_user_id)
+        user_id = await get_user_id_by_vk_id(vk_user_id)
 
     if not user_id:
-        return json_resp({"error": "telegram_id is required for reviews"}, status=400)
+        return json_resp({"error": "telegram_id or vk_user_id is required for reviews"}, status=400)
 
     review_id = await add_review(
         station_id=station_id,
