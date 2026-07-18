@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import '../config/theme.dart';
 import '../models/station.dart';
 import '../services/api_service.dart';
@@ -15,15 +17,16 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  final Completer<GoogleMapController> _mapController = Completer();
+  final MapController _mapController = MapController();
   final LocationService _locationService = LocationService();
   final ApiService _api = ApiService();
-  final Set<Marker> _markers = {};
+
   List<Station> _stations = [];
   bool _isLoading = true;
   String _selectedFuel = '95';
   Station? _selectedStation;
   bool _showSheet = false;
+  LatLng? _userLocation;
 
   static const LatLng _defaultCenter = LatLng(56.8587, 40.9957);
 
@@ -36,6 +39,7 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _initLocation() async {
     final pos = await _locationService.getCurrentPosition();
     if (pos != null) {
+      _userLocation = LatLng(pos.latitude, pos.longitude);
       _loadStations(pos.latitude, pos.longitude);
     } else {
       _loadStations(_defaultCenter.latitude, _defaultCenter.longitude);
@@ -43,10 +47,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _loadStations(double lat, double lon) async {
-    setState(() {
-      _isLoading = true;
-    });
-
+    setState(() => _isLoading = true);
     try {
       final stations = await _api.getStations(
         lat: lat,
@@ -56,48 +57,15 @@ class _MapScreenState extends State<MapScreen> {
       setState(() {
         _stations = stations;
         _isLoading = false;
-        _buildMarkers();
       });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
+    } catch (_) {
+      setState(() => _isLoading = false);
     }
   }
 
-  void _buildMarkers() {
-    _markers.clear();
-    for (final station in _stations) {
-      if (station.lat == null || station.lon == null) continue;
-
-      final color = _getMarkerColor(station.fuelStatus);
-
-      _markers.add(
-        Marker(
-          markerId: MarkerId('station_${station.id}'),
-          position: LatLng(station.lat!, station.lon!),
-          icon: BitmapDescriptor.defaultMarkerWithHue(color),
-          onTap: () => _onStationTap(station),
-          infoWindow: InfoWindow(
-            title: station.name,
-            snippet: station.mainPrice ?? 'Нет данных',
-          ),
-        ),
-      );
-    }
-  }
-
-  double _getMarkerColor(String status) {
-    switch (status) {
-      case 'in_stock':
-        return BitmapDescriptor.hueGreen;
-      case 'partial':
-        return BitmapDescriptor.hueYellow;
-      case 'out_of_stock':
-        return BitmapDescriptor.hueRed;
-      default:
-        return BitmapDescriptor.hueAzure;
-    }
+  void _onMapEvent(MapEvent event) {
+    final center = event.camera.center;
+    _loadStations(center.latitude, center.longitude);
   }
 
   void _onStationTap(Station station) {
@@ -112,35 +80,44 @@ class _MapScreenState extends State<MapScreen> {
     _initLocation();
   }
 
+  Color _markerColor(String status) {
+    switch (status) {
+      case 'in_stock':
+        return const Color(0xFF22c55e);
+      case 'partial':
+        return const Color(0xFFeab308);
+      case 'out_of_stock':
+        return const Color(0xFFef4444);
+      default:
+        return const Color(0xFF6b7280);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: _defaultCenter,
-              zoom: 12,
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _userLocation ?? _defaultCenter,
+              initialZoom: 12,
+              onMapEvent: _onMapEvent,
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              ),
             ),
-            onMapCreated: (controller) {
-              if (!_mapController.isCompleted) {
-                _mapController.complete(controller);
-              }
-            },
-            markers: _markers,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
-            mapToolbarEnabled: false,
-            zoomControlsEnabled: false,
-            onCameraIdle: () async {
-              final controller = await _mapController.future;
-              final bounds = await controller.getVisibleRegion();
-              final center = LatLng(
-                (bounds.southwest.latitude + bounds.northeast.latitude) / 2,
-                (bounds.southwest.longitude + bounds.northeast.longitude) / 2,
-              );
-              _loadStations(center.latitude, center.longitude);
-            },
+            children: [
+              TileLayer(
+                urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                subdomains: const ['a', 'b', 'c'],
+                userAgentPackageName: 'com.benzinryadom.app',
+              ),
+              MarkerLayer(markers: _buildMarkers()),
+              if (_userLocation != null)
+                MarkerLayer(markers: [_buildUserMarker()]),
+            ],
           ),
           if (_isLoading)
             const Positioned(
@@ -159,7 +136,7 @@ class _MapScreenState extends State<MapScreen> {
             child: _buildFuelChips(),
           ),
           Positioned(
-            bottom: 16,
+            bottom: _showSheet ? 280 : 16,
             right: 16,
             child: _buildLocationButton(),
           ),
@@ -178,6 +155,34 @@ class _MapScreenState extends State<MapScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  List<Marker> _buildMarkers() {
+    return _stations.where((s) => s.lat != null && s.lon != null).map((station) {
+      final color = _markerColor(station.fuelStatus);
+
+      return Marker(
+        point: LatLng(station.lat!, station.lon!),
+        width: 36,
+        height: 44,
+        child: GestureDetector(
+          onTap: () => _onStationTap(station),
+          child: _StationMarker(
+            color: color,
+            price: station.mainPrice,
+          ),
+        ),
+      );
+    }).toList();
+  }
+
+  Marker _buildUserMarker() {
+    return Marker(
+      point: _userLocation!,
+      width: 24,
+      height: 24,
+      child: const _UserLocationMarker(),
     );
   }
 
@@ -231,16 +236,143 @@ class _MapScreenState extends State<MapScreen> {
       onPressed: () async {
         final pos = await _locationService.getCurrentPosition();
         if (pos != null) {
-          final controller = await _mapController.future;
-          controller.animateCamera(
-            CameraUpdate.newLatLngZoom(
-              LatLng(pos.latitude, pos.longitude),
-              14,
-            ),
-          );
+          final loc = LatLng(pos.latitude, pos.longitude);
+          setState(() => _userLocation = loc);
+          _mapController.move(loc, 14);
         }
       },
       child: const Icon(Icons.my_location, color: AppTheme.accent),
+    );
+  }
+}
+
+class _StationMarker extends StatelessWidget {
+  final Color color;
+  final String? price;
+
+  const _StationMarker({required this.color, this.price});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          constraints: const BoxConstraints(minWidth: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(4),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Text(
+            price ?? '⛽',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        CustomPaint(
+          size: const Size(12, 8),
+          painter: _TrianglePainter(color: color),
+        ),
+      ],
+    );
+  }
+}
+
+class _TrianglePainter extends CustomPainter {
+  final Color color;
+  _TrianglePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = color;
+    final path = ui.Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _UserLocationMarker extends StatefulWidget {
+  const _UserLocationMarker();
+
+  @override
+  State<_UserLocationMarker> createState() => _UserLocationMarkerState();
+}
+
+class _UserLocationMarkerState extends State<_UserLocationMarker>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat(reverse: false);
+    _anim = Tween<double>(begin: 0.3, end: 0.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: 20 + (1 - _anim.value) * 16,
+              height: 20 + (1 - _anim.value) * 16,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppTheme.info.withValues(alpha: _anim.value),
+              ),
+            ),
+            Container(
+              width: 14,
+              height: 14,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppTheme.info,
+                border: Border.all(color: Colors.white, width: 3),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 4,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
