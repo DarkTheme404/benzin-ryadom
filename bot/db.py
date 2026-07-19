@@ -591,6 +591,14 @@ async def _create_schema_pg(pool):
         except Exception as e:
             logger.warning(f"PG migration link rate limit: {e}")
 
+        # 3f. password_hash, vk_profile_link, tg_profile_link
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS vk_profile_link TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS tg_profile_link TEXT")
+        except Exception as e:
+            logger.warning(f"PG migration password_hash/profile_links: {e}")
+
         # 3e. pending_link_confirmations
         try:
             await conn.execute("""
