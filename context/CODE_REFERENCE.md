@@ -203,3 +203,57 @@
 - `get_main_status(station)` — **агрегированный статус станции (icon + price)**
 - `format_for_vk(text)` — конвертация HTML → VK
 
+## Flutter App (flutter-app/)
+
+### Точка входа
+- `lib/main.dart` — SplashScreen → RegistrationScreen/GuestMode → MainScreen
+
+### Авторизация
+- `lib/screens/registration_screen.dart` — _register(), _login(), _skip()
+- Регистрация: name + password + vk_link + tg_link → POST /api/user/register
+- Вход: name + password → POST /api/user/login
+- **Критично**: Flutter хранит `telegramId` (не `userId`) для API запросов
+- `StorageService.userId` = internal id, `StorageService.telegramId` = для API
+- `ApiService.setUserId(telegramId)` — устанавливает `telegram_id` параметр
+
+### API Service
+- `lib/services/api_service.dart` — 40+ эндпоинтов
+- `_get()` / `_post()` — с `telegram_id` параметром автоматически
+- `registerUser(body)` — longTimeout (60s)
+- `loginUser(name, password)` — longTimeout (60s)
+- `getStations(lat, lon, fuel)` — GET /api/stations
+- `getStationsByCity(city, fuel)` — GET /api/stations/by-city
+- `searchStations(q)` — GET /api/search
+- `getUserProfile()` — GET /api/user/profile
+
+### Модель станции
+- `lib/models/station.dart` — `Station.fromJson()` парсит `statuses[]` массив
+- `fuelStatusForType(fuelType)` — вычисляет статус наличия (available/partial/unavailable)
+- Не использует `prices{}` или `availability{}` — бэкенд отдаёт `statuses[]`
+
+### Карта
+- `lib/screens/map_screen.dart` — flutter_map + OpenStreetMap
+- `_loadStations(lat, lon)` — загружает станции при движении карты
+- `_onMapEvent()` — debounce 800ms
+- Маркеры: зелёный (available), жёлтый (partial), красный (unavailable), серый (unknown)
+
+### Бэкенд: регистрация
+- `bot/api.py:handle_user_register` — POST /api/user/register
+  - body: {name, password, device_id, vk_link?, tg_link?}
+  - Хеширует пароль через hashlib.pbkdf2_hmac (не bcrypt!)
+  - VK lookup: сначала по numeric vk_id, потом по screen_name
+  - Возвращает: {ok, user_id, telegram_id, account_type, name, ...}
+- `bot/api.py:handle_user_login` — POST /api/user/login
+  - body: {name, password}
+  - Ищет по имени (case-insensitive), проверяет хеш
+  - Возвращает: {ok, user_id, telegram_id, account_type, name, premium, ...}
+
+### Бэкенд: пароль
+- Колонка `users.password_hash` — формат: `{hash_hex}:{salt_hex}`
+- Хеш: hashlib.pbkdf2_hmac('sha256', password, salt, 100000)
+- Проверка: split(':') → rebuild hash → compare hex
+
+### Бэкенд: рефералы (Elite gate)
+- `bot/db.py:record_referral_commission()` — проверяет `referrer_tier in (elite,) or is_founder()`
+- Только Elite/Founder рефереры получают 50% комиссии
+

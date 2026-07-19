@@ -138,3 +138,35 @@
 **Было:** `*params, limit` передавалось в conn.fetch(), но SQL использовал `${first_idx}` и `${limit_idx}` которые не соответствовали переданным параметрам. Для запроса "Лукойл" — SQL期待 $1 (word), $2 (relevance), $3 (limit), но передавалось только 2 значения.
 **Стало:** `params.append(words[0]); first_idx=len(params); params.append(limit); limit_idx=len(params); conn.fetch(sql, *params)`.
 **Влияние:** Все поисковые запросы через /api/search крашились с 500 Internal Server Error.
+
+## 19.07.2026 — Flutter авторизация + password + referral Elite gate
+
+### КРИТИЧНЫЕ
+- **Flutter: API ID mismatch** — Flutter шлёт `telegram_id=<user_id>`, а API ищет по колонке `telegram_id` (разные значения). Вернулись пустые данные, карта пуста, премиум не виден.
+  - **Исправление**: register/login возвращают `telegram_id`, Flutter хранит `telegramId` отдельно от `userId`
+- **Backend: password_hash колонка не существовала в PostgreSQL** — only SQLite миграция была добавлена. На Render (PG) крашился register/login с 500.
+  - **Исправление**: `ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT` в `_create_schema_pg`
+- **Backend: bcrypt не устанавливается на Render** — native модуль fails during pip install. Register крашился с ImportError.
+  - **Исправление**: заменён на `hashlib.pbkdf2_hmac` (stdlib, no compilation)
+- **Flutter: _storage.userId = userId** — был вызов несуществующего метода `setUserId()`. Крашил register.
+  - **Исправление**: используется setter `_storage.userId = userId`
+- **Flutter: Path.moveTo/lineTo не найден** — `flutter_map` использует `ui.Path`, не `dart:ui Path`. 5 compile errors в map_screen.dart.
+  - **Исправление**: импорт `dart:ui as ui`, `_TrianglePainter` использует `ui.Path()`
+
+### ВЫСОКИЕ
+- **Flutter: registration_screen.dart — merged register/login** — edit失误 deleted _login() method entirely.
+  - **Исправление**: _login() method восстановлен отдельно
+- **Flutter: mounted check отсутствовал** — `setState()` вызывался после `dispose()` при быстрой навигации.
+  - **Исправление**: добавлены `if (!mounted) return;` перед каждым `setState()`
+- **Flutter: Render timeout** — стандартный 15s timeout не хватало для cold start Render Free (~30-60s). Register/logout показывали "Ошибка сети".
+  - **Исправление**: `ApiConfig.longTimeout = 60s` для register/login
+- **Mini App: referral commission без проверки тарифа** — любой реферер получал 50% комиссии, даже Free.
+  - **Исправление**: `record_referral_commission()` проверяет referrer tier (Elite/Founder only)
+- **Mini App: referral text** — не было указания на Elite ограничение.
+  - **Исправление**: добавлено "Доступно для тарифов Элит и выше"
+
+### НИЗКИЕ
+- **Flutter: unused imports** — `dart:convert`, `dart:ui`, `../config/api.dart`. Warning.
+  - **Исправление**: удалены
+- **Flutter: `__` variable** — `SplashScreen` использовал `__` вместо `_c`. Info warning.
+  - **Исправление**: переименовано
