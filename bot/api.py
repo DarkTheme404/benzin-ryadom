@@ -3306,8 +3306,9 @@ async def handle_user_register(request):
         return json_resp({"error": "failed to create user"}, status=500)
 
     # Хешируем пароль и сохраняем
-    import bcrypt
-    pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    import hashlib, os
+    salt = os.urandom(16)
+    pw_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000).hex() + ':' + salt.hex()
     if USE_SQLITE:
         await _fetch("UPDATE users SET password_hash = ? WHERE id = ?", pw_hash, uid)
         await db._db.commit()
@@ -3387,9 +3388,11 @@ async def handle_user_login(request):
     if not pw_hash:
         return json_resp({"error": "У этого аккаунта нет пароля. Войдите через Telegram или VK."}, status=400)
 
-    import bcrypt
+    import hashlib
     try:
-        if not bcrypt.checkpw(password.encode("utf-8"), pw_hash.encode("utf-8")):
+        stored_hash, stored_salt = pw_hash.split(':')
+        check_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), bytes.fromhex(stored_salt), 100000).hex()
+        if check_hash != stored_hash:
             return json_resp({"error": "Неверный пароль"}, status=401)
     except Exception:
         return json_resp({"error": "Ошибка проверки пароля"}, status=500)
