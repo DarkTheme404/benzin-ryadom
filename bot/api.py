@@ -2425,6 +2425,7 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/account/link/reject", handle_account_link_reject_action)
     app.router.add_get("/api/account/link/pending", handle_account_link_pending)
     app.router.add_post("/api/account/link/initiate", handle_account_link_initiate)
+    app.router.add_post("/api/account/link-by-profile", handle_account_link_by_profile)
     app.router.add_post("/api/account/unlink", handle_account_unlink)
     # Fuel alarms
     app.router.add_post("/api/fuel-alarm/create", handle_fuel_alarm_create)
@@ -3105,6 +3106,122 @@ async def handle_account_link_initiate(request):
             logger.warning(f"link initiate TG notify failed: {e}")
 
     return json_resp({"ok": True, "confirmation_id": confirm_id, "message": "Запрос отправлен."})
+
+
+async def handle_account_link_by_profile(request):
+    """POST /api/account/link-by-profile — прямая привязка по ссылке на профиль.
+
+    Body: {telegram_id OR vk_user_id, profile_url}
+    profile_url: vk.com/username, t.me/username, @username, или просто username.
+    Привязывает bidirectional без подтверждения.
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    from_tg = body.get("telegram_id")
+    from_vk = body.get("vk_user_id")
+    profile_url = (body.get("profile_url") or "").strip()
+
+    if not profile_url:
+        return json_resp({"error": "profile_url required"}, status=400)
+    if not from_tg and not from_vk:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+
+    import re
+    # Извлекаем username из ссылки
+    username = profile_url
+    # vk.com/username или vk.com/id12345
+    m = re.search(r'vk\.com/(\w+)', profile_url)
+    if m:
+        username = m.group(1)
+    # t.me/username
+    m = re.search(r't\.me/(\w+)', profile_url)
+    if m:
+        username = m.group(1)
+    username = username.strip().lstrip("@")
+
+    if not username:
+        return json_resp({"error": "Не удалось извлечь username из ссылки"}, status=400)
+
+    from db import (
+        get_user_id_by_telegram_id, get_user_id_by_vk_id,
+        find_vk_user_by_screen_name, find_tg_user_by_username,
+        upsert_user_vk, link_accounts_direct,
+    )
+
+    # Находим текущего пользователя
+    current_uid = None
+    if from_tg:
+        current_uid = await get_user_id_by_telegram_id(int(from_tg))
+    elif from_vk:
+        current_uid = await get_user_id_by_vk_id(int(from_vk))
+    if not current_uid:
+        return json_resp({"error": "Сначала запусти бота"}, status=404)
+
+    # Ищем целевого пользователя
+    target_uid = None
+    target_name = ""
+
+    # Сначала пробуем найти VK по screen_name
+    if username.isdigit():
+        target_uid = await get_user_id_by_vk_id(int(username))
+    else:
+        # Пробуем VK screen_name
+        vk_id = await find_vk_user_by_screen_name(username)
+        if vk_id:
+            target_uid = await get_user_id_by_vk_id(vk_id)
+        else:
+            # Пробуем TG username
+            tg_id = await find_tg_user_by_username(username)
+            if tg_id:
+                target_uid = await get_user_id_by_telegram_id(tg_id)
+            else:
+                # Пробуем VK API для resolve
+                vk_token = os.environ.get("VK_TOKEN", "")
+                if vk_token:
+                    try:
+                        async with aiohttp.ClientSession() as sess:
+                            async with sess.get(
+                                "https://api.vk.com/method/users.get",
+                                params={
+                                    "user_ids": username,
+                                    "access_token": vk_token,
+                                    "v": "5.199",
+                                    "fields": "screen_name,first_name",
+                                },
+                                timeout=aiohttp.ClientTimeout(total=5),
+                            ) as r:
+                                data = await r.json()
+                                if data.get("response") and len(data["response"]) > 0:
+                                    vk_user = data["response"][0]
+                                    resolved_id = vk_user.get("id")
+                                    if resolved_id:
+                                        target_uid = await upsert_user_vk(
+                                            resolved_id,
+                                            first_name=vk_user.get("first_name", ""),
+                                            screen_name=vk_user.get("screen_name", username),
+                                        )
+                                        target_name = vk_user.get("first_name", "")
+                    except Exception as e:
+                        logger.warning(f"VK API resolve failed: {e}")
+
+    if not target_uid:
+        return json_resp({"error": "Пользователь не найден. Проверь ссылку или username."}, status=404)
+
+    # Прямая привязка
+    result = await link_accounts_direct(current_uid, target_uid)
+    if not result.get("ok"):
+        return json_resp({"error": result.get("error", "Ошибка привязки")}, status=400)
+
+    return json_resp({
+        "ok": True,
+        "message": "Аккаунты привязаны!",
+        "target_name": target_name,
+    })
 
 
 async def handle_account_unlink(request):

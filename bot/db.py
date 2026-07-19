@@ -4761,6 +4761,59 @@ async def link_accounts_by_vk(vk_id: int, telegram_id: int) -> dict:
     return {"ok": True, "vk_id": vk_id, "telegram_id": telegram_id}
 
 
+async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
+    """Прямая привязка двух аккаунтов по профилю (без подтверждения).
+
+    Bidirectional: оба аккаунта получают linked_user_id друг друга.
+    """
+    if current_uid == target_uid:
+        return {"ok": False, "error": "Нельзя привязать аккаунт к самому себе"}
+
+    rate = await check_link_rate_limit(current_uid)
+    if not rate.get("ok"):
+        return rate
+
+    # Проверяем, не привязан ли уже кто-то из них
+    if USE_SQLITE:
+        s_row = await _fetch("SELECT linked_user_id FROM users WHERE id = ?", current_uid, one=True)
+        t_row = await _fetch("SELECT linked_user_id FROM users WHERE id = ?", target_uid, one=True)
+    else:
+        async with _db.acquire() as conn:
+            s_row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", current_uid)
+            t_row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", target_uid)
+
+    s_linked = (s_row.get("linked_user_id") if s_row else None) if isinstance(s_row, dict) else (s_row[0] if s_row else None)
+    t_linked = (t_row.get("linked_user_id") if t_row else None) if isinstance(t_row, dict) else (t_row[0] if t_row else None)
+
+    if s_linked:
+        return {"ok": False, "error": "У тебя уже есть привязанный аккаунт. Сначала отвяжи текущий."}
+    if t_linked:
+        return {"ok": False, "error": "Этот пользователь уже привязан к другому аккаунту."}
+
+    # Bidirectional linking
+    try:
+        if USE_SQLITE:
+            await _execute(
+                "UPDATE users SET linked_user_id = ? WHERE id = ?",
+                target_uid, current_uid,
+            )
+            await _execute(
+                "UPDATE users SET linked_user_id = ? WHERE id = ?",
+                current_uid, target_uid,
+            )
+            await _db.commit()
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute("UPDATE users SET linked_user_id = $1 WHERE id = $2", target_uid, current_uid)
+                await conn.execute("UPDATE users SET linked_user_id = $1 WHERE id = $2", current_uid, target_uid)
+    except Exception as e:
+        logger.warning(f"link_accounts_direct error: {e}")
+        return {"ok": False, "error": "Ошибка привязки"}
+
+    await record_link_operation(current_uid)
+    return {"ok": True}
+
+
 async def find_tg_user_by_username(username: str) -> int | None:
     """Находит telegram_id по username (без @). Возвращает None если не найден."""
     clean = username.strip().lstrip("@").lower()

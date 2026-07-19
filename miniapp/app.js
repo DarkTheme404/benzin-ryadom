@@ -3321,17 +3321,18 @@
           return;
         }
         const body = platform.vk
-          ? { from_vk_user_id: uid, target_username: target }
-          : { from_telegram_id: uid, target_username: target };
+          ? { vk_user_id: uid, profile_url: target }
+          : { telegram_id: uid, profile_url: target };
         try {
-          const res = await api('/api/account/link/initiate', {
+          const res = await api('/api/account/link-by-profile', {
             method: 'POST',
             body: JSON.stringify(body),
           });
           if (res.ok) {
-            if (status) { status.textContent = '✅ Запрос отправлен в VK! Ожидай подтверждения.'; status.style.color = '#34d399'; }
-            showToast('Запрос отправлен!', 'success');
+            if (status) { status.textContent = '✅ ' + (res.message || 'Аккаунты привязаны!'); status.style.color = '#34d399'; }
+            showToast('Аккаунты привязаны!', 'success');
             input.value = '';
+            loadProfile();
           } else {
             if (status) { status.textContent = '❌ ' + (res.error || 'Ошибка'); status.style.color = '#ef4444'; }
           }
@@ -3359,17 +3360,18 @@
           return;
         }
         const body = platform.vk
-          ? { from_vk_user_id: uid, target_username: target }
-          : { from_telegram_id: uid, target_username: target };
+          ? { vk_user_id: uid, profile_url: target }
+          : { telegram_id: uid, profile_url: target };
         try {
-          const res = await api('/api/account/link/initiate', {
+          const res = await api('/api/account/link-by-profile', {
             method: 'POST',
             body: JSON.stringify(body),
           });
           if (res.ok) {
-            if (status) { status.textContent = '✅ Запрос отправлен в Telegram! Ожидай подтверждения.'; status.style.color = '#34d399'; }
-            showToast('Запрос отправлен!', 'success');
+            if (status) { status.textContent = '✅ ' + (res.message || 'Аккаунты привязаны!'); status.style.color = '#34d399'; }
+            showToast('Аккаунты привязаны!', 'success');
             input.value = '';
+            loadProfile();
           } else {
             if (status) { status.textContent = '❌ ' + (res.error || 'Ошибка'); status.style.color = '#ef4444'; }
           }
