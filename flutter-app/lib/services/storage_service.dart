@@ -20,6 +20,15 @@ class StorageService {
     }
   }
 
+  int? get telegramId => _prefs?.getInt('telegram_id');
+  set telegramId(int? value) {
+    if (value != null) {
+      _prefs?.setInt('telegram_id', value);
+    } else {
+      _prefs?.remove('telegram_id');
+    }
+  }
+
   bool get isVkUser => _prefs?.getBool('is_vk_user') ?? false;
   set isVkUser(bool value) => _prefs?.setBool('is_vk_user', value);
 

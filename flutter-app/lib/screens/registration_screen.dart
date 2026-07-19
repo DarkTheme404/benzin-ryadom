@@ -72,8 +72,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       if (!mounted) return;
       if (resp['ok'] == true && resp['user_id'] != null) {
         final userId = resp['user_id'] as int;
+        final telegramId = resp['telegram_id'] as int? ?? userId;
         _storage.userId = userId;
-        _api.setUserId(userId);
+        _storage.telegramId = telegramId;
+        _api.setUserId(telegramId);
 
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -115,8 +117,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       if (!mounted) return;
       if (resp['ok'] == true && resp['user_id'] != null) {
         final userId = resp['user_id'] as int;
+        final telegramId = resp['telegram_id'] as int? ?? userId;
         _storage.userId = userId;
-        _api.setUserId(userId);
+        _storage.telegramId = telegramId;
+        _api.setUserId(telegramId);
 
         if (mounted) {
           Navigator.of(context).pushReplacement(

@@ -3278,13 +3278,30 @@ async def handle_user_register(request):
 
     from db import USE_SQLITE, _fetch, upsert_user_vk, upsert_user, get_user_id_by_vk_id, get_user_id_by_telegram_id
 
-    # Пытаемся найти существующего пользователя по VK ID
+    # Пытаемся найти существующего пользователя по VK ID или screen_name
     uid = None
+    tg_id_for_client = None  # telegram_id для отправки клиенту
+
     if vk_username and vk_username.isdigit():
         uid = await get_user_id_by_vk_id(int(vk_username))
         if not uid:
             await upsert_user_vk(int(vk_username), first_name=name)
             uid = await get_user_id_by_vk_id(int(vk_username))
+    elif vk_username:
+        # Ищем по screen_name (юзернейм VK)
+        if USE_SQLITE:
+            row = await _fetch(
+                "SELECT id, telegram_id FROM users WHERE screen_name = ? LIMIT 1",
+                vk_username, one=True,
+            )
+        else:
+            row = await _fetch(
+                "SELECT id, telegram_id FROM users WHERE screen_name = $1 LIMIT 1",
+                vk_username, one=True,
+            )
+        if row:
+            uid = row["id"] if isinstance(row, dict) else row[0]
+            tg_id_for_client = row["telegram_id"] if isinstance(row, dict) else row[1]
 
     # Если не нашли — создаём нового с уникальным telegram_id
     if not uid:
@@ -3301,6 +3318,7 @@ async def handle_user_register(request):
         else:
             await upsert_user(fake_tg_id, username=vk_username or tg_username, first_name=name)
             uid = await get_user_id_by_telegram_id(fake_tg_id)
+        tg_id_for_client = fake_tg_id
 
     if not uid:
         return json_resp({"error": "failed to create user"}, status=500)
@@ -3335,9 +3353,27 @@ async def handle_user_register(request):
     from db import get_user_premium
     premium = await get_user_premium(uid)
 
+    # Если telegram_id ещё не определён — берём из БД
+    if tg_id_for_client is None:
+        if USE_SQLITE:
+            urow = await _fetch("SELECT telegram_id FROM users WHERE id = ?", uid, one=True)
+        else:
+            urow = await _fetch("SELECT telegram_id FROM users WHERE id = $1", uid, one=True)
+        if urow:
+            tg_id_for_client = urow["telegram_id"] if isinstance(urow, dict) else urow[0]
+
+    # Определяем тип аккаунта (VK/TG/standalone)
+    account_type = "standalone"
+    if vk_username:
+        account_type = "vk"
+    elif tg_username:
+        account_type = "telegram"
+
     return json_resp({
         "ok": True,
         "user_id": uid,
+        "telegram_id": tg_id_for_client,
+        "account_type": account_type,
         "name": name,
         "vk_link": vk_link,
         "tg_link": tg_link,
@@ -3370,12 +3406,12 @@ async def handle_user_login(request):
     # Ищем пользователя по имени
     if USE_SQLITE:
         row = await _fetch(
-            "SELECT id, first_name, password_hash FROM users WHERE py_lower(first_name) = py_lower(?) LIMIT 1",
+            "SELECT id, first_name, password_hash, telegram_id FROM users WHERE py_lower(first_name) = py_lower(?) LIMIT 1",
             name, one=True,
         )
     else:
         row = await _fetch(
-            "SELECT id, first_name, password_hash FROM users WHERE LOWER(first_name) = LOWER($1) LIMIT 1",
+            "SELECT id, first_name, password_hash, telegram_id FROM users WHERE LOWER(first_name) = LOWER($1) LIMIT 1",
             name, one=True,
         )
 
@@ -3400,9 +3436,23 @@ async def handle_user_login(request):
     from db import get_user_premium
     premium = await get_user_premium(uid)
 
+    telegram_id = row["telegram_id"] if isinstance(row, dict) else (row[3] if len(row) > 3 else None)
+
+    # Определяем тип аккаунта
+    account_type = "standalone"
+    if isinstance(row, dict):
+        if row.get("vk_id"):
+            account_type = "vk"
+    else:
+        # row is tuple: id, first_name, password_hash, telegram_id
+        # vk_id not selected, but we can check screen_name
+        pass
+
     return json_resp({
         "ok": True,
         "user_id": uid,
+        "telegram_id": telegram_id,
+        "account_type": account_type,
         "name": row["first_name"] if isinstance(row, dict) else row[1],
         "premium": premium.get("tier") if premium else None,
         "premium_expires": str(premium["expires_at"]) if premium and premium.get("expires_at") else None,
