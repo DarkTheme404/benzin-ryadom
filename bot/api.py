@@ -3134,10 +3134,10 @@ async def handle_account_link_by_profile(request):
     import re
     # Извлекаем username из ссылки
     username = profile_url
-    # vk.com/username или vk.com/id12345
-    m = re.search(r'vk\.com/(\w+)', profile_url)
+    # vk.com/username, vk.ru/username, vk.com/id12345
+    m = re.search(r'vk\.(com|ru)/(\w+)', profile_url)
     if m:
-        username = m.group(1)
+        username = m.group(2)
     # t.me/username
     m = re.search(r't\.me/(\w+)', profile_url)
     if m:
