@@ -3236,7 +3236,7 @@ async def handle_account_unlink(request):
     except Exception:
         return json_resp({"error": "invalid json"}, status=400)
 
-    from db import get_user_id_by_any, record_link_operation as _rec_link
+    from db import get_user_id_by_any, record_link_operation as _rec_link, unlink_user
 
     tid = body.get("telegram_id") or body.get("vk_user_id")
     if not tid:
@@ -3246,23 +3246,8 @@ async def handle_account_unlink(request):
     if not uid:
         return json_resp({"error": "user not found"}, status=404)
 
-    if USE_SQLITE:
-        row = await db._fetch("SELECT linked_user_id FROM users WHERE id = ?", uid, one=True)
-        linked_uid = (row["linked_user_id"] if isinstance(row, dict) else (row[0] if row else None))
-        if linked_uid:
-            await _execute("UPDATE users SET linked_user_id = NULL WHERE id = ?", uid)
-            await _execute("UPDATE users SET linked_user_id = NULL WHERE id = ?", linked_uid)
-        await _rec_link(uid)
-    else:
-        async with db._db.acquire() as conn:
-            row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", uid)
-            linked_uid = row["linked_user_id"] if row else None
-            if linked_uid:
-                await conn.execute("UPDATE users SET linked_user_id = NULL WHERE id = $1", uid)
-                await conn.execute("UPDATE users SET linked_user_id = NULL WHERE id = $1", linked_uid)
-        await _rec_link(uid)
-
-    return json_resp({"ok": True, "message": "Аккаунт отвязан."})
+    result = await unlink_user(uid)
+    return json_resp(result)
 
 
 async def handle_premium_trial(request):

@@ -4814,6 +4814,30 @@ async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
     return {"ok": True}
 
 
+async def unlink_user(uid: int) -> dict:
+    """Отвязывает аккаунт: очищает linked_user_id у обоих."""
+    try:
+        if USE_SQLITE:
+            row = await _fetch("SELECT linked_user_id FROM users WHERE id = ?", uid, one=True)
+            linked_uid = (row.get("linked_user_id") if row else None) if isinstance(row, dict) else (row[0] if row else None)
+            if linked_uid:
+                await _execute("UPDATE users SET linked_user_id = NULL WHERE id = ?", uid)
+                await _execute("UPDATE users SET linked_user_id = NULL WHERE id = ?", linked_uid)
+                await _db.commit()
+        else:
+            async with _db.acquire() as conn:
+                row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", uid)
+                linked_uid = row["linked_user_id"] if row else None
+                if linked_uid:
+                    await conn.execute("UPDATE users SET linked_user_id = NULL WHERE id = $1", uid)
+                    await conn.execute("UPDATE users SET linked_user_id = NULL WHERE id = $1", linked_uid)
+        await record_link_operation(uid)
+        return {"ok": True, "message": "Аккаунт отвязан."}
+    except Exception as e:
+        logger.warning(f"unlink_user error: {e}")
+        return {"ok": False, "error": "Ошибка отвязки"}
+
+
 async def find_tg_user_by_username(username: str) -> int | None:
     """Находит telegram_id по username (без @). Возвращает None если не найден."""
     clean = username.strip().lstrip("@").lower()
