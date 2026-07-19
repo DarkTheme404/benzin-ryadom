@@ -430,50 +430,33 @@ async def handle_profile(peer_id: int) -> None:
         text += "\n🎯 Сделай первый отчёт, чтобы получить бейдж 🥉 «Новичок»!"
     await _vk_send(peer_id, text, vk_main_menu())
 async def handle_link(peer_id: int, text: str = "") -> None:
-    """Привязка VK аккаунта к TG.
+    """Привязка VK аккаунта к TG по ссылке на профиль.
 
     Команды:
-    - "link" или "🔗 Привязать" — показать меню
-    - "link_create" — создать 6-значный код
-    - "link_use 123456" — использовать код (когда в TG сгенерировал код)
-    - "link <TG_ID>" — запросить привязку к TG юзеру (pending confirmation)
-    - "link_help" — инструкция
+    - "link" — показать меню
+    - "link <TG_URL>" — привязать по ссылке (t.me/username, @username, username)
     """
     import aiohttp
     backend = settings.BACKEND_URL
 
-    # Парсим подкоманду
-    parts = (text or "").strip().split()
+    parts = (text or "").strip().split(maxsplit=1)
     subcmd = parts[0].lower() if parts else "link"
-    arg = parts[1] if len(parts) >= 2 else ""
+    arg = parts[1].strip() if len(parts) >= 2 else ""
 
-    # === link_help — инструкция ===
-    if subcmd == "link_help" or (subcmd == "link" and arg == "help"):
-        tg_link = f"https://t.me/benzyn_ryadom_bot?start=link_vk_{peer_id}"
-        kb = vk_keyboard([
-            [_link_button("📱 Привязать в Telegram", tg_link)],
-            [_callback_button("◀️ Назад", {"a": "link"}, "secondary")],
-        ])
-        await _vk_send(peer_id,
-            "🔗 <b>Привязка аккаунтов</b>\n\n"
-            "Premium работает и в TG, и в VK, и в Mini App.\n\n"
-            "<b>Быстрый способ:</b>\n"
-            "Нажми кнопку ниже — откроется TG бот.\n"
-            "Нажми «/start» — готово.\n\n"
-            "<b>Через код:</b>\n"
-            "Создай код и введи его в другом боте.\n"
-            "⏱ Код действует 10 минут.",
-            kb,
-        )
-        return
+    # === link <URL> — привязать по ссылке ===
+    if subcmd == "link" and arg:
+        # Очищаем ссылку: убираем https://, http://, t.me/
+        profile_url = arg
+        for prefix in ("https://t.me/", "http://t.me/", "https://telegram.me/", "http://telegram.me/"):
+            if profile_url.lower().startswith(prefix):
+                profile_url = profile_url[len(prefix):]
+                break
 
-    # === link_use 123456 — применить код к TG ===
-    if subcmd == "link_use" and arg:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{backend}/api/account/link/use",
-                    json={"vk_user_id": peer_id, "code": arg.strip()},
+                    f"{backend}/api/account/link-by-profile",
+                    json={"vk_user_id": peer_id, "profile_url": profile_url},
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as r:
                     data = await r.json()
@@ -481,119 +464,29 @@ async def handle_link(peer_id: int, text: str = "") -> None:
                 target_name = data.get("linked_to_name") or "пользователь"
                 await _vk_send(peer_id,
                     f"✅ <b>Аккаунт привязан!</b>\n\n"
-                    f"Твой VK аккаунт привязан к <b>{target_name}</b>.\n\n"
-                    f"Теперь Premium (если есть) работает на всех площадках.",
+                    f"Твой VK привязан к <b>{target_name}</b>.\n"
+                    f"Premium работает на всех площадках.",
                 )
             else:
                 err = data.get("error", "Неизвестная ошибка")
                 await _vk_send(peer_id,
-                    f"❌ <b>Не удалось привязать</b>\n\n"
-                    f"{err}\n\n"
-                    f"Проверь что код введён правильно и не истёк (10 мин).",
+                    f"❌ <b>Не удалось привязать</b>\n\n{err}",
                 )
         except Exception as e:
-            logger.exception(f"handle_link use error: {e}")
+            logger.exception(f"handle_link error: {e}")
             await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
         return
 
-    # === link <TG_ID> — запросить привязку к TG юзеру ===
-    if subcmd == "link" and arg:
-        arg_clean = arg.strip().lstrip("@")
-        if arg_clean.isdigit():
-            tg_id = int(arg_clean)
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        f"{backend}/api/account/link/request",
-                        json={"vk_user_id": peer_id, "telegram_id": tg_id},
-                        timeout=aiohttp.ClientTimeout(total=10),
-                    ) as r:
-                        data = await r.json()
-                if data.get("ok"):
-                    await _vk_send(peer_id,
-                        "✅ <b>Запрос отправлен!</b>\n\n"
-                        "Пользователь получил запрос на подтверждение в Telegram.\n"
-                        "После подтверждения аккаунты будут привязаны.\n\n"
-                        "⏱ Запрос действует 10 минут.",
-                    )
-                else:
-                    err = data.get("error", "Неизвестная ошибка")
-                    await _vk_send(peer_id, f"❌ {err}")
-            except Exception as e:
-                logger.exception(f"handle_link request error: {e}")
-                await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
-            return
-        else:
-            from db import find_tg_user_by_username
-            tg_id = await find_tg_user_by_username(arg_clean)
-            if tg_id:
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(
-                            f"{backend}/api/account/link/request",
-                            json={"vk_user_id": peer_id, "telegram_id": tg_id},
-                            timeout=aiohttp.ClientTimeout(total=10),
-                        ) as r:
-                            data = await r.json()
-                    if data.get("ok"):
-                        await _vk_send(peer_id,
-                            f"✅ <b>Нашёл @{arg_clean}!</b>\n\n"
-                            "Запрос на подтверждение отправлен в Telegram.\n"
-                            "После подтверждения аккаунты будут привязаны.\n\n"
-                            "⏱ Запрос действует 10 минут.",
-                        )
-                    else:
-                        err = data.get("error", "Неизвестная ошибка")
-                        await _vk_send(peer_id, f"❌ {err}")
-                except Exception as e:
-                    logger.exception(f"handle_link request by username error: {e}")
-                    await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
-            else:
-                await _vk_send(peer_id,
-                    f"❌ TG пользователь <b>@{arg_clean}</b> не найден.\n\n"
-                    "Возможно, он ещё не запускал бота.\n"
-                    "Попроси его написать <code>/start</code> в @benzyn_ryadom_bot.",
-                )
-            return
-
-    # === link_create — создать код ===
-    if subcmd == "link_create":
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{backend}/api/account/link/create",
-                    json={"vk_user_id": peer_id},
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as r:
-                    data = await r.json()
-            if data.get("ok"):
-                code = data.get("code", "")
-                await _vk_send(peer_id,
-                    f"🔗 <b>Код:</b> <code>{code}</code>\n\n"
-                    f"⏱ Действует 10 минут.\n"
-                    f"Вставь его в TG бот или Mini App.",
-                )
-            else:
-                err = data.get("error", "Неизвестная ошибка")
-                await _vk_send(peer_id, f"❌ Ошибка: {err}")
-        except Exception as e:
-            logger.exception(f"handle_link create error: {e}")
-            await _vk_send(peer_id, "❌ Ошибка соединения. Попробуй позже.")
-        return
-
-    # === link — показать меню ===
+    # === link — показать меню привязки ===
     kb = vk_keyboard([
-        [_callback_button("🔗 Привязать TG", {"a": "link_tg_prompt"}, "primary")],
-        [_callback_button("📤 Создать код", {"a": "link_create"}, "secondary")],
-        [_callback_button("📥 Ввести код", {"a": "link_use_prompt"}, "secondary")],
+        [_callback_button("🔗 Ввести ссылку на TG", {"a": "link_tg_prompt"}, "primary")],
         [_callback_button("◀️ Назад", {"a": "home"}, "secondary")],
     ])
     await _vk_send(peer_id,
         "🔗 <b>Привязка аккаунта</b>\n\n"
         "Premium работает и в TG, и в VK, и в Mini App.\n\n"
-        "Нажми «🔗 Привязать TG» и введи TG username\n"
-        "(например: <code>darkt30</code>) или числовой ID.\n\n"
-        "⏱ Запрос действует 10 минут.",
+        "Нажми кнопку ниже и введи ссылку на TG профиль.\n"
+        "Формат: <code>t.me/username</code> или <code>@username</code>",
         kb,
     )
 
@@ -1558,10 +1451,7 @@ async def process_message_new(event: dict) -> None:
                 return
             # Показываем первую
             await show_station(peer_id, stations[0])
-        elif state.get("awaiting") == "link_code":
-            _clear_state(peer_id)
-            await handle_link(peer_id, f"link_use {text.strip()}")
-        elif state.get("awaiting") == "link_tg_id":
+        elif state.get("awaiting") == "link_tg_url":
             _clear_state(peer_id)
             await handle_link(peer_id, f"link {text.strip()}")
         else:
@@ -1690,22 +1580,12 @@ async def process_message_event(event: dict) -> None:
     elif action == "link":
         await handle_link(peer_id, "link")
 
-    elif action == "link_create":
-        await handle_link(peer_id, "link_create")
-
-    elif action == "link_use_prompt":
-        _set_state(peer_id, {"awaiting": "link_code"})
-        await _vk_send(peer_id,
-            "📥 <b>Введи 6-значный код</b>\n\n"
-            "Отправь код одним сообщением.\n⏱ Действует 10 минут.",
-        )
-
     elif action == "link_tg_prompt":
-        _set_state(peer_id, {"awaiting": "link_tg_id"})
+        _set_state(peer_id, {"awaiting": "link_tg_url"})
         await _vk_send(peer_id,
-            "🔗 <b>Введи TG username или ID</b>\n\n"
-            "Просто напиши username (например: <code>darkt30</code>)\n"
-            "или числовой ID (например: <code>772577887</code>).",
+            "🔗 <b>Введи ссылку на TG профиль</b>\n\n"
+            "Формат: <code>t.me/username</code>\n"
+            "Или просто <code>@username</code>",
         )
 
     elif action == "alarm":

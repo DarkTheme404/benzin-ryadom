@@ -189,7 +189,7 @@ class ReviewStates(StatesGroup):
 
 # === FSM: ввод кода привязки ===
 class LinkStates(StatesGroup):
-    waiting_code = State()
+    waiting_vk_url = State()
 
 
 # === Проверка подписки на канал ===
@@ -361,29 +361,14 @@ async def cmd_start(message: Message):
             except Exception:
                 pass
 
-    # Проверяем deep link для привязки: /start link_VKUSERID
+    # Проверяем deep link для привязки: /start link_VKUSERID (устарело)
     if "link_vk_" in text:
-        import re
-        link_match = re.search(r'link_vk_(\d+)', text)
-        if link_match:
-            vk_id = int(link_match.group(1))
-            # Привязываем VK к TG
-            from db import link_accounts_by_vk
-            result = await link_accounts_by_vk(vk_id, telegram_id)
-            if result.get("ok"):
-                await message.answer(
-                    f"✅ <b>Аккаунт привязан!</b>\n\n"
-                    f"Твой TG аккаунт привязан к VK ID: {vk_id}\n\n"
-                    f"Теперь Premium (если есть) работает и в TG, и в VK, и в Mini App.",
-                    reply_markup=main_menu_keyboard(),
-                )
-                return
-            else:
-                await message.answer(
-                    f"❌ Не удалось привязать: {result.get('error', 'неизвестная ошибка')}",
-                    reply_markup=main_menu_keyboard(),
-                )
-                return
+        await message.answer(
+            "ℹ️ Привязка через ссылки больше не работает.\n\n"
+            "Используй /link и введи ссылку на VK профиль.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
 
     # Сообщение 1: Hero
     try:
@@ -1258,56 +1243,51 @@ async def check_payment_callback(callback: CallbackQuery):
 # === /link — привязка аккаунта к VK / MiniApp ===
 
 async def cmd_link(message: Message):
-    """Привязка аккаунта: /link (создать код) или /link 123456 (использовать код).
-
-    Также обрабатывает текстовое нажатие кнопки «🔗 Привязать» — показывает меню.
-    """
+    """Привязка аккаунта по ссылке на VK профиль."""
     await get_or_create_user(message)
-    telegram_id = _tg_id(message)
-    # Парсим код из текста команды (если есть)
-    text = (message.text or "").strip()
-    # Если это /link без кода — текст будет "/link" или "🔗 Привязать"
-    # Если это /link 123456 — текст "/link 123456"
-    if text.startswith("/link"):
-        parts = text.split(maxsplit=1)
-        code = parts[1].strip() if len(parts) >= 2 else ""
-    else:
-        # Если вызвано через callback menu:link — text это текст callback-сообщения,
-        # а не команда. Не парсим код, а просто показываем меню.
-        code = ""
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Ввести ссылку на VK", callback_data="link:vk_url")],
+    ])
+    await message.answer(
+        "🔗 <b>Привязка аккаунта</b>\n\n"
+        "Premium работает и в TG, и в VK, и в Mini App.\n\n"
+        "Нажми кнопку ниже и введи ссылку на VK профиль.\n"
+        "Формат: <code>vk.com/username</code> или <code>@username</code>",
+        reply_markup=kb,
+    )
 
-    if not code:
-        # Меню привязки
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📤 Создать код", callback_data="link:create")],
-            [InlineKeyboardButton(text="📥 Ввести код", callback_data="link:enter")],
-        ])
-        await message.answer(
-            f"🔗 <b>Привязка аккаунта</b>\n\n"
-            f"Premium работает и в TG, и в VK, и в Mini App.\n\n"
-            f"<b>Быстрый способ:</b>\n"
-            f"В VK боте нажми «🔗 Ввести TG ID» и введи свой ID.\n"
-            f"Тебе придёт запрос на подтверждение — нажми «✅ Подтвердить».\n\n"
-            f"<b>Через код:</b>\n"
-            f"Создай код и введи его в другом боте.\n\n"
-            f"⏱ Код действует 10 минут.",
-            reply_markup=kb,
-        )
+
+async def link_vk_url_callback(callback: CallbackQuery, state: FSMContext):
+    """Просит юзера ввести ссылку на VK профиль."""
+    await callback.answer()
+    await state.set_state(LinkStates.waiting_vk_url)
+    await callback.message.answer(
+        "🔗 <b>Введи ссылку на VK профиль</b>\n\n"
+        "Формат: <code>vk.com/username</code>\n"
+        "Или просто <code>@username</code>\n\n"
+        "Чтобы отменить — напиши /cancel",
+    )
+
+
+async def link_url_input_handler(message: Message, state: FSMContext):
+    """Обрабатывает ввод VK URL после нажатия 'Ввести ссылку'."""
+    url = (message.text or "").strip()
+    if not url or len(url) < 2:
+        await message.answer("❌ Введи корректную ссылку")
+        return
+    if url.startswith("/"):
+        await state.clear()
         return
 
-    # Используем код
-    await _use_link_code(message, telegram_id, code)
-
-
-async def _use_link_code(message: Message, telegram_id: int, code: str) -> None:
-    """Применяет код привязки."""
+    telegram_id = _tg_id(message)
     import aiohttp
     backend = settings.BACKEND_URL
+    await state.clear()
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{backend}/api/account/link/use",
-                json={"telegram_id": telegram_id, "code": code},
+                f"{backend}/api/account/link-by-profile",
+                json={"telegram_id": telegram_id, "profile_url": url},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
                 data = await r.json()
@@ -1315,82 +1295,58 @@ async def _use_link_code(message: Message, telegram_id: int, code: str) -> None:
             target_name = data.get("linked_to_name") or "пользователь"
             await message.answer(
                 f"✅ <b>Аккаунт привязан!</b>\n\n"
-                f"Твой TG аккаунт привязан к <b>{target_name}</b>.\n\n"
-                f"Теперь Premium (если есть) работает и в TG, и в VK, и в Mini App."
+                f"Твой TG привязан к <b>{target_name}</b>.\n"
+                f"Premium работает на всех площадках."
             )
         else:
             err = data.get("error", "Неизвестная ошибка")
             await message.answer(
-                f"❌ <b>Не удалось привязать</b>\n\n"
-                f"{err}\n\n"
-                f"Проверь что код введён правильно и не истёк (10 мин)."
+                f"❌ <b>Не удалось привязать</b>\n\n{err}"
             )
     except Exception as e:
-        logger.exception(f"link use error: {e}")
+        logger.exception(f"link url input error: {e}")
         await message.answer("❌ Ошибка соединения. Попробуй позже.")
 
 
+async def _use_link_code(message: Message, telegram_id: int, code: str) -> None:
+    """DEPRECATED: kept for reference. New flow uses link-by-profile."""
+    await message.answer("❌ Способ с кодами больше не работает. Используй /link и введи ссылку на профиль.")
+
+
 async def link_create_callback(callback: CallbackQuery):
-    """Создаёт 6-значный код привязки (callback от кнопки)."""
-    logger.info(f"link_create_callback: user={callback.from_user.id}")
+    """DEPRECATED: old code-based link. Redirect to new flow."""
     await callback.answer()
-    uid = await _ensure_callback_user(callback)
-    logger.info(f"link_create_callback: uid={uid}")
-    if not uid:
-        await callback.message.answer("Ошибка: пользователь не найден.")
-        return
-    import aiohttp
-    backend = settings.BACKEND_URL
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{backend}/api/account/link/create",
-                json={"telegram_id": callback.from_user.id},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
-                data = await r.json()
-                logger.info(f"link_create_callback: API response status={r.status}")
-        if data.get("ok"):
-            code = data["code"]
-            await callback.message.answer(
-                f"🔗 <b>Код:</b> <code>{code}</code>\n\n"
-                f"⏱ Действует 10 минут.\n\n"
-                f"Вставь его в VK бот или Mini App для привязки."
-            )
-        else:
-            err = data.get("error", "Неизвестная ошибка")
-            logger.warning(f"link_create_callback: API error {err}")
-            await callback.message.answer(f"❌ Ошибка: {err}")
-    except Exception as e:
-        logger.exception(f"link create callback error: {e}")
-        await callback.message.answer("❌ Ошибка соединения. Попробуй позже.")
+    await callback.message.answer(
+        "❌ Способ с кодами больше не работает.\n\n"
+        "Используй /link и введи ссылку на VK профиль."
+    )
 
 
 async def link_enter_callback(callback: CallbackQuery, state: FSMContext):
-    """Просит юзера ввести код привязки."""
+    """DEPRECATED: old code-based link. Redirect to new flow."""
     await callback.answer()
-    await state.set_state(LinkStates.waiting_code)
     await callback.message.answer(
-        "📥 <b>Введи код привязки</b>\n\n"
-        "Отправь код одним сообщением.\n⏱ Действует 10 минут.\n\n"
-        "Чтобы отменить — напиши /cancel",
+        "❌ Способ с кодами больше не работает.\n\n"
+        "Используй /link и введи ссылку на VK профиль."
+    )
+
+
+async def link_enter_callback(callback: CallbackQuery, state: FSMContext):
+    """DEPRECATED: old code-based link. Redirect to new flow."""
+    await callback.answer()
+    await callback.message.answer(
+        "❌ Способ с кодами больше не работает.\n\n"
+        "Используй /link и введи ссылку на VK профиль."
     )
 
 
 async def link_code_input_handler(message: Message, state: FSMContext):
-    """Обрабатывает ввод кода после нажатия 'Ввести код'."""
-    code = (message.text or "").strip()
-    # Проверяем что это похоже на код
-    if not code or len(code) < 4:
-        await message.answer("❌ Введи корректный код (минимум 4 символа)")
-        return
-    # Если юзер прислал команду — отменяем
-    if code.startswith("/"):
-        await state.clear()
-        return
-    telegram_id = _tg_id(message)
+    """DEPRECATED: old code-based link. Redirect to new flow."""
     await state.clear()
-    await _use_link_code(message, telegram_id, code)
+    await message.answer(
+        "❌ Способ с кодами больше не работает.\n\n"
+        "Используй /link и введи ссылку на VK профиль."
+    )
 
 
 # === Подтверждение привязки аккаунтов ===
@@ -3999,9 +3955,10 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(cmd_post, Command("post"))
     dp.callback_query.register(link_create_callback, F.data == "link:create")
     dp.callback_query.register(link_enter_callback, F.data == "link:enter")
+    dp.callback_query.register(link_vk_url_callback, F.data == "link:vk_url", StateFilter(None))
     dp.callback_query.register(link_confirm_callback, F.data.startswith("link_confirm:"))
     dp.callback_query.register(link_reject_callback, F.data.startswith("link_reject:"))
-    dp.message.register(link_code_input_handler, StateFilter(LinkStates.waiting_code))
+    dp.message.register(link_url_input_handler, StateFilter(LinkStates.waiting_vk_url))
 
     # IMPORTANT: handle_main_button должен быть ПОСЛЕДНИМ —
     # он перехватывает все текстовые сообщения.
