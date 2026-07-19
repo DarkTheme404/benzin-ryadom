@@ -27,6 +27,8 @@ class _MapScreenState extends State<MapScreen> {
   Station? _selectedStation;
   bool _showSheet = false;
   LatLng? _userLocation;
+  Timer? _debounce;
+  bool _locationError = false;
 
   static const LatLng _defaultCenter = LatLng(56.8587, 40.9957);
 
@@ -36,12 +38,22 @@ class _MapScreenState extends State<MapScreen> {
     _initLocation();
   }
 
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
   Future<void> _initLocation() async {
     final pos = await _locationService.getCurrentPosition();
     if (pos != null) {
-      _userLocation = LatLng(pos.latitude, pos.longitude);
+      setState(() {
+        _userLocation = LatLng(pos.latitude, pos.longitude);
+        _locationError = false;
+      });
       _loadStations(pos.latitude, pos.longitude);
     } else {
+      setState(() => _locationError = true);
       _loadStations(_defaultCenter.latitude, _defaultCenter.longitude);
     }
   }
@@ -54,18 +66,25 @@ class _MapScreenState extends State<MapScreen> {
         lon: lon,
         fuel: _selectedFuel,
       );
-      setState(() {
-        _stations = stations;
-        _isLoading = false;
-      });
-    } catch (_) {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _stations = stations;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   void _onMapEvent(MapEvent event) {
-    final center = event.camera.center;
-    _loadStations(center.latitude, center.longitude);
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 800), () {
+      final center = event.camera.center;
+      _loadStations(center.latitude, center.longitude);
+    });
   }
 
   void _onStationTap(Station station) {
@@ -82,11 +101,11 @@ class _MapScreenState extends State<MapScreen> {
 
   Color _markerColor(String status) {
     switch (status) {
-      case 'in_stock':
+      case 'available':
         return const Color(0xFF22c55e);
       case 'partial':
         return const Color(0xFFeab308);
-      case 'out_of_stock':
+      case 'unavailable':
         return const Color(0xFFef4444);
       default:
         return const Color(0xFF6b7280);
@@ -110,7 +129,8 @@ class _MapScreenState extends State<MapScreen> {
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                urlTemplate:
+                    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
                 subdomains: const ['a', 'b', 'c'],
                 userAgentPackageName: 'com.benzinryadom.app',
               ),
@@ -129,8 +149,28 @@ class _MapScreenState extends State<MapScreen> {
                 valueColor: AlwaysStoppedAnimation(AppTheme.accent),
               ),
             ),
+          if (_locationError)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              left: 50,
+              right: 50,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning.withValues(alpha: 0.9),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  '📍 Геолокация недоступна. Выбери город вручную.',
+                  style: TextStyle(color: Colors.white, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
           Positioned(
-            top: MediaQuery.of(context).padding.top + 8,
+            top: MediaQuery.of(context).padding.top +
+                (_locationError ? 48 : 8),
             left: 16,
             right: 16,
             child: _buildFuelChips(),
@@ -159,18 +199,51 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   List<Marker> _buildMarkers() {
-    return _stations.where((s) => s.lat != null && s.lon != null).map((station) {
-      final color = _markerColor(station.fuelStatus);
+    return _stations
+        .where((s) => s.lat != null && s.lon != null)
+        .map((station) {
+      final status = station.fuelStatusForType(_selectedFuel);
+      final color = _markerColor(status);
 
       return Marker(
         point: LatLng(station.lat!, station.lon!),
-        width: 36,
-        height: 44,
+        width: 44,
+        height: 52,
         child: GestureDetector(
           onTap: () => _onStationTap(station),
-          child: _StationMarker(
-            color: color,
-            price: station.mainPrice,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                constraints: const BoxConstraints(minWidth: 44),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(4),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  station.mainPrice ?? '⛽',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              CustomPaint(
+                size: const Size(10, 6),
+                painter: _TrianglePainter(color: color),
+              ),
+            ],
           ),
         ),
       );
@@ -182,7 +255,19 @@ class _MapScreenState extends State<MapScreen> {
       point: _userLocation!,
       width: 24,
       height: 24,
-      child: const _UserLocationMarker(),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppTheme.info,
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 4,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -237,55 +322,14 @@ class _MapScreenState extends State<MapScreen> {
         final pos = await _locationService.getCurrentPosition();
         if (pos != null) {
           final loc = LatLng(pos.latitude, pos.longitude);
-          setState(() => _userLocation = loc);
+          setState(() {
+            _userLocation = loc;
+            _locationError = false;
+          });
           _mapController.move(loc, 14);
         }
       },
       child: const Icon(Icons.my_location, color: AppTheme.accent),
-    );
-  }
-}
-
-class _StationMarker extends StatelessWidget {
-  final Color color;
-  final String? price;
-
-  const _StationMarker({required this.color, this.price});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          constraints: const BoxConstraints(minWidth: 40),
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(4),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Text(
-            price ?? '⛽',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ),
-        CustomPaint(
-          size: const Size(12, 8),
-          painter: _TrianglePainter(color: color),
-        ),
-      ],
     );
   }
 }
@@ -307,72 +351,4 @@ class _TrianglePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _UserLocationMarker extends StatefulWidget {
-  const _UserLocationMarker();
-
-  @override
-  State<_UserLocationMarker> createState() => _UserLocationMarkerState();
-}
-
-class _UserLocationMarkerState extends State<_UserLocationMarker>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _anim;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: false);
-    _anim = Tween<double>(begin: 0.3, end: 0.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _anim,
-      builder: (_, __) {
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            Container(
-              width: 20 + (1 - _anim.value) * 16,
-              height: 20 + (1 - _anim.value) * 16,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppTheme.info.withValues(alpha: _anim.value),
-              ),
-            ),
-            Container(
-              width: 14,
-              height: 14,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppTheme.info,
-                border: Border.all(color: Colors.white, width: 3),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 4,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
 }

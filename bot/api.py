@@ -2443,6 +2443,7 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/account/info", handle_account_info)
     app.router.add_post("/api/user/ensure-vk", handle_user_ensure_vk)
     app.router.add_post("/api/user/register", handle_user_register)
+    app.router.add_post("/api/user/login", handle_user_login)
     app.router.add_get("/api/export/csv", handle_export_csv)
     app.router.add_get("/api/route/fuel", handle_route_fuel)
     app.router.add_get("/api/route/anti-traffic", handle_route_anti_traffic)
@@ -3231,7 +3232,7 @@ async def handle_user_ensure_vk(request):
 async def handle_user_register(request):
     """POST /api/user/register — регистрация мобильного пользователя.
 
-    Body: {name, vk_link?, tg_link?, device_id?}
+    Body: {name, password, vk_link?, tg_link?, device_id?}
     Создаёт пользователя в БД, привязывает VK/TG профили.
     Возвращает: {ok, user_id, name, vk_link, tg_link}
     """
@@ -3243,12 +3244,15 @@ async def handle_user_register(request):
         return json_resp({"error": "invalid json"}, status=400)
 
     name = (body.get("name") or "").strip()[:64]
+    password = (body.get("password") or "").strip()
     vk_link = (body.get("vk_link") or "").strip()[:256]
     tg_link = (body.get("tg_link") or "").strip()[:256]
     device_id = (body.get("device_id") or "").strip()[:128]
 
     if not name:
         return json_resp({"error": "name required"}, status=400)
+    if not password or len(password) < 4:
+        return json_resp({"error": "Пароль должен быть не менее 4 символов"}, status=400)
 
     # Извлекаем VK username/ID из ссылки
     vk_username = None
@@ -3301,6 +3305,16 @@ async def handle_user_register(request):
     if not uid:
         return json_resp({"error": "failed to create user"}, status=500)
 
+    # Хешируем пароль и сохраняем
+    import bcrypt
+    pw_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    if USE_SQLITE:
+        await _fetch("UPDATE users SET password_hash = ? WHERE id = ?", pw_hash, uid)
+        await db._db.commit()
+    else:
+        async with db._db.acquire() as conn:
+            await conn.execute("UPDATE users SET password_hash = $1 WHERE id = $2", pw_hash, uid)
+
     # Сохраняем ссылки на профили
     if vk_link or tg_link:
         if USE_SQLITE:
@@ -3326,6 +3340,67 @@ async def handle_user_register(request):
         "name": name,
         "vk_link": vk_link,
         "tg_link": tg_link,
+        "premium": premium.get("tier") if premium else None,
+        "premium_expires": str(premium["expires_at"]) if premium and premium.get("expires_at") else None,
+    })
+
+
+async def handle_user_login(request):
+    """POST /api/user/login — вход по имени + пароль.
+
+    Body: {name, password}
+    Возвращает: {ok, user_id, name, premium, premium_expires}
+    """
+    if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    name = (body.get("name") or "").strip()
+    password = (body.get("password") or "").strip()
+
+    if not name or not password:
+        return json_resp({"error": "name and password required"}, status=400)
+
+    from db import USE_SQLITE, _fetch
+
+    # Ищем пользователя по имени
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT id, first_name, password_hash FROM users WHERE py_lower(first_name) = py_lower(?) LIMIT 1",
+            name, one=True,
+        )
+    else:
+        row = await _fetch(
+            "SELECT id, first_name, password_hash FROM users WHERE LOWER(first_name) = LOWER($1) LIMIT 1",
+            name, one=True,
+        )
+
+    if not row:
+        return json_resp({"error": "Пользователь не найден"}, status=404)
+
+    uid = row["id"] if isinstance(row, dict) else row[0]
+    pw_hash = row["password_hash"] if isinstance(row, dict) else row[2]
+
+    if not pw_hash:
+        return json_resp({"error": "У этого аккаунта нет пароля. Войдите через Telegram или VK."}, status=400)
+
+    import bcrypt
+    try:
+        if not bcrypt.checkpw(password.encode("utf-8"), pw_hash.encode("utf-8")):
+            return json_resp({"error": "Неверный пароль"}, status=401)
+    except Exception:
+        return json_resp({"error": "Ошибка проверки пароля"}, status=500)
+
+    from db import get_user_premium
+    premium = await get_user_premium(uid)
+
+    return json_resp({
+        "ok": True,
+        "user_id": uid,
+        "name": row["first_name"] if isinstance(row, dict) else row[1],
         "premium": premium.get("tier") if premium else None,
         "premium_expires": str(premium["expires_at"]) if premium and premium.get("expires_at") else None,
     })

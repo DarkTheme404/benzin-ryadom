@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../config/theme.dart';
 import '../services/api_service.dart';
+import '../screens/premium_screen.dart' show premiumTierName;
 
 class ReferralCard extends StatefulWidget {
   final int? userId;
+  final String? userTier;
 
-  const ReferralCard({super.key, this.userId});
+  const ReferralCard({super.key, this.userId, this.userTier});
 
   @override
   State<ReferralCard> createState() => _ReferralCardState();
@@ -17,6 +19,14 @@ class _ReferralCardState extends State<ReferralCard> {
   String? _referralCode;
   int _referredCount = 0;
   double _earnings = 0;
+
+  bool get _canEarn => _isEliteOrHigher(widget.userTier);
+
+  bool _isEliteOrHigher(String? tier) {
+    if (tier == null) return false;
+    final t = tier.toLowerCase();
+    return t == 'elite' || t == 'founder';
+  }
 
   @override
   void initState() {
@@ -51,7 +61,8 @@ class _ReferralCardState extends State<ReferralCard> {
         children: [
           Row(
             children: [
-              const Icon(Icons.people_outline, color: AppTheme.accent, size: 20),
+              const Icon(Icons.people_outline,
+                  color: AppTheme.accent, size: 20),
               const SizedBox(width: 8),
               const Text('Реферальная программа',
                   style: TextStyle(
@@ -61,11 +72,40 @@ class _ReferralCardState extends State<ReferralCard> {
                   )),
             ],
           ),
-          const SizedBox(height: 12),
-          const Text(
+          const SizedBox(height: 8),
+          Text(
             'Приглашай друзей — получай 50% комиссии с их оплат.',
-            style: TextStyle(color: AppTheme.muted, fontSize: 13),
+            style: TextStyle(
+              color: _canEarn ? AppTheme.muted : AppTheme.warning,
+              fontSize: 13,
+            ),
           ),
+          if (!_canEarn) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.warning.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.lock_outline,
+                      color: AppTheme.warning, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Комиссия доступна с тарифа «Элит» или выше. Твой тариф: ${widget.userTier != null ? premiumTierName(widget.userTier!) : 'Free'}',
+                      style: const TextStyle(
+                        color: AppTheme.warning,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (_referralCode != null) ...[
             const SizedBox(height: 12),
             Container(
@@ -87,7 +127,8 @@ class _ReferralCardState extends State<ReferralCard> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.copy, size: 18, color: AppTheme.accent),
+                    icon: const Icon(Icons.copy,
+                        size: 18, color: AppTheme.accent),
                     onPressed: _copyLink,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
@@ -128,7 +169,8 @@ class _ReferralCardState extends State<ReferralCard> {
 
   void _copyLink() {
     if (_referralCode != null) {
-      final link = 'https://t.me/benzyn_ryadom_bot?start=ref_$_referralCode';
+      final link =
+          'https://t.me/benzyn_ryadom_bot?start=ref_$_referralCode';
       Clipboard.setData(ClipboardData(text: link));
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Ссылка скопирована')),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../models/station.dart';
+import '../screens/station_detail_screen.dart';
 
 class StationBottomSheet extends StatelessWidget {
   final Station station;
@@ -27,7 +28,17 @@ class StationBottomSheet extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _buildHandle(),
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppTheme.muted.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
             Flexible(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -36,7 +47,7 @@ class StationBottomSheet extends StatelessWidget {
                   children: [
                     _buildHeader(),
                     const SizedBox(height: 12),
-                    _buildPriceRow(),
+                    _buildStatuses(),
                     const SizedBox(height: 12),
                     _buildActions(context),
                   ],
@@ -44,20 +55,6 @@ class StationBottomSheet extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHandle() {
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.only(top: 12),
-        width: 40,
-        height: 4,
-        decoration: BoxDecoration(
-          color: AppTheme.muted.withValues(alpha: 0.3),
-          borderRadius: BorderRadius.circular(2),
         ),
       ),
     );
@@ -71,21 +68,18 @@ class StationBottomSheet extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                station.name,
+                station.operator ?? station.name,
                 style: const TextStyle(
                   color: AppTheme.textPrimary,
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              if (station.address != null) ...[
+              if (station.address != null && station.address!.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(
                   station.address!,
-                  style: const TextStyle(
-                    color: AppTheme.muted,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(color: AppTheme.muted, fontSize: 13),
                 ),
               ],
             ],
@@ -99,35 +93,56 @@ class StationBottomSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildPriceRow() {
-    if (station.prices.isEmpty) {
+  Widget _buildStatuses() {
+    if (station.statuses.isEmpty) {
       return const SizedBox.shrink();
     }
+
+    final seen = <String>{};
+    final uniqueStatuses = station.statuses.where((s) {
+      if (seen.contains(s.fuelType)) return false;
+      seen.add(s.fuelType);
+      return true;
+    }).toList();
 
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: station.prices.entries.map((e) {
+      children: uniqueStatuses.map((s) {
+        final has = s.available == true;
+        final no = s.available == false;
+        final price =
+            s.price != null ? '${s.price!.toStringAsFixed(2)} ₽' : '';
+        final statusIcon = has ? '✓' : no ? '✗' : '?';
+
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: AppTheme.bgCardLight,
+            color: has
+                ? AppTheme.success.withValues(alpha: 0.12)
+                : no
+                    ? AppTheme.danger.withValues(alpha: 0.12)
+                    : AppTheme.bgCardLight,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
             children: [
-              Text(
-                _fuelLabel(e.key),
-                style: const TextStyle(color: AppTheme.muted, fontSize: 11),
-              ),
-              Text(
-                e.value.priceText,
-                style: const TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              Text(_fuelLabel(s.fuelType),
+                  style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
+              if (price.isNotEmpty)
+                Text(price,
+                    style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700)),
+              Text(statusIcon,
+                  style: TextStyle(
+                      color: has
+                          ? AppTheme.success
+                          : no
+                              ? AppTheme.danger
+                              : AppTheme.muted,
+                      fontSize: 12)),
             ],
           ),
         );
@@ -145,7 +160,8 @@ class StationBottomSheet extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => _StationDetailPage(station: station),
+                  builder: (_) =>
+                      StationDetailScreen(stationId: station.id),
                 ),
               );
             },
@@ -184,21 +200,5 @@ class StationBottomSheet extends StatelessWidget {
       default:
         return fuel;
     }
-  }
-}
-
-class _StationDetailPage extends StatelessWidget {
-  final Station station;
-  const _StationDetailPage({required this.station});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(station.name)),
-      body: const Center(
-        child: Text('Детали станции',
-            style: TextStyle(color: AppTheme.muted)),
-      ),
-    );
   }
 }

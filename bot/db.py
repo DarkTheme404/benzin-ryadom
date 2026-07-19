@@ -185,6 +185,8 @@ async def _migrate_sqlite(db):
         await db.execute("ALTER TABLE users ADD COLUMN vk_profile_link TEXT")
     if "tg_profile_link" not in user_cols:
         await db.execute("ALTER TABLE users ADD COLUMN tg_profile_link TEXT")
+    if "password_hash" not in user_cols:
+        await db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
     # Миграция: убираем UNIQUE constraint с telegram_id (для VK юзеров с telegram_id=0)
     # Создаём partial unique index — telegram_id уникален только когда > 0
     try:
@@ -3143,10 +3145,18 @@ async def get_referrer_for_user(user_id: int) -> int | None:
 
 
 async def record_referral_commission(user_id: int, payment_id: int, payment_amount: int) -> bool:
-    """Records 50% commission for the referrer of this user. Returns True if commission was recorded."""
+    """Records 50% commission for the referrer of this user. Only Elite/Founder referrers earn commission. Returns True if commission was recorded."""
     referrer_id = await get_referrer_for_user(user_id)
     if not referrer_id:
         return False
+
+    # Only Elite/Founder referrers earn commission
+    referrer_sub = await get_user_premium(referrer_id)
+    referrer_tier = (referrer_sub.get("tier") or "").lower() if referrer_sub else ""
+    is_founder = await is_founder(referrer_id)
+    if referrer_tier not in ("elite",) and not is_founder:
+        return False
+
     commission = round(payment_amount * 0.50)
     if commission <= 0:
         return False

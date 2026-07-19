@@ -37,13 +37,13 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> _post(String path,
-      [Map<String, dynamic>? body]) async {
+      [Map<String, dynamic>? body, Duration? timeout]) async {
     final uri = Uri.parse('${ApiConfig.apiBase}$path');
     final resp = await http
         .post(uri,
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(body ?? {}))
-        .timeout(ApiConfig.timeout);
+        .timeout(timeout ?? ApiConfig.timeout);
     if (resp.statusCode == 200 || resp.statusCode == 201) {
       return jsonDecode(resp.body);
     }
@@ -311,6 +311,14 @@ class ApiService {
       ..._idParam,
       'code': code,
     });
+  }
+
+  Future<Map<String, dynamic>> registerUser(Map<String, dynamic> body) async {
+    return await _post('/user/register', body, ApiConfig.longTimeout);
+  }
+
+  Future<Map<String, dynamic>> loginUser(String name, String password) async {
+    return await _post('/user/login', {'name': name, 'password': password}, ApiConfig.longTimeout);
   }
 }
 

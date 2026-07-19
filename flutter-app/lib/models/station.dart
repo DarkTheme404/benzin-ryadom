@@ -7,14 +7,11 @@ class Station {
   final double? lon;
   final String? network;
   final String? operator;
-  final Map<String, FuelPrice> prices;
-  final Map<String, String> availability;
+  final List<StationStatus> statuses;
   final String? lastUpdate;
   final double? distance;
   final double? rating;
-  final int? reportCount;
-  final List<String> limits;
-  final bool canisterBan;
+  final bool isVerified;
 
   Station({
     required this.id,
@@ -25,37 +22,18 @@ class Station {
     this.lon,
     this.network,
     this.operator,
-    this.prices = const {},
-    this.availability = const {},
+    this.statuses = const [],
     this.lastUpdate,
     this.distance,
     this.rating,
-    this.reportCount,
-    this.limits = const [],
-    this.canisterBan = false,
+    this.isVerified = false,
   });
 
   factory Station.fromJson(Map<String, dynamic> json) {
-    final prices = <String, FuelPrice>{};
-    if (json['prices'] != null) {
-      (json['prices'] as Map<String, dynamic>).forEach((key, value) {
-        if (value is Map<String, dynamic>) {
-          prices[key] = FuelPrice.fromJson(value);
-        }
-      });
-    }
-
-    final availability = <String, String>{};
-    if (json['availability'] != null) {
-      (json['availability'] as Map<String, dynamic>).forEach((key, value) {
-        availability[key] = value.toString();
-      });
-    }
-
-    final limits = <String>[];
-    if (json['limits'] != null) {
-      limits.addAll((json['limits'] as List).map((e) => e.toString()));
-    }
+    final statusesRaw = json['statuses'] as List? ?? [];
+    final statuses = statusesRaw
+        .map((e) => StationStatus.fromJson(e as Map<String, dynamic>))
+        .toList();
 
     return Station(
       id: json['id'] ?? 0,
@@ -66,54 +44,83 @@ class Station {
       lon: json['lon']?.toDouble(),
       network: json['network'],
       operator: json['operator'],
-      prices: prices,
-      availability: availability,
-      lastUpdate: json['last_update'] ?? json['updated_at'],
-      distance: json['distance']?.toDouble(),
-      rating: json['rating']?.toDouble(),
-      reportCount: json['report_count'],
-      limits: limits,
-      canisterBan: json['canister_ban'] ?? false,
+      statuses: statuses,
+      lastUpdate: statuses.isNotEmpty ? statuses.first.createdAt : null,
+      distance: (json['distance_km'] ?? json['distance'])?.toDouble(),
+      rating: (json['avg_rating'] ?? json['rating'])?.toDouble(),
+      isVerified: json['is_verified'] ?? false,
     );
   }
 
   String? get mainPrice {
-    for (final fuel in ['95', '92', '98', 'diesel', 'lpg']) {
-      if (prices.containsKey(fuel) && prices[fuel]!.price != null) {
-        return prices[fuel]!.priceText;
+    for (final s in statuses) {
+      if (s.price != null) return '${s.price!.toStringAsFixed(2)} ₽';
+    }
+    return null;
+  }
+
+  String? mainPriceForFuel(String fuel) {
+    for (final s in statuses) {
+      if (s.fuelType == fuel && s.price != null) {
+        return '${s.price!.toStringAsFixed(2)} ₽';
       }
     }
     return null;
   }
 
+  List<StationStatus> statusesForFuel(String fuel) {
+    return statuses.where((s) => s.fuelType == fuel).toList();
+  }
+
   String get fuelStatus {
-    final statuses = availability.values.toList();
-    if (statuses.isEmpty) return 'no_data';
-    if (statuses.every((s) => s == 'in_stock')) return 'in_stock';
-    if (statuses.every((s) => s == 'out_of_stock')) return 'out_of_stock';
-    return 'partial';
+    if (statuses.isEmpty) return 'unknown';
+    final has = statuses.where((s) => s.available == true).length;
+    final no = statuses.where((s) => s.available == false).length;
+    if (has == statuses.length) return 'available';
+    if (no == statuses.length) return 'unavailable';
+    if (has > 0) return 'partial';
+    return 'unknown';
+  }
+
+  String fuelStatusForType(String fuel) {
+    final filtered = statuses.where((s) => s.fuelType == fuel).toList();
+    if (filtered.isEmpty) return 'unknown';
+    final has = filtered.where((s) => s.available == true).length;
+    final no = filtered.where((s) => s.available == false).length;
+    if (has == filtered.length) return 'available';
+    if (no == filtered.length) return 'unavailable';
+    if (has > 0) return 'partial';
+    return 'unknown';
   }
 }
 
-class FuelPrice {
+class StationStatus {
+  final String fuelType;
+  final bool? available;
   final double? price;
   final String? source;
-  final String? date;
-  final int? priority;
+  final String? createdAt;
 
-  FuelPrice({this.price, this.source, this.date, this.priority});
+  StationStatus({
+    required this.fuelType,
+    this.available,
+    this.price,
+    this.source,
+    this.createdAt,
+  });
 
-  factory FuelPrice.fromJson(Map<String, dynamic> json) {
-    return FuelPrice(
+  factory StationStatus.fromJson(Map<String, dynamic> json) {
+    return StationStatus(
+      fuelType: json['fuel_type'] ?? '',
+      available: json['available'] as bool?,
       price: json['price']?.toDouble(),
       source: json['source'],
-      date: json['date'] ?? json['updated_at'],
-      priority: json['priority'],
+      createdAt: json['created_at'],
     );
   }
 
   String get priceText {
     if (price == null) return '—';
-    return '${price!.toStringAsFixed(1)} ₽';
+    return '${price!.toStringAsFixed(2)} ₽';
   }
 }

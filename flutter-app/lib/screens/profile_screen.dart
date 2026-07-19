@@ -79,7 +79,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const SizedBox(height: 16),
                     _buildStatsCard(),
                     const SizedBox(height: 16),
-                    ReferralCard(userId: _profile?.id),
+                    ReferralCard(
+                      userId: _profile?.id,
+                      userTier: _profile?.premium,
+                    ),
                     const SizedBox(height: 16),
                     _buildLinksCard(),
                     const SizedBox(height: 16),
@@ -133,9 +136,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 if (_profile?.isFounder == true)
                   Row(
                     children: [
-                      const Icon(Icons.star, color: AppTheme.premium, size: 14),
+                      const Icon(Icons.star,
+                          color: AppTheme.premium, size: 14),
                       const SizedBox(width: 4),
-                      Text(
+                      const Text(
                         'Founder',
                         style: TextStyle(
                           color: AppTheme.premium,
@@ -147,7 +151,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   )
                 else if (_profile?.hasPremium == true)
                   Text(
-                    _premiumTierName(_profile!.premium!),
+                    premiumTierName(_profile!.premium!),
                     style: const TextStyle(
                       color: AppTheme.accent,
                       fontSize: 13,
@@ -157,10 +161,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 else
                   const Text(
                     'Free',
-                    style: TextStyle(
-                      color: AppTheme.muted,
-                      fontSize: 13,
-                    ),
+                    style: TextStyle(color: AppTheme.muted, fontSize: 13),
                   ),
               ],
             ),
@@ -180,21 +181,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
+          _buildStatItem(Icons.assessment,
+              _profile?.reportCount.toString() ?? '0', 'Отчётов'),
+          _buildStatItem(Icons.savings_outlined,
+              '${_profile?.savings.round() ?? 0}₽', 'Экономия'),
           _buildStatItem(
-            Icons.assessment,
-            _profile?.reportCount.toString() ?? '0',
-            'Отчётов',
-          ),
-          _buildStatItem(
-            Icons.savings_outlined,
-            '${_profile?.savings.round() ?? 0}₽',
-            'Экономия',
-          ),
-          _buildStatItem(
-            Icons.star_outline,
-            _profile?.isFounder == true ? '∞' : _premiumDaysLeft(),
-            'Дней',
-          ),
+              Icons.star_outline,
+              _profile?.isFounder == true ? '∞' : _premiumDaysLeft(),
+              'Дней'),
         ],
       ),
     );
@@ -205,19 +199,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       children: [
         Icon(icon, color: AppTheme.accent, size: 24),
         const SizedBox(height: 8),
-        Text(
-          value,
-          style: const TextStyle(
-            color: AppTheme.textPrimary,
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
+        Text(value,
+            style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            )),
         const SizedBox(height: 4),
-        Text(
-          label,
-          style: const TextStyle(color: AppTheme.muted, fontSize: 12),
-        ),
+        Text(label,
+            style: const TextStyle(color: AppTheme.muted, fontSize: 12)),
       ],
     );
   }
@@ -239,21 +229,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 fontWeight: FontWeight.w600,
               )),
           const SizedBox(height: 12),
+          _buildLinkRow(Icons.telegram, 'Telegram бот',
+              'https://t.me/benzyn_ryadom_bot'),
+          _buildLinkRow(Icons.telegram, 'Telegram канал',
+              'https://t.me/benzyn_ryadom'),
           _buildLinkRow(
-            Icons.telegram,
-            'Telegram бот',
-            'https://t.me/benzyn_ryadom_bot',
-          ),
-          _buildLinkRow(
-            Icons.telegram,
-            'Telegram канал',
-            'https://t.me/benzyn_ryadom',
-          ),
-          _buildLinkRow(
-            Icons.videocam,
-            'ВКонтакте',
-            'https://vk.com/benzyn_ryadom',
-          ),
+              Icons.videocam, 'ВКонтакте', 'https://vk.com/benzyn_ryadom'),
         ],
       ),
     );
@@ -278,20 +259,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
         color: AppTheme.bgCard,
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Column(
+      child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('О приложении',
+          Text('О приложении',
               style: TextStyle(
                 color: AppTheme.textPrimary,
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
               )),
-          const SizedBox(height: 8),
+          SizedBox(height: 8),
           Text(
-            'Бензин рядом — найди бензин за 5 секунд.\n'
-            '26 000+ АЗС по всей России.\n'
-            'v1.0.0',
+            'Бензин рядом — найди бензин за 5 секунд.\n26 000+ АЗС по всей России.\nv1.0.0',
             style: TextStyle(
               color: AppTheme.muted,
               fontSize: 13,
@@ -301,21 +280,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
     );
-  }
-
-  String _premiumTierName(String tier) {
-    switch (tier) {
-      case 'economy':
-        return 'Economy';
-      case 'standard':
-        return 'Standard';
-      case 'elite':
-        return 'Elite';
-      case 'founder':
-        return 'Founder';
-      default:
-        return tier;
-    }
   }
 
   String _premiumDaysLeft() {

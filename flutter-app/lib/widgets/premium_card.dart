@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
+import '../screens/premium_screen.dart' show premiumTierName;
 
 class PremiumCard extends StatelessWidget {
   final String? tier;
@@ -72,7 +73,7 @@ class PremiumCard extends StatelessWidget {
                     isFounder
                         ? 'Founder'
                         : hasPremium
-                            ? _tierName(tier!)
+                            ? premiumTierName(tier!)
                             : 'Premium',
                     style: TextStyle(
                       color: hasPremium
@@ -99,27 +100,11 @@ class PremiumCard extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(
-              Icons.chevron_right,
-              color: AppTheme.muted,
-            ),
+            const Icon(Icons.chevron_right, color: AppTheme.muted),
           ],
         ),
       ),
     );
-  }
-
-  String _tierName(String tier) {
-    switch (tier) {
-      case 'economy':
-        return 'Economy';
-      case 'standard':
-        return 'Standard';
-      case 'elite':
-        return 'Elite';
-      default:
-        return tier;
-    }
   }
 
   String _formatDate(DateTime date) {

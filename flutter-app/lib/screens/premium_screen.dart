@@ -2,6 +2,28 @@ import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../services/api_service.dart';
 
+const Map<String, String> featureNames = {
+  'price_history': '📈 График цен 30 дней',
+  'export_csv': '📊 Экспорт в Excel',
+  'offline_map': '🗺️ Офлайн-карта',
+  'route_fuel': '🛣️ Маршрут A→B с топливом',
+  'forecast_7d': '🔮 Прогноз цен на 7 дней',
+  'fuel_alarm': '🔔 Топливный будильник',
+  'anti_traffic': '🚗 Анти-пробка',
+  'sos_elite': '🆘 SOS-режим',
+};
+
+const Map<String, String> tierNames = {
+  'economy': 'Эконом',
+  'standard': 'Стандарт',
+  'elite': 'Элит',
+  'founder': 'Founder',
+};
+
+String premiumTierName(String tier) {
+  return tierNames[tier.toLowerCase()] ?? tier;
+}
+
 class PremiumScreen extends StatefulWidget {
   const PremiumScreen({super.key});
 
@@ -52,18 +74,11 @@ class _PremiumScreenState extends State<PremiumScreen> {
                 children: [
                   _buildHero(),
                   const SizedBox(height: 24),
-                  const Text('Тарифы',
-                      style: TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                      )),
-                  const SizedBox(height: 16),
                   ..._plans.map((plan) => _buildPlanCard(plan)),
                   const SizedBox(height: 16),
                   _buildFounderPack(),
                   const SizedBox(height: 24),
-                  _buildFeatureComparison(),
+                  _buildComparisonTable(),
                 ],
               ),
             ),
@@ -81,12 +96,11 @@ class _PremiumScreenState extends State<PremiumScreen> {
         ),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Column(
+      child: const Column(
         children: [
-          const Icon(Icons.workspace_premium,
-              color: Colors.white, size: 48),
-          const SizedBox(height: 12),
-          const Text(
+          Icon(Icons.workspace_premium, color: Colors.white, size: 48),
+          SizedBox(height: 12),
+          Text(
             'Бензин рядом Premium',
             style: TextStyle(
               color: Colors.white,
@@ -94,12 +108,12 @@ class _PremiumScreenState extends State<PremiumScreen> {
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: 8),
           Text(
             'История цен, прогнозы, маршруты,\nтопливные будильники и больше',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.9),
+              color: Colors.white70,
               fontSize: 14,
             ),
           ),
@@ -115,11 +129,12 @@ class _PremiumScreenState extends State<PremiumScreen> {
     final features = (plan['features'] as List? ?? [])
         .map((e) => e.toString())
         .toList();
-
     final periodText = period == 'forever' ? 'навсегда' : '/мес';
-    final accent = name.toLowerCase() == 'standard'
+
+    final code = name.toLowerCase();
+    final accent = code.contains('стандарт')
         ? AppTheme.accent
-        : name.toLowerCase() == 'elite'
+        : code.contains('элит')
             ? AppTheme.premium
             : AppTheme.info;
 
@@ -129,7 +144,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
       decoration: BoxDecoration(
         color: AppTheme.bgCard,
         borderRadius: BorderRadius.circular(16),
-        border: name.toLowerCase() == 'standard'
+        border: code.contains('стандарт')
             ? Border.all(color: AppTheme.accent, width: 2)
             : null,
       ),
@@ -139,22 +154,17 @@ class _PremiumScreenState extends State<PremiumScreen> {
           Row(
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: accent.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   name,
-                  style: TextStyle(
-                    color: accent,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: TextStyle(color: accent, fontSize: 12, fontWeight: FontWeight.w700),
                 ),
               ),
-              if (name.toLowerCase() == 'standard') ...[
+              if (code.contains('стандарт')) ...[
                 const SizedBox(width: 8),
                 Container(
                   padding:
@@ -165,10 +175,9 @@ class _PremiumScreenState extends State<PremiumScreen> {
                   ),
                   child: const Text('Популярный',
                       style: TextStyle(
-                        color: AppTheme.success,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      )),
+                          color: AppTheme.success,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600)),
                 ),
               ],
               const Spacer(),
@@ -191,11 +200,13 @@ class _PremiumScreenState extends State<PremiumScreen> {
                         color: AppTheme.success, size: 16),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(f,
-                          style: const TextStyle(
-                            color: AppTheme.textSecondary,
-                            fontSize: 13,
-                          )),
+                      child: Text(
+                        featureNames[f] ?? f,
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -204,7 +215,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () => _purchasePlan(name.toLowerCase()),
+              onPressed: () {},
               child: Text('Выбрать $name'),
             ),
           ),
@@ -227,19 +238,16 @@ class _PremiumScreenState extends State<PremiumScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
-              const Icon(Icons.star, color: Colors.white, size: 24),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Founder Pack',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+              Icon(Icons.star, color: Colors.white, size: 24),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text('Founder Pack',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800)),
               ),
             ],
           ),
@@ -257,7 +265,6 @@ class _PremiumScreenState extends State<PremiumScreen> {
             'Elite навсегда',
             'Бейдж Founder',
             'Имя в списке основателей',
-            '50% комиссии рефералам',
           ].map((f) => Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Row(
@@ -266,9 +273,8 @@ class _PremiumScreenState extends State<PremiumScreen> {
                     const SizedBox(width: 8),
                     Text(f,
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.9),
-                          fontSize: 14,
-                        )),
+                            color: Colors.white.withValues(alpha: 0.9),
+                            fontSize: 14)),
                   ],
                 ),
               )),
@@ -280,7 +286,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
                 backgroundColor: Colors.white,
                 foregroundColor: const Color(0xFFd97706),
               ),
-              onPressed: _purchaseFounder,
+              onPressed: () {},
               child: const Text('Стать основателем',
                   style: TextStyle(fontWeight: FontWeight.w700)),
             ),
@@ -290,20 +296,27 @@ class _PremiumScreenState extends State<PremiumScreen> {
     );
   }
 
-  Widget _buildFeatureComparison() {
-    final features = [
-      ('Поиск АЗС', true, true),
-      ('Цены и наличие', true, true),
-      ('Отчёты водителей', true, true),
-      ('Экстренный поиск', true, true),
-      ('История цен 30д', true, true),
-      ('История цен 365д', false, true),
-      ('Прогноз цен 7д', false, true),
-      ('Маршруты A→B', false, true),
-      ('Топливные будильники', false, true),
-      ('Антитрафик', false, false),
-      ('SOS-рассылка', false, false),
-      ('CSV-экспорт', false, true),
+  Widget _buildComparisonTable() {
+    const tiers = ['Free', 'Эконом', 'Стандарт', 'Элит'];
+    const tierColors = [
+      AppTheme.muted,
+      AppTheme.info,
+      AppTheme.accent,
+      AppTheme.premium,
+    ];
+    const features = [
+      ('Поиск АЗС', true, true, true, true),
+      ('Цены и наличие', true, true, true, true),
+      ('Отчёты водителей', true, true, true, true),
+      ('Экстренный поиск', true, true, true, true),
+      ('📈 График цен 30 дней', false, true, true, true),
+      ('📊 Экспорт в Excel', false, true, true, true),
+      ('🗺️ Офлайн-карта', false, true, true, true),
+      ('🛣️ Маршрут A→B', false, false, true, true),
+      ('🔮 Прогноз цен 7 дней', false, false, true, true),
+      ('🔔 Топливный будильник', false, false, true, true),
+      ('🚗 Анти-пробка', false, false, false, true),
+      ('🆘 SOS-режим', false, false, false, true),
     ];
 
     return Container(
@@ -327,76 +340,52 @@ class _PremiumScreenState extends State<PremiumScreen> {
               0: FlexColumnWidth(3),
               1: FlexColumnWidth(1),
               2: FlexColumnWidth(1),
+              3: FlexColumnWidth(1),
+              4: FlexColumnWidth(1),
             },
             children: [
               TableRow(
                 children: [
                   const SizedBox(),
-                  _tableHeader('Free'),
-                  _tableHeader('Premium'),
+                  ...List.generate(4, (i) => Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Text(tiers[i],
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: tierColors[i],
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            )),
+                      )),
                 ],
               ),
               ...features.map((f) => TableRow(
                     children: [
                       Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
                         child: Text(f.$1,
                             style: const TextStyle(
                               color: AppTheme.textSecondary,
-                              fontSize: 13,
+                              fontSize: 12,
                             )),
                       ),
-                      Center(
-                        child: Icon(
-                          f.$2
-                              ? Icons.check_circle
-                              : Icons.remove_circle_outline,
-                          color: f.$2 ? AppTheme.success : AppTheme.muted,
-                          size: 18,
-                        ),
-                      ),
-                      Center(
-                        child: Icon(
-                          f.$3
-                              ? Icons.check_circle
-                              : Icons.remove_circle_outline,
-                          color: f.$3 ? AppTheme.success : AppTheme.muted,
-                          size: 18,
-                        ),
-                      ),
+                      ...List.generate(4, (i) => Center(
+                            child: Icon(
+                              [f.$2, f.$3, f.$4, f.$5][i]
+                                  ? Icons.check_circle
+                                  : Icons.remove_circle_outline,
+                              color: [f.$2, f.$3, f.$4, f.$5][i]
+                                  ? AppTheme.success
+                                  : AppTheme.muted,
+                              size: 16,
+                            ),
+                          )),
                     ],
                   )),
             ],
           ),
         ],
       ),
-    );
-  }
-
-  Widget _tableHeader(String text) {
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Text(text,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: AppTheme.textPrimary,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-          )),
-    );
-  }
-
-  void _purchasePlan(String plan) {
-    // TODO: integrate YooMoney payment
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Оплата через YooMoney')),
-    );
-  }
-
-  void _purchaseFounder() {
-    // TODO: integrate YooMoney payment
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Оплата через YooMoney')),
     );
   }
 }

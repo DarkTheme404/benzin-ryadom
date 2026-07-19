@@ -2,12 +2,10 @@ import 'package:flutter/material.dart';
 import '../config/theme.dart';
 import '../models/station.dart';
 import '../services/api_service.dart';
-import '../widgets/price_history_chart.dart';
 import '../widgets/report_sheet.dart';
 
 class StationDetailScreen extends StatefulWidget {
   final int stationId;
-
   const StationDetailScreen({super.key, required this.stationId});
 
   @override
@@ -18,7 +16,6 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
   final ApiService _api = ApiService();
   Station? _station;
   List<Map<String, dynamic>> _prices = [];
-  List<Map<String, dynamic>> _history = [];
   bool _isLoading = true;
 
   @override
@@ -32,12 +29,10 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
       final results = await Future.wait([
         _api.getStationDetail(widget.stationId),
         _api.getStationPrices(widget.stationId),
-        _api.getPriceHistory(widget.stationId, fuel: '95', days: 30),
       ]);
       setState(() {
         _station = results[0] as Station?;
         _prices = results[1] as List<Map<String, dynamic>>;
-        _history = results[2] as List<Map<String, dynamic>>;
         _isLoading = false;
       });
     } catch (_) {
@@ -60,21 +55,16 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
       return Scaffold(
         appBar: AppBar(title: const Text('Ошибка')),
         body: const Center(
-          child: Text('Станция не найдена',
-              style: TextStyle(color: AppTheme.muted)),
+          child:
+              Text('Станция не найдена', style: TextStyle(color: AppTheme.muted)),
         ),
       );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_station!.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share_outlined),
-            onPressed: _shareStation,
-          ),
-        ],
+        title: Text(_station!.operator ?? _station!.name,
+            maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -83,13 +73,7 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
           children: [
             _buildHeader(),
             const SizedBox(height: 16),
-            _buildPriceSection(),
-            const SizedBox(height: 16),
-            _buildFuelAvailability(),
-            if (_history.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _buildPriceHistory(),
-            ],
+            _buildStatuses(),
             if (_prices.isNotEmpty) ...[
               const SizedBox(height: 16),
               _buildPriceSources(),
@@ -101,8 +85,7 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
         backgroundColor: AppTheme.accent,
         onPressed: _showReportSheet,
         icon: const Icon(Icons.edit, color: Colors.white),
-        label: const Text('Сообщить',
-            style: TextStyle(color: Colors.white)),
+        label: const Text('Сообщить', style: TextStyle(color: Colors.white)),
       ),
     );
   }
@@ -119,33 +102,21 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
         children: [
           Row(
             children: [
-              if (_station!.network != null) ...[
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppTheme.accent.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    _station!.network!,
-                    style: const TextStyle(
-                      color: AppTheme.accent,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
+              if (_station!.isVerified) ...[
+                const Icon(Icons.verified, color: AppTheme.info, size: 16),
+                const SizedBox(width: 4),
               ],
               if (_station!.distance != null)
                 Text(
-                  _formatDistance(_station!.distance!),
-                  style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+                  _station!.distance! < 1
+                      ? '${(_station!.distance! * 1000).round()} м'
+                      : '${_station!.distance!.toStringAsFixed(1)} км',
+                  style:
+                      const TextStyle(color: AppTheme.muted, fontSize: 13),
                 ),
             ],
           ),
-          if (_station!.address != null) ...[
+          if (_station!.address != null && _station!.address!.isNotEmpty) ...[
             const SizedBox(height: 8),
             Row(
               children: [
@@ -167,8 +138,8 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
     );
   }
 
-  Widget _buildPriceSection() {
-    if (_station!.prices.isEmpty) {
+  Widget _buildStatuses() {
+    if (_station!.statuses.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -176,7 +147,7 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
           borderRadius: BorderRadius.circular(16),
         ),
         child: const Center(
-          child: Text('Цены пока неизвестны',
+          child: Text('Нет данных о наличии',
               style: TextStyle(color: AppTheme.muted)),
         ),
       );
@@ -191,92 +162,57 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Цены на топливо',
+          const Text('Топливо и цены',
               style: TextStyle(
                 color: AppTheme.textPrimary,
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
               )),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 8,
-            children: _station!.prices.entries.map((e) {
-              return _buildPriceChip(e.key, e.value);
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
+          ..._station!.statuses.map((s) {
+            final has = s.available == true;
+            final no = s.available == false;
+            final price =
+                s.price != null ? '${s.price!.toStringAsFixed(2)} ₽' : '';
+            final statusText =
+                has ? 'В наличии' : no ? 'Нет в наличии' : 'Нет данных';
+            final statusColor =
+                has ? AppTheme.success : no ? AppTheme.danger : AppTheme.muted;
 
-  Widget _buildPriceChip(String fuel, FuelPrice price) {
-    final fuelName = _fuelLabel(fuel);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppTheme.bgCardLight,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        children: [
-          Text(fuelName,
-              style: const TextStyle(color: AppTheme.muted, fontSize: 11)),
-          const SizedBox(height: 4),
-          Text(price.priceText,
-              style: const TextStyle(
-                color: AppTheme.textPrimary,
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              )),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFuelAvailability() {
-    if (_station!.availability.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.bgCard,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Наличие',
-              style: TextStyle(
-                color: AppTheme.textPrimary,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              )),
-          const SizedBox(height: 12),
-          ..._station!.availability.entries.map((e) {
             return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 10),
               child: Row(
                 children: [
                   Icon(
-                    _statusIcon(e.value),
+                    has ? Icons.check_circle : no ? Icons.cancel : Icons.help_outline,
                     size: 16,
-                    color: _statusColor(e.value),
+                    color: statusColor,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    _fuelLabel(e.key),
+                    _fuelLabel(s.fuelType),
                     style: const TextStyle(
-                      color: AppTheme.textSecondary,
+                      color: AppTheme.textPrimary,
                       fontSize: 14,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                   const Spacer(),
+                  if (price.isNotEmpty)
+                    Text(
+                      price,
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  const SizedBox(width: 12),
                   Text(
-                    _statusText(e.value),
+                    statusText,
                     style: TextStyle(
-                      color: _statusColor(e.value),
-                      fontSize: 13,
+                      color: statusColor,
+                      fontSize: 12,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -284,51 +220,6 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
               ),
             );
           }),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPriceHistory() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppTheme.bgCard,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text('История цен',
-                  style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  )),
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: AppTheme.premium.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text('PREMIUM',
-                    style: TextStyle(
-                      color: AppTheme.premium,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    )),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 120,
-            child: PriceHistoryChart(history: _history),
-          ),
         ],
       ),
     );
@@ -360,9 +251,7 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
                     child: Text(
                       '${_fuelLabel(p['fuel_type']?.toString() ?? '')} — ${p['price'] ?? '—'} ₽',
                       style: const TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 13,
-                      ),
+                          color: AppTheme.textSecondary, fontSize: 13),
                     ),
                   ),
                   Container(
@@ -375,9 +264,7 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
                     child: Text(
                       p['source']?.toString() ?? '—',
                       style: const TextStyle(
-                        color: AppTheme.info,
-                        fontSize: 11,
-                      ),
+                          color: AppTheme.info, fontSize: 11),
                     ),
                   ),
                 ],
@@ -399,13 +286,9 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
       ),
       builder: (_) => ReportSheet(
         stationId: widget.stationId,
-        stationName: _station?.name ?? '',
+        stationName: _station?.operator ?? _station?.name ?? '',
       ),
     );
-  }
-
-  void _shareStation() {
-    // TODO: use share_plus
   }
 
   String _fuelLabel(String fuel) {
@@ -423,49 +306,5 @@ class _StationDetailScreenState extends State<StationDetailScreen> {
       default:
         return fuel;
     }
-  }
-
-  IconData _statusIcon(String status) {
-    switch (status) {
-      case 'in_stock':
-        return Icons.check_circle;
-      case 'partial':
-        return Icons.warning_amber;
-      case 'out_of_stock':
-        return Icons.cancel;
-      default:
-        return Icons.help_outline;
-    }
-  }
-
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'in_stock':
-        return AppTheme.success;
-      case 'partial':
-        return AppTheme.warning;
-      case 'out_of_stock':
-        return AppTheme.danger;
-      default:
-        return AppTheme.muted;
-    }
-  }
-
-  String _statusText(String status) {
-    switch (status) {
-      case 'in_stock':
-        return 'В наличии';
-      case 'partial':
-        return 'Осталось мало';
-      case 'out_of_stock':
-        return 'Нет в наличии';
-      default:
-        return 'Нет данных';
-    }
-  }
-
-  String _formatDistance(double meters) {
-    if (meters < 1000) return '${meters.round()} м';
-    return '${(meters / 1000).toStringAsFixed(1)} км';
   }
 }

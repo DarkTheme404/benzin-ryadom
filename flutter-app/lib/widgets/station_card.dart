@@ -42,12 +42,15 @@ class StationCard extends StatelessWidget {
   Widget _buildHeader() {
     return Row(
       children: [
+        if (station.isVerified)
+          const Icon(Icons.verified, color: AppTheme.info, size: 14),
+        if (station.isVerified) const SizedBox(width: 4),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                station.name,
+                station.operator ?? station.name,
                 style: const TextStyle(
                   color: AppTheme.textPrimary,
                   fontSize: 15,
@@ -56,7 +59,7 @@ class StationCard extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              if (station.address != null) ...[
+              if (station.address != null && station.address!.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(
                   station.address!,
@@ -71,6 +74,24 @@ class StationCard extends StatelessWidget {
             ],
           ),
         ),
+        if (station.rating != null) ...[
+          const SizedBox(width: 8),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.star, color: AppTheme.premium, size: 14),
+              const SizedBox(width: 2),
+              Text(
+                station.rating!.toStringAsFixed(1),
+                style: const TextStyle(
+                  color: AppTheme.premium,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ],
         if (station.distance != null) ...[
           const SizedBox(width: 8),
           _buildDistanceBadge(),
@@ -80,8 +101,8 @@ class StationCard extends StatelessWidget {
   }
 
   Widget _buildPriceRow() {
-    final price = station.prices[selectedFuel];
-    if (price == null || price.price == null) {
+    final fuelStatuses = station.statusesForFuel(selectedFuel);
+    if (fuelStatuses.isEmpty) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
@@ -89,42 +110,70 @@ class StationCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
         ),
         child: const Text(
-          'Цена неизвестна',
+          'Нет данных',
           style: TextStyle(color: AppTheme.muted, fontSize: 13),
         ),
       );
     }
 
-    return Row(
-      children: [
-        Container(
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      children: fuelStatuses.map((s) {
+        final has = s.available == true;
+        final no = s.available == false;
+        final price = s.price != null ? '${s.price!.toStringAsFixed(2)}₽' : '';
+        final icon = has ? '✓' : no ? '✗' : '?';
+
+        Color bgColor;
+        if (has && price.isNotEmpty) {
+          bgColor = AppTheme.success.withValues(alpha: 0.12);
+        } else if (no) {
+          bgColor = AppTheme.danger.withValues(alpha: 0.12);
+        } else {
+          bgColor = AppTheme.bgCardLight;
+        }
+
+        return Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: AppTheme.success.withValues(alpha: 0.12),
+            color: bgColor,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                _fuelLabel(selectedFuel),
+                _fuelLabel(s.fuelType),
                 style: const TextStyle(
                   color: AppTheme.muted,
                   fontSize: 12,
                 ),
               ),
-              const SizedBox(width: 8),
-              Text(
-                price.priceText,
-                style: const TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
+              if (price.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Text(
+                  price,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
+              ],
+              const SizedBox(width: 4),
+              Text(icon, style: TextStyle(
+                color: has
+                    ? AppTheme.success
+                    : no
+                        ? AppTheme.danger
+                        : AppTheme.muted,
+                fontSize: 11,
+              )),
             ],
           ),
-        ),
-      ],
+        );
+      }).toList(),
     );
   }
 
@@ -133,34 +182,21 @@ class StationCard extends StatelessWidget {
       children: [
         _buildStatusChip(),
         const Spacer(),
-        if (station.reportCount != null)
-          Row(
-            children: [
-              const Icon(Icons.assessment, size: 12, color: AppTheme.muted),
-              const SizedBox(width: 4),
-              Text(
-                '${station.reportCount}',
-                style: const TextStyle(color: AppTheme.muted, fontSize: 11),
-              ),
-            ],
-          ),
-        if (station.lastUpdate != null) ...[
-          const SizedBox(width: 12),
+        if (station.lastUpdate != null)
           Text(
             _formatAge(station.lastUpdate!),
             style: const TextStyle(color: AppTheme.muted, fontSize: 11),
           ),
-        ],
       ],
     );
   }
 
   Widget _buildStatusChip() {
-    final status = station.fuelStatus;
+    final status = station.fuelStatusForType(selectedFuel);
     Color color;
     String text;
     switch (status) {
-      case 'in_stock':
+      case 'available':
         color = AppTheme.success;
         text = 'В наличии';
         break;
@@ -168,7 +204,7 @@ class StationCard extends StatelessWidget {
         color = AppTheme.warning;
         text = 'Осталось мало';
         break;
-      case 'out_of_stock':
+      case 'unavailable':
         color = AppTheme.danger;
         text = 'Нет';
         break;
@@ -229,15 +265,15 @@ class StationCard extends StatelessWidget {
     }
   }
 
-  String _formatDistance(double meters) {
-    if (meters < 1000) return '${meters.round()} м';
-    return '${(meters / 1000).toStringAsFixed(1)} км';
+  String _formatDistance(double km) {
+    if (km < 1) return '${(km * 1000).round()} м';
+    return '${km.toStringAsFixed(1)} км';
   }
 
   String _formatAge(String dateStr) {
     try {
       final date = DateTime.parse(dateStr);
-      final diff = DateTime.now().difference(date);
+      final diff = DateTime.now().toUtc().difference(date);
       if (diff.inMinutes < 60) return '${diff.inMinutes} мин назад';
       if (diff.inHours < 24) return '${diff.inHours} ч назад';
       return '${diff.inDays} дн назад';

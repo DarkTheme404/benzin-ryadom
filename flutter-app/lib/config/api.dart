@@ -3,6 +3,7 @@ class ApiConfig {
   static const String apiBase = '$baseUrl/api';
 
   static const Duration timeout = Duration(seconds: 15);
+  static const Duration longTimeout = Duration(seconds: 60);
 
   static const List<String> cities = [
     'Иваново', 'Москва', 'Санкт-Петербург', 'Владимир', 'Кострома',
