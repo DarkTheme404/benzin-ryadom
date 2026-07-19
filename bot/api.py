@@ -3328,7 +3328,7 @@ async def handle_user_register(request):
     salt = os.urandom(16)
     pw_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000).hex() + ':' + salt.hex()
     if USE_SQLITE:
-        await _fetch("UPDATE users SET password_hash = ? WHERE id = ?", pw_hash, uid)
+        await db._db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, uid))
         await db._db.commit()
     else:
         async with db._db.acquire() as conn:
@@ -3337,9 +3337,9 @@ async def handle_user_register(request):
     # Сохраняем ссылки на профили
     if vk_link or tg_link:
         if USE_SQLITE:
-            await _fetch(
+            await db._db.execute(
                 "UPDATE users SET vk_profile_link = ?, tg_profile_link = ?, first_name = ? WHERE id = ?",
-                vk_link or None, tg_link or None, name, uid,
+                (vk_link or None, tg_link or None, name, uid),
             )
             await db._db.commit()
         else:
@@ -3395,7 +3395,7 @@ async def handle_user_login(request):
     except Exception:
         return json_resp({"error": "invalid json"}, status=400)
 
-    name = (body.get("name") or "").strip()
+    name = (body.get("name") or "").strip()[:64]
     password = (body.get("password") or "").strip()
 
     if not name or not password:
@@ -3406,29 +3406,29 @@ async def handle_user_login(request):
     # Ищем пользователя по имени
     if USE_SQLITE:
         row = await _fetch(
-            "SELECT id, first_name, password_hash, telegram_id FROM users WHERE py_lower(first_name) = py_lower(?) LIMIT 1",
+            "SELECT id, first_name, password_hash, telegram_id, vk_id, screen_name FROM users WHERE py_lower(first_name) = py_lower(?) LIMIT 1",
             name, one=True,
         )
     else:
         row = await _fetch(
-            "SELECT id, first_name, password_hash, telegram_id FROM users WHERE LOWER(first_name) = LOWER($1) LIMIT 1",
+            "SELECT id, first_name, password_hash, telegram_id, vk_id, screen_name FROM users WHERE LOWER(first_name) = LOWER($1) LIMIT 1",
             name, one=True,
         )
 
     if not row:
         return json_resp({"error": "Пользователь не найден"}, status=404)
 
-    uid = row["id"] if isinstance(row, dict) else row[0]
-    pw_hash = row["password_hash"] if isinstance(row, dict) else row[2]
+    uid = row["id"]
+    pw_hash = row["password_hash"]
 
     if not pw_hash:
         return json_resp({"error": "У этого аккаунта нет пароля. Войдите через Telegram или VK."}, status=400)
 
-    import hashlib
+    import hashlib, hmac
     try:
         stored_hash, stored_salt = pw_hash.split(':')
         check_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), bytes.fromhex(stored_salt), 100000).hex()
-        if check_hash != stored_hash:
+        if not hmac.compare_digest(check_hash, stored_hash):
             return json_resp({"error": "Неверный пароль"}, status=401)
     except Exception:
         return json_resp({"error": "Ошибка проверки пароля"}, status=500)
@@ -3436,24 +3436,19 @@ async def handle_user_login(request):
     from db import get_user_premium
     premium = await get_user_premium(uid)
 
-    telegram_id = row["telegram_id"] if isinstance(row, dict) else (row[3] if len(row) > 3 else None)
+    telegram_id = row.get("telegram_id")
 
     # Определяем тип аккаунта
     account_type = "standalone"
-    if isinstance(row, dict):
-        if row.get("vk_id"):
-            account_type = "vk"
-    else:
-        # row is tuple: id, first_name, password_hash, telegram_id
-        # vk_id not selected, but we can check screen_name
-        pass
+    if row.get("vk_id") or row.get("screen_name"):
+        account_type = "vk"
 
     return json_resp({
         "ok": True,
         "user_id": uid,
         "telegram_id": telegram_id,
         "account_type": account_type,
-        "name": row["first_name"] if isinstance(row, dict) else row[1],
+        "name": row["first_name"],
         "premium": premium.get("tier") if premium else None,
         "premium_expires": str(premium["expires_at"]) if premium and premium.get("expires_at") else None,
     })

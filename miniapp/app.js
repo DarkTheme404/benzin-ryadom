@@ -824,9 +824,9 @@
     const max = Math.max(...prices);
     const range = max - min || 1;
     const stepX = (w - pad * 2) / Math.max(history.length - 1, 1);
-    const points = history.map((h, i) => {
+    const points = history.map((entry, i) => {
       const x = pad + i * stepX;
-      const y = pad + (h.price - min) / range * (h - pad * 2);
+      const y = pad + (entry.price - min) / range * (h - pad * 2);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
 
@@ -1214,7 +1214,7 @@
             body: JSON.stringify({[alarmIdParam]: _uid, station_id: s.id, fuel_type: selectedFuelType}),
           });
           if (resp.error === 'premium_required') {
-            showUpsell('fuel_alarm');
+            window.PremiumUI.showUpsell({ feature: 'fuel_alarm' });
             return;
           }
           activeAlarmId = resp.alarm_id;
@@ -1278,11 +1278,11 @@
       const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
       const premRes = await api(`/api/premium/status?${idParam}=${uid}`);
       if (!premRes || !premRes.active || premRes.tier !== 'elite') {
-        showUpsell('sos_elite');
+        window.PremiumUI.showUpsell({ feature: 'sos_elite' });
         return;
       }
     } catch (e) {
-      showUpsell('sos_elite');
+      window.PremiumUI.showUpsell({ feature: 'sos_elite' });
       return;
     }
 
@@ -2761,7 +2761,7 @@
       hideLoading();
 
       if (data.error === 'elite_required') {
-        showUpsell('anti_traffic');
+        window.PremiumUI.showUpsell({ feature: 'anti_traffic' });
         return;
       }
 
@@ -3484,8 +3484,6 @@
         haptic('heavy');
         if (window.PremiumUI && window.PremiumUI.activateTrial) {
           window.PremiumUI.activateTrial();
-        } else {
-          activateTrial();
         }
       });
     }
@@ -3655,6 +3653,8 @@
     if (overlay) overlay.style.display = 'none';
     try { localStorage.setItem('benzin_welcomed', '1'); } catch (e) {}
   };
+
+  window.closeMapPicker = closeMapPicker;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

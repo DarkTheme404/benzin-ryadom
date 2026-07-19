@@ -568,6 +568,7 @@ async def route_more_callback(callback: CallbackQuery):
 async def route_pick_callback(callback: CallbackQuery):
     """Показывает АЗС выбранной трассы."""
     rid = int(callback.data.split(":", 1)[1])
+    import db
     from db import find_stations_by_route, _fetch
     if db.USE_SQLITE:
         row = await _fetch("SELECT * FROM routes WHERE id = ?", rid)
@@ -3976,7 +3977,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(approve_owner, F.data.startswith("approve:"))
 
     # Глобальная кнопка «В начало»
-    dp.callback_query.register(go_home_callback, F.data == "go_home")
+    dp.callback_query.register(go_home_callback, F.data.in_({"go_home", "back_home"}))
 
     # Фаза 2 callbacks
     dp.callback_query.register(go_register_owner_callback, F.data == "go_register_owner")
@@ -4006,10 +4007,10 @@ def register_all_handlers(dp: Dispatcher):
     # он перехватывает все текстовые сообщения.
     # Все state-specific handlers (link_code_input и т.д.) должны быть зарегистрированы раньше.
     dp.message.register(handle_main_button, F.text)
-    dp.callback_query.register(buy_tier_callback, F.data.in_({"buy_economy", "buy_standard", "buy_elite"}))
+    dp.callback_query.register(buy_tier_callback, F.data.in_({"buy_economy", "buy_standard", "buy_elite", "buy_founder"}))
     dp.callback_query.register(check_payment_callback, F.data.startswith("check_pay_"))
     dp.callback_query.register(buy_premium_callback, F.data == "buy_premium")
-    dp.callback_query.register(premium_callback, F.data == "cmd_premium")
+    dp.callback_query.register(premium_callback, F.data.in_({"cmd_premium", "premium:start"}))
     dp.callback_query.register(premium_trial_callback, F.data == "premium_trial")
     dp.pre_checkout_query.register(pre_checkout_handler)
     dp.message.register(successful_payment_handler, F.successful_payment)

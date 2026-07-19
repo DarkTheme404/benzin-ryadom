@@ -268,7 +268,7 @@ async def _migrate_sqlite(db):
         """CREATE TABLE IF NOT EXISTS premium_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            tier TEXT NOT NULL CHECK (tier IN ('economy', 'standard', 'elite')),
+            tier TEXT NOT NULL,
             started_at TEXT DEFAULT CURRENT_TIMESTAMP,
             expires_at TEXT NOT NULL,
             payment_id TEXT,
@@ -282,6 +282,55 @@ async def _migrate_sqlite(db):
     )
     await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_user_id ON premium_users (user_id)")
     await db.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_active ON premium_users (user_id, is_active, expires_at)")
+
+    # Миграция: убираем CHECK constraint на tier в premium_users (нужен для 'founder' tier)
+    # SQLite не поддерживает DROP CONSTRAINT, пересоздаём таблицу
+    try:
+        cursor = await db.execute("PRAGMA table_info(premium_users)")
+        pragma_cols = await cursor.fetchall()
+        has_check = any(
+            (row[1] if isinstance(row, tuple) else row.get("name")) == "tier"
+            for row in pragma_cols
+        )
+        if has_check:
+            # Проверяем, есть ли CHECK constraint через sql
+            cursor = await db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='premium_users'")
+            create_sql = await cursor.fetchone()
+            create_text = create_sql[0] if isinstance(create_sql, tuple) else (create_sql or {}).get("sql", "")
+            if "CHECK" in create_text.upper():
+                await db.execute("BEGIN TRANSACTION")
+                await db.execute("ALTER TABLE premium_users RENAME TO premium_users_old")
+                await db.execute("""
+                    CREATE TABLE premium_users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        tier TEXT NOT NULL,
+                        started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TEXT NOT NULL,
+                        payment_id TEXT,
+                        payment_amount INTEGER,
+                        payment_method TEXT,
+                        is_active INTEGER DEFAULT 1,
+                        cancelled_at TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                await db.execute("""
+                    INSERT INTO premium_users
+                    SELECT id, user_id, tier, started_at, expires_at, payment_id,
+                           payment_amount, payment_method, is_active, cancelled_at,
+                           created_at, updated_at
+                    FROM premium_users_old
+                """)
+                await db.execute("DROP TABLE premium_users_old")
+                await db.execute("COMMIT")
+    except Exception as e:
+        logger.warning(f"Migration premium_users CHECK constraint: {e}")
+        try:
+            await db.execute("ROLLBACK")
+        except Exception:
+            pass
 
     # premium_trials — трекинг trial активаций (1 раз на юзера)
     await db.execute("""
@@ -680,7 +729,7 @@ async def _create_schema_pg(pool):
                 CREATE TABLE IF NOT EXISTS premium_users (
                     id BIGSERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    tier TEXT NOT NULL CHECK (tier IN ('economy', 'standard', 'elite')),
+                    tier TEXT NOT NULL,
                     started_at TIMESTAMPTZ DEFAULT NOW(),
                     expires_at TIMESTAMPTZ NOT NULL,
                     payment_id TEXT,
@@ -694,6 +743,12 @@ async def _create_schema_pg(pool):
             """)
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_user_id ON premium_users (user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_premium_users_active ON premium_users (user_id, is_active, expires_at)")
+
+            # Миграция: убираем CHECK constraint на tier (нужен для 'founder' tier)
+            try:
+                await conn.execute("ALTER TABLE premium_users DROP CONSTRAINT IF EXISTS premium_users_tier_check")
+            except Exception:
+                pass  # Constraint may not exist
 
             # premium_trials — трекинг trial активаций (1 раз на юзера)
             await conn.execute("""
@@ -1944,7 +1999,7 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "", 
     """Создаёт/обновляет пользователя по VK ID. Возвращает user_id."""
     if USE_SQLITE:
         row = await _fetch(
-            "SELECT id FROM users WHERE vk_id = ?", (vk_id,), one=True,
+            "SELECT id FROM users WHERE vk_id = ?", vk_id, one=True,
         )
         if row:
             uid = row["id"] if isinstance(row, dict) else row[0]
@@ -1961,7 +2016,7 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "", 
             return uid
         # Fallback: может быть старая запись с telegram_id=peer_id (до фикса)
         row = await _fetch(
-            "SELECT id FROM users WHERE telegram_id = ? AND vk_id IS NULL", (vk_id,), one=True,
+            "SELECT id FROM users WHERE telegram_id = ? AND vk_id IS NULL", vk_id, one=True,
         )
         if row:
             uid = row["id"] if isinstance(row, dict) else row[0]
@@ -1979,7 +2034,7 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "", 
         except Exception:
             # Race condition — другой запрос уже создал запись
             row = await _fetch(
-                "SELECT id FROM users WHERE vk_id = ?", (vk_id,), one=True,
+                "SELECT id FROM users WHERE vk_id = ?", vk_id, one=True,
             )
             if row:
                 uid = row["id"] if isinstance(row, dict) else row[0]
@@ -4150,7 +4205,7 @@ async def has_used_trial(user_id: int) -> bool:
     if USE_SQLITE:
         row = await _fetch(
             "SELECT id FROM premium_trials WHERE user_id = ?",
-            (user_id,), one=True,
+            user_id, one=True,
         )
     else:
         async with _db.acquire() as conn:
@@ -5221,7 +5276,7 @@ async def create_referral_code(user_id: int) -> str:
     if USE_SQLITE:
         # Проверяем есть ли уже код
         row = await _fetch(
-            "SELECT referral_code FROM referrals WHERE referrer_user_id = ? AND status = 'pending' LIMIT 1",
+            "SELECT referral_code FROM referrals WHERE referrer_user_id = ? AND status = 'active' LIMIT 1",
             user_id, one=True,
         )
         if row:

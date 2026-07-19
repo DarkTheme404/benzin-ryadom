@@ -341,4 +341,10 @@
     renderHeroCTA: renderHeroCTA,
     activateTrial: activateTrial,
   };
+
+  // Export to global for inline onclick handlers
+  window.activateTrial = activateTrial;
+  window.selectTier = selectTier;
+  window.showUpsell = showUpsell;
+  window.closeUpsell = closeUpsell;
 })();

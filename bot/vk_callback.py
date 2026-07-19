@@ -135,6 +135,18 @@ def _cleanup_states() -> None:
         logger.debug("Cleaned up %d expired user states", len(expired))
 
 
+async def _periodic_cleanup() -> None:
+    """Фоновая задача: очистка _user_state и _processed_events каждые 60 сек."""
+    import asyncio
+    while True:
+        await asyncio.sleep(60)
+        _cleanup_states()
+        now = time.time()
+        for k in list(_processed_events.keys()):
+            if now - _processed_events[k] > _EVENT_DEDUP_TTL * 2:
+                _processed_events.pop(k, None)
+
+
 # === VK API wrapper ===
 async def _vk_api_call(method: str, params: dict) -> dict:
     """Вызов метода VK API через aiohttp."""
@@ -1588,7 +1600,7 @@ async def process_message_event(event: dict) -> None:
     # Очистка старых
     now = time.time()
     for k in list(_processed_events.keys()):
-        if not k.startswith("msg:") and now - _processed_events[k] > _EVENT_DEDUP_TTL * 2:
+        if now - _processed_events[k] > _EVENT_DEDUP_TTL * 2:
             _processed_events.pop(k, None)
 
     # Парсим payload (может быть строкой или dict)

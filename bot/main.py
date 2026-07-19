@@ -244,6 +244,9 @@ async def main():
         logger.info(">>> Создаю задачу VK-бота (supervised)...")
         vk_task = asyncio.create_task(_safe_worker(_vk_bot_supervisor(), "vk_supervisor"))
         logger.info(">>> Задача VK-бота создана")
+        # Периодическая очистка state'ов и dedup-кеша VK callback
+        from vk_callback import _periodic_cleanup
+        asyncio.create_task(_safe_worker(_periodic_cleanup(), "vk_periodic_cleanup"))
         # Ждём готовности bot (макс 5 сек)
         for _ in range(50):
             if settings.bot:
