@@ -2428,6 +2428,8 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/account/link-by-profile", handle_account_link_by_profile)
     app.router.add_post("/api/account/unlink", handle_account_unlink)
     app.router.add_post("/api/admin/reset-link-ops", handle_admin_reset_link_ops)
+    app.router.add_get("/api/admin/list-links", handle_admin_list_links)
+    app.router.add_post("/api/admin/force-unlink", handle_admin_force_unlink)
     # Fuel alarms
     app.router.add_post("/api/fuel-alarm/create", handle_fuel_alarm_create)
     app.router.add_post("/api/fuel-alarm/delete", handle_fuel_alarm_delete)
@@ -3284,6 +3286,27 @@ async def handle_admin_reset_link_ops(request):
         return json_resp({"error": "user not found"}, status=404)
 
     result = await reset_link_ops(uid)
+    return json_resp(result)
+
+
+async def handle_admin_list_links(request):
+    """GET /api/admin/list-links — показать все активные привязки."""
+    from db import list_all_links
+    links = await list_all_links()
+    return json_resp({"ok": True, "links": links})
+
+
+async def handle_admin_force_unlink(request):
+    """POST /api/admin/force-unlink — принудительно очистить связи по user_id."""
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    uid = body.get("user_id")
+    if not uid:
+        return json_resp({"error": "user_id required"}, status=400)
+    from db import force_unlink_all
+    result = await force_unlink_all(int(uid))
     return json_resp(result)
 
 

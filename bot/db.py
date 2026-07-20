@@ -5124,6 +5124,54 @@ async def reset_link_ops(user_id: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+async def list_all_links() -> list:
+    """Возвращает все активные привязки (для отладки)."""
+    try:
+        if USE_SQLITE:
+            rows = await _fetch(
+                "SELECT id, first_name, telegram_id, vk_id, linked_user_id, linked_telegram_id, link_group_id FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL"
+            )
+        else:
+            async with _db.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id, first_name, telegram_id, vk_id, linked_user_id, linked_telegram_id, link_group_id FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL"
+                )
+        result = []
+        for r in (rows or []):
+            if isinstance(r, dict):
+                result.append(r)
+            else:
+                result.append({
+                    "id": r[0], "first_name": r[1], "telegram_id": r[2],
+                    "vk_id": r[3], "linked_user_id": r[4],
+                    "linked_telegram_id": r[5], "link_group_id": r[6],
+                })
+        return result
+    except Exception as e:
+        logger.warning(f"list_all_links error: {e}")
+        return []
+
+
+async def force_unlink_all(user_id: int) -> dict:
+    """Принудительно очищает ВСЕ связи пользователя."""
+    try:
+        if USE_SQLITE:
+            await _execute(
+                "UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL, link_group_id = NULL WHERE id = ?",
+                user_id,
+            )
+            await _db.commit()
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    "UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL, link_group_id = NULL WHERE id = $1",
+                    user_id,
+                )
+        return {"ok": True, "message": f"Связки пользователя {user_id} очищены"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 async def record_link_operation(user_id: int) -> None:
     """Увеличивает счётчик операций и обновляет last_link_change_at."""
     now = datetime.now(timezone.utc)
