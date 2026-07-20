@@ -4566,7 +4566,11 @@ from datetime import datetime, timedelta, timezone
 
 
 async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
-    """Переносит данные из merge_uid в keep_uid (VK id, FK refs, etc)."""
+    """Переносит данные из merge_uid в keep_uid (VK id, FK refs, etc).
+
+    Сначала обнуляет vk_id у merge_uid чтобы избежать unique violation,
+    потом мёржит FK references, потом обновляет keep_uid, потом удаляет merge_uid.
+    """
     if USE_SQLITE:
         keep = await _fetch("SELECT vk_id, telegram_id, first_name, is_founder FROM users WHERE id = ?", keep_uid, one=True)
         merge = await _fetch("SELECT vk_id, telegram_id, first_name, is_founder FROM users WHERE id = ?", merge_uid, one=True)
@@ -4584,6 +4588,15 @@ async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
     is_founder = bool(k.get("is_founder")) if "is_founder" in k else False
     is_founder = is_founder or (bool(m.get("is_founder")) if "is_founder" in m else False)
 
+    # Step 1: NULL out target's vk_id to avoid unique constraint conflict
+    if m.get("vk_id"):
+        if USE_SQLITE:
+            await _execute("UPDATE users SET vk_id = NULL WHERE id = ?", merge_uid)
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute("UPDATE users SET vk_id = NULL WHERE id = $1", merge_uid)
+
+    # Step 2: Update keep_uid with merged data
     if USE_SQLITE:
         await _execute(
             """UPDATE users SET vk_id = COALESCE(?, vk_id),
@@ -4596,12 +4609,13 @@ async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
     else:
         async with _db.acquire() as conn:
             await conn.execute(
-                """UPDATE users SET vk_id = COALESCE($1, vk_id),
+                """UPDATE users SET vk_id = $1,
                    first_name = CASE WHEN $2 != '' THEN $2 ELSE first_name END
                    WHERE id = $3""",
                 vk_id, first_name, keep_uid,
             )
 
+    # Step 3: Migrate FK references
     fk_tables = [
         ("fuel_alarms", "user_id"),
         ("favorites", "user_id"),
@@ -4641,6 +4655,7 @@ async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
         except Exception:
             pass
 
+    # Step 4: Delete merged user
     if USE_SQLITE:
         await _execute("DELETE FROM users WHERE id = ?", merge_uid)
         await _db.commit()
