@@ -449,7 +449,7 @@ async def handle_profile(peer_id: int) -> None:
             platforms.append(f"TG: <code>{tg}</code>")
         if vk:
             platforms.append(f"VK: <code>{vk}</code>")
-        if len(platforms) > 1:
+        if platforms:
             text += f"\n\n🔗 <b>Привязанные аккаунты:</b> {' | '.join(platforms)}"
     await _vk_send(peer_id, text, vk_main_menu())
 async def handle_link(peer_id: int, text: str = "") -> None:

@@ -1919,7 +1919,7 @@ async def cmd_profile(message: Message):
             platforms.append(f"TG: <code>{tg}</code>")
         if vk:
             platforms.append(f"VK: <code>{vk}</code>")
-        if len(platforms) > 1:
+        if platforms:
             text += f"\n\n🔗 <b>Привязанные аккаунты:</b> {' | '.join(platforms)}"
 
     kb_rows = [
