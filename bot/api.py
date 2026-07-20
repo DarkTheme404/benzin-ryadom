@@ -3106,7 +3106,7 @@ async def handle_account_link_by_profile(request):
 
     Body: {telegram_id OR vk_user_id, profile_url}
     profile_url: vk.com/username, t.me/username, @username, или просто username.
-    Привязывает bidirectional без подтверждения.
+    Объединяет аккаунты в один.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
@@ -3155,11 +3155,15 @@ async def handle_account_link_by_profile(request):
     if not username:
         return json_resp({"error": "Не удалось извлечь username из ссылки"}, status=400)
 
-    from db import (
-        get_user_id_by_telegram_id, get_user_id_by_vk_id,
-        find_vk_user_by_screen_name, find_tg_user_by_username,
-        upsert_user_vk, link_accounts_direct,
-    )
+    try:
+        from db import (
+            get_user_id_by_telegram_id, get_user_id_by_vk_id,
+            find_vk_user_by_screen_name, find_tg_user_by_username,
+            upsert_user_vk, link_accounts_direct,
+        )
+    except ImportError as e:
+        logger.exception(f"import error in link-by-profile: {e}")
+        return json_resp({"error": f"import error: {e}"}, status=500)
 
     # Находим текущего пользователя
     current_uid = None
@@ -3220,8 +3224,12 @@ async def handle_account_link_by_profile(request):
     if not target_uid:
         return json_resp({"error": "Пользователь не найден. Проверь ссылку или username."}, status=404)
 
-    # Прямая привязка
-    result = await link_accounts_direct(current_uid, target_uid)
+    # Прямая привязка (merge)
+    try:
+        result = await link_accounts_direct(current_uid, target_uid)
+    except Exception as e:
+        logger.exception(f"link_accounts_direct error: {e}")
+        return json_resp({"error": f"Ошибка привязки: {type(e).__name__}: {e}"}, status=500)
     if not result.get("ok"):
         return json_resp({"error": result.get("error", "Ошибка привязки")}, status=400)
 
