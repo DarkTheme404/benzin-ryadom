@@ -4775,15 +4775,22 @@ async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
 
     # Проверяем, не привязан ли уже кто-то из них
     if USE_SQLITE:
-        s_row = await _fetch("SELECT linked_user_id FROM users WHERE id = ?", current_uid, one=True)
-        t_row = await _fetch("SELECT linked_user_id FROM users WHERE id = ?", target_uid, one=True)
+        s_row = await _fetch("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = ?", current_uid, one=True)
+        t_row = await _fetch("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = ?", target_uid, one=True)
     else:
         async with _db.acquire() as conn:
-            s_row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", current_uid)
-            t_row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", target_uid)
+            s_row = await conn.fetchrow("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = $1", current_uid)
+            t_row = await conn.fetchrow("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = $1", target_uid)
 
-    s_linked = (s_row.get("linked_user_id") if s_row else None) if isinstance(s_row, dict) else (s_row[0] if s_row else None)
-    t_linked = (t_row.get("linked_user_id") if t_row else None) if isinstance(t_row, dict) else (t_row[0] if t_row else None)
+    def _get_linked(row):
+        if not row:
+            return None
+        if isinstance(row, dict):
+            return row.get("linked_user_id") or row.get("linked_telegram_id")
+        return row[0] or (row[1] if len(row) > 1 else None)
+
+    s_linked = _get_linked(s_row)
+    t_linked = _get_linked(t_row)
 
     if s_linked:
         return {"ok": False, "error": "У тебя уже есть привязанный аккаунт. Сначала отвяжи текущий."}
@@ -4815,27 +4822,35 @@ async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
 
 
 async def unlink_user(uid: int) -> dict:
-    """Отвязывает аккаунт: очищает linked_user_id у обоих."""
+    """Отвязывает аккаунт: очищает linked_user_id и linked_telegram_id у обоих."""
     try:
         if USE_SQLITE:
-            row = await _fetch("SELECT linked_user_id FROM users WHERE id = ?", uid, one=True)
+            row = await _fetch("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = ?", uid, one=True)
+            if not row:
+                return {"ok": True, "message": "Аккаунт не был привязан."}
             linked_uid = (row.get("linked_user_id") if row else None) if isinstance(row, dict) else (row[0] if row else None)
-            if linked_uid:
-                await _execute("UPDATE users SET linked_user_id = NULL WHERE id = ?", uid)
-                await _execute("UPDATE users SET linked_user_id = NULL WHERE id = ?", linked_uid)
+            linked_tg = (row.get("linked_telegram_id") if row else None) if isinstance(row, dict) else (row[1] if len(row) > 1 else None)
+            target_id = linked_uid or linked_tg
+            if target_id:
+                await _execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL WHERE id = ?", uid)
+                await _execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL WHERE id = ?", target_id)
                 await _db.commit()
         else:
             async with _db.acquire() as conn:
-                row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", uid)
-                linked_uid = row["linked_user_id"] if row else None
-                if linked_uid:
-                    await conn.execute("UPDATE users SET linked_user_id = NULL WHERE id = $1", uid)
-                    await conn.execute("UPDATE users SET linked_user_id = NULL WHERE id = $1", linked_uid)
+                row = await conn.fetchrow("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = $1", uid)
+                if not row:
+                    return {"ok": True, "message": "Аккаунт не был привязан."}
+                linked_uid = row["linked_user_id"]
+                linked_tg = row["linked_telegram_id"]
+                target_id = linked_uid or linked_tg
+                if target_id:
+                    await conn.execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL WHERE id = $1", uid)
+                    await conn.execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL WHERE id = $1", target_id)
         await record_link_operation(uid)
         return {"ok": True, "message": "Аккаунт отвязан."}
     except Exception as e:
-        logger.warning(f"unlink_user error: {e}")
-        return {"ok": False, "error": "Ошибка отвязки"}
+        logger.warning(f"unlink_user error for uid={uid}: {e}")
+        return {"ok": False, "error": f"Ошибка отвязки: {e}"}
 
 
 async def find_tg_user_by_username(username: str) -> int | None:
