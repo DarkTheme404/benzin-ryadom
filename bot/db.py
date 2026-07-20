@@ -4566,27 +4566,18 @@ from datetime import datetime, timedelta, timezone
 
 
 async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
-    """Переносит данные из merge_uid в keep_uid (premium, VK id, FK refs, etc)."""
+    """Переносит данные из merge_uid в keep_uid (VK id, FK refs, etc)."""
     if USE_SQLITE:
-        keep = await _fetch("SELECT vk_id, telegram_id, premium_tier, premium_expires_at, first_name, is_founder FROM users WHERE id = ?", keep_uid, one=True)
-        merge = await _fetch("SELECT vk_id, telegram_id, premium_tier, premium_expires_at, first_name, is_founder FROM users WHERE id = ?", merge_uid, one=True)
+        keep = await _fetch("SELECT vk_id, telegram_id, first_name, is_founder FROM users WHERE id = ?", keep_uid, one=True)
+        merge = await _fetch("SELECT vk_id, telegram_id, first_name, is_founder FROM users WHERE id = ?", merge_uid, one=True)
     else:
         async with _db.acquire() as conn:
-            keep = await conn.fetchrow("SELECT vk_id, telegram_id, premium_tier, premium_expires_at, first_name FROM users WHERE id = $1", keep_uid)
-            merge = await conn.fetchrow("SELECT vk_id, telegram_id, premium_tier, premium_expires_at, first_name FROM users WHERE id = $1", merge_uid)
+            keep = await conn.fetchrow("SELECT vk_id, telegram_id, first_name FROM users WHERE id = $1", keep_uid)
+            merge = await conn.fetchrow("SELECT vk_id, telegram_id, first_name FROM users WHERE id = $1", merge_uid)
     if not keep or not merge:
         return
     k = dict(keep) if not isinstance(keep, dict) else keep
     m = dict(merge) if not isinstance(merge, dict) else merge
-
-    tier_order = {"economy": 1, "standard": 2, "elite": 3}
-    k_tier = tier_order.get(k.get("premium_tier") or "", 0)
-    m_tier = tier_order.get(m.get("premium_tier") or "", 0)
-    best_tier = k.get("premium_tier") or m.get("premium_tier") or ""
-    best_expires = k.get("premium_expires_at") or m.get("premium_expires_at")
-    if m_tier > k_tier:
-        best_tier = m.get("premium_tier", "")
-        best_expires = m.get("premium_expires_at")
 
     vk_id = m.get("vk_id") or k.get("vk_id")
     first_name = k.get("first_name") or m.get("first_name") or ""
@@ -4595,25 +4586,67 @@ async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
 
     if USE_SQLITE:
         await _execute(
-            """UPDATE users SET premium_tier = ?,
-               premium_expires_at = ?, vk_id = COALESCE(?, vk_id),
+            """UPDATE users SET vk_id = COALESCE(?, vk_id),
                first_name = CASE WHEN ? != '' THEN ? ELSE first_name END,
                is_founder = MAX(COALESCE(is_founder, 0), ?)
                WHERE id = ?""",
-            best_tier, best_expires,
             vk_id, first_name, first_name,
             1 if is_founder else 0, keep_uid,
         )
     else:
         async with _db.acquire() as conn:
             await conn.execute(
-                """UPDATE users SET premium_tier = $1,
-                   premium_expires_at = $2, vk_id = COALESCE($3, vk_id),
-                   first_name = CASE WHEN $4 != '' THEN $4 ELSE first_name END
-                   WHERE id = $5""",
-                best_tier, best_expires,
+                """UPDATE users SET vk_id = COALESCE($1, vk_id),
+                   first_name = CASE WHEN $2 != '' THEN $2 ELSE first_name END
+                   WHERE id = $3""",
                 vk_id, first_name, keep_uid,
             )
+
+    fk_tables = [
+        ("fuel_alarms", "user_id"),
+        ("favorites", "user_id"),
+        ("subscriptions", "user_id"),
+        ("owner_stations", "user_id"),
+        ("premium_users", "user_id"),
+        ("founder_purchases", "user_id"),
+        ("referral_withdrawals", "user_id"),
+    ]
+    for table, col in fk_tables:
+        try:
+            if USE_SQLITE:
+                await _execute(f"UPDATE {table} SET {col} = ? WHERE {col} = ?", keep_uid, merge_uid)
+            else:
+                async with _db.acquire() as conn:
+                    await conn.execute(f"UPDATE {table} SET {col} = $1 WHERE {col} = $2", keep_uid, merge_uid)
+        except Exception:
+            pass
+
+    for col in ("referrer_id", "referred_user_id"):
+        try:
+            if USE_SQLITE:
+                await _execute(f"UPDATE referral_bonuses SET {col} = ? WHERE {col} = ?", keep_uid, merge_uid)
+            else:
+                async with _db.acquire() as conn:
+                    await conn.execute(f"UPDATE referral_bonuses SET {col} = $1 WHERE {col} = $2", keep_uid, merge_uid)
+        except Exception:
+            pass
+
+    for table, col in [("reports", "user_id"), ("user_badges", "user_id")]:
+        try:
+            if USE_SQLITE:
+                await _execute(f"UPDATE {table} SET {col} = ? WHERE {col} = ?", keep_uid, merge_uid)
+            else:
+                async with _db.acquire() as conn:
+                    await conn.execute(f"UPDATE {table} SET {col} = $1 WHERE {col} = $2", keep_uid, merge_uid)
+        except Exception:
+            pass
+
+    if USE_SQLITE:
+        await _execute("DELETE FROM users WHERE id = ?", merge_uid)
+        await _db.commit()
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute("DELETE FROM users WHERE id = $1", merge_uid)
 
     fk_tables = [
         ("fuel_alarms", "user_id"),
