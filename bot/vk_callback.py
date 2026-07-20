@@ -428,19 +428,29 @@ async def handle_profile(peer_id: int) -> None:
             text += f"  {b['emoji']} <b>{b['name']}</b> — {b['desc']}\n"
     else:
         text += "\n🎯 Сделай первый отчёт, чтобы получить бейдж 🥉 «Новичок»!"
-    from db import get_linked_account_info, get_link_group_id
-    linked = await get_linked_account_info(uid)
-    group_id = await get_link_group_id(uid)
-    if linked:
-        name = linked.get("first_name", "пользователь")
-        if linked.get("platform") == "telegram":
-            lid = linked.get("telegram_id", "?")
-            text += f"\n\n🔗 Привязан к TG: <b>{name}</b> (ID: <code>{lid}</code>)"
+    user_row = None
+    try:
+        if USE_SQLITE:
+            from db import _fetch
+            user_row = await _fetch("SELECT vk_id, telegram_id FROM users WHERE id = ?", uid, one=True)
         else:
-            lid = linked.get("vk_id", "?")
-            text += f"\n\n🔗 Привязан к VK: <b>{name}</b> (ID: <code>{lid}</code>)"
-    if group_id:
-        text += f"\n🆔 Связка ID: <code>{group_id}</code>"
+            import db as _db_mod
+            if _db_mod._db:
+                async with _db_mod._db.acquire() as conn:
+                    user_row = await conn.fetchrow("SELECT vk_id, telegram_id FROM users WHERE id = $1", uid)
+    except Exception:
+        pass
+    if user_row:
+        u = dict(user_row) if not isinstance(user_row, dict) else user_row
+        vk = u.get("vk_id")
+        tg = u.get("telegram_id", 0)
+        platforms = []
+        if tg and tg > 0:
+            platforms.append(f"TG: <code>{tg}</code>")
+        if vk:
+            platforms.append(f"VK: <code>{vk}</code>")
+        if len(platforms) > 1:
+            text += f"\n\n🔗 <b>Привязанные аккаунты:</b> {' | '.join(platforms)}"
     await _vk_send(peer_id, text, vk_main_menu())
 async def handle_link(peer_id: int, text: str = "") -> None:
     """Привязка VK аккаунта к TG по ссылке на профиль.

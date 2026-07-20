@@ -371,7 +371,7 @@ async def handle_public_stats(request):
             tg_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users WHERE telegram_id > 0 AND vk_id IS NULL", one=True)
             vk_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users WHERE vk_id IS NOT NULL", one=True)
             try:
-                linked_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL", one=True)
+                linked_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users WHERE vk_id IS NOT NULL AND telegram_id > 0", one=True)
             except Exception:
                 linked_users = {"c": 0}
             try:
@@ -389,7 +389,7 @@ async def handle_public_stats(request):
                 tg_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE telegram_id > 0 AND vk_id IS NULL")
                 vk_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE vk_id IS NOT NULL")
                 try:
-                    linked_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE linked_user_id IS NOT NULL OR linked_telegram_id IS NOT NULL")
+                    linked_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE vk_id IS NOT NULL AND telegram_id > 0")
                 except Exception:
                     linked_users = 0
                 try:
@@ -2417,19 +2417,9 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/founder/list", handle_founder_list)
     app.router.add_post("/api/founder/payment-callback", handle_founder_payment_callback)
     app.router.add_get("/api/referral/discount-status", handle_referral_discount_status)
-    # Account linking
-    app.router.add_post("/api/account/link/create", handle_account_link_create)
-    app.router.add_post("/api/account/link/use", handle_account_link_use)
-    app.router.add_post("/api/account/link/request", handle_account_link_request)
-    app.router.add_post("/api/account/link/confirm", handle_account_link_confirm_action)
-    app.router.add_post("/api/account/link/reject", handle_account_link_reject_action)
-    app.router.add_get("/api/account/link/pending", handle_account_link_pending)
-    app.router.add_post("/api/account/link/initiate", handle_account_link_initiate)
+    # Account linking (unified account: one user = one record)
     app.router.add_post("/api/account/link-by-profile", handle_account_link_by_profile)
     app.router.add_post("/api/account/unlink", handle_account_unlink)
-    app.router.add_post("/api/admin/reset-link-ops", handle_admin_reset_link_ops)
-    app.router.add_get("/api/admin/list-links", handle_admin_list_links)
-    app.router.add_post("/api/admin/force-unlink", handle_admin_force_unlink)
     # Fuel alarms
     app.router.add_post("/api/fuel-alarm/create", handle_fuel_alarm_create)
     app.router.add_post("/api/fuel-alarm/delete", handle_fuel_alarm_delete)
@@ -3243,9 +3233,9 @@ async def handle_account_link_by_profile(request):
 
 
 async def handle_account_unlink(request):
-    """POST /api/account/unlink — отвязать аккаунт.
+    """POST /api/account/unlink — отвязать VK.
 
-    Body: {telegram_id OR vk_user_id}
+    Body: {telegram_id OR vk_user_id, platform?: "vk"|"tg"}
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
@@ -3254,7 +3244,7 @@ async def handle_account_unlink(request):
     except Exception:
         return json_resp({"error": "invalid json"}, status=400)
 
-    from db import get_user_id_by_any, record_link_operation as _rec_link, unlink_user
+    from db import get_user_id_by_any, unlink_user
 
     tid = body.get("telegram_id") or body.get("vk_user_id")
     if not tid:
@@ -3264,49 +3254,8 @@ async def handle_account_unlink(request):
     if not uid:
         return json_resp({"error": "user not found"}, status=404)
 
-    result = await unlink_user(uid)
-    return json_resp(result)
-
-
-async def handle_admin_reset_link_ops(request):
-    """POST /api/admin/reset-link-ops — сбросить лимит привязок."""
-    try:
-        body = await request.json()
-    except Exception:
-        return json_resp({"error": "invalid json"}, status=400)
-
-    from db import get_user_id_by_any, reset_link_ops
-
-    tid = body.get("telegram_id") or body.get("vk_user_id")
-    if not tid:
-        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
-
-    uid = await get_user_id_by_any(int(tid))
-    if not uid:
-        return json_resp({"error": "user not found"}, status=404)
-
-    result = await reset_link_ops(uid)
-    return json_resp(result)
-
-
-async def handle_admin_list_links(request):
-    """GET /api/admin/list-links — показать все активные привязки."""
-    from db import list_all_links
-    links = await list_all_links()
-    return json_resp({"ok": True, "links": links})
-
-
-async def handle_admin_force_unlink(request):
-    """POST /api/admin/force-unlink — принудительно очистить связи по user_id."""
-    try:
-        body = await request.json()
-    except Exception:
-        return json_resp({"error": "invalid json"}, status=400)
-    uid = body.get("user_id")
-    if not uid:
-        return json_resp({"error": "user_id required"}, status=400)
-    from db import force_unlink_all
-    result = await force_unlink_all(int(uid))
+    platform = body.get("platform", "vk")
+    result = await unlink_user(uid, platform)
     return json_resp(result)
 
 
@@ -3617,18 +3566,9 @@ async def handle_user_login(request):
 
 
 async def handle_account_info(request):
-    """GET /api/account/info?telegram_id=... — информация о привязанных аккаунтах.
+    """GET /api/account/info?telegram_id=... — информация об аккаунте.
 
-    Возвращает:
-    {
-      "ok": true,
-      "telegram_id": 12345,
-      "linked_telegram_id": 67890,  // ID привязанного аккаунта (если есть)
-      "linked_via": "telegram" | "vk",
-      "is_premium": true,
-      "premium_tier": "economy",
-      "premium_expires_at": "2026-08-12 ..."
-    }
+    Новая модель: один аккаунт = одна запись с telegram_id + vk_id.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)
@@ -3642,13 +3582,12 @@ async def handle_account_info(request):
             return json_resp({
                 "ok": True,
                 "telegram_id": int(tid),
-                "linked_telegram_id": None,
                 "is_premium": False,
             })
-        # Получаем telegram_id и linked данные
+
         if USE_SQLITE:
             row = await db._fetch(
-                "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id, link_group_id FROM users WHERE id = ?",
+                "SELECT telegram_id, vk_id, screen_name, first_name, balance, pending_balance FROM users WHERE id = ?",
                 uid, one=True,
             )
             user_data = dict(row) if row else {}
@@ -3657,81 +3596,33 @@ async def handle_account_info(request):
             if _db_mod._db is None:
                 return json_resp({"error": "db not ready"}, status=503)
             async with _db_mod._db.acquire() as conn:
-                try:
-                    row = await conn.fetchrow(
-                        "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id, link_group_id FROM users WHERE id = $1",
-                        uid,
-                    )
-                    user_data = dict(row) if row else {}
-                except Exception:
-                    row = await conn.fetchrow(
-                        "SELECT telegram_id, linked_telegram_id, vk_id FROM users WHERE id = $1",
-                        uid,
-                    )
-                    user_data = dict(row) if row else {}
+                row = await conn.fetchrow(
+                    "SELECT telegram_id, vk_id, screen_name, first_name, balance, pending_balance FROM users WHERE id = $1",
+                    uid,
+                )
+                user_data = dict(row) if row else {}
 
-        # Получаем premium статус
         sub = await get_user_premium(uid)
         is_prem = bool(sub and sub.get("tier"))
 
-        # Получаем Founder статус
         from db import is_founder
         founder = await is_founder(uid)
 
-        # Определяем linked_via
-        linked_via = None
-        linked_vk_id = None
-        linked_tg_id = None
-        linked_name = None
-        if user_data.get("linked_user_id"):
-            # Есть привязка через linked_user_id
-            linked_uid = user_data["linked_user_id"]
-            if USE_SQLITE:
-                linked_row = await db._fetch(
-                    "SELECT telegram_id, vk_id, first_name FROM users WHERE id = ?",
-                    linked_uid, one=True,
-                )
-            else:
-                async with _db_mod._db.acquire() as conn:
-                    linked_row = await conn.fetchrow(
-                        "SELECT telegram_id, vk_id, first_name FROM users WHERE id = $1",
-                        linked_uid,
-                    )
-            if linked_row:
-                linked_row = dict(linked_row) if hasattr(linked_row, 'keys') else linked_row
-                linked_tg_id = linked_row.get("telegram_id")
-                linked_vk_id = linked_row.get("vk_id")
-                linked_name = linked_row.get("first_name", "")
-            # Определяем тип текущего юзера
-            if user_data.get("vk_id") and int(tid) == user_data.get("vk_id"):
-                linked_via = "vk"
-            elif user_data.get("telegram_id") and int(tid) == user_data.get("telegram_id"):
-                linked_via = "telegram"
-            else:
-                linked_via = "linked"
-        elif user_data.get("linked_telegram_id"):
-            linked_tg_id = user_data["linked_telegram_id"]
-            if user_data.get("vk_id") and int(tid) == user_data.get("vk_id"):
-                linked_via = "vk"
-            else:
-                linked_via = "telegram"
+        has_vk = bool(user_data.get("vk_id"))
+        has_tg = bool(user_data.get("telegram_id", 0) > 0)
 
         return json_resp({
             "ok": True,
-            "telegram_id": user_data.get("telegram_id") if user_data.get("telegram_id", 0) > 0 else None,
+            "telegram_id": user_data.get("telegram_id") if has_tg else None,
             "vk_id": user_data.get("vk_id"),
-            "platform": "vk" if user_data.get("vk_id") and not user_data.get("telegram_id", 0) > 0 else "telegram",
-            "display_id": user_data.get("vk_id") or (user_data.get("telegram_id") if user_data.get("telegram_id", 0) > 0 else None),
-            "linked_telegram_id": linked_tg_id,
-            "linked_user_id": user_data.get("linked_user_id"),
-            "linked_via": linked_via,
-            "linked_vk_id": linked_vk_id,
-            "linked_name": linked_name,
-            "link_group_id": user_data.get("link_group_id"),
+            "platform": "vk" if not has_tg and has_vk else "telegram",
+            "display_id": user_data.get("vk_id") if not has_tg else (user_data.get("telegram_id") if has_tg else None),
             "is_premium": is_prem,
             "premium_tier": sub.get("tier") if sub else None,
             "premium_expires_at": str(sub.get("expires_at", "")) if sub else None,
             "is_founder": founder,
+            "balance": user_data.get("balance") or 0,
+            "pending_balance": user_data.get("pending_balance") or 0,
         })
     except Exception as e:
         logger.exception(f"account_info error: {e}")

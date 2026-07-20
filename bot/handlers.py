@@ -1352,72 +1352,17 @@ async def link_code_input_handler(message: Message, state: FSMContext):
 # === Подтверждение привязки аккаунтов ===
 
 async def notify_link_confirmation(bot, tg_id: int, confirm_id: int, from_name: str, from_vk_id: int | None = None):
-    """Отправляет TG юзеру запрос на подтверждение привязки."""
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    vk_info = f" (VK ID: {from_vk_id})" if from_vk_id else ""
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"link_confirm:{confirm_id}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"link_reject:{confirm_id}"),
-        ]
-    ])
-    await bot.send_message(
-        chat_id=tg_id,
-        text=(
-            f"🔗 <b>Запрос на привязку</b>\n\n"
-            f"Пользователь <b>{from_name}</b>{vk_info} хочет привязать свой аккаунт к твоему.\n\n"
-            f"После привязки Premium будет работать на обоих аккаунтах.\n"
-            f"⏱ Запрос действует 10 минут."
-        ),
-        reply_markup=kb,
-    )
+    pass
 
 
 async def link_confirm_callback(callback: CallbackQuery):
-    """Подтверждение привязки."""
     await callback.answer()
-    confirm_id = int(callback.data.split(":")[1])
-    import aiohttp
-    backend = settings.BACKEND_URL
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{backend}/api/account/link/confirm",
-                json={"confirmation_id": confirm_id},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
-                data = await r.json()
-        if data.get("ok"):
-            await callback.message.edit_text(
-                "✅ <b>Аккаунт привязан!</b>\n\n"
-                "Premium теперь работает на обоих аккаунтах.",
-            )
-        else:
-            err = data.get("error", "Неизвестная ошибка")
-            await callback.message.edit_text(f"❌ <b>Не удалось привязать</b>\n\n{err}")
-    except Exception as e:
-        logger.exception(f"link_confirm error: {e}")
-        await callback.message.edit_text("❌ Ошибка соединения. Попробуй позже.")
+    await callback.message.edit_text("ℹ️ Привязка теперь работает через /link и ссылку на профиль.")
 
 
 async def link_reject_callback(callback: CallbackQuery):
-    """Отклонение привязки."""
     await callback.answer()
-    confirm_id = int(callback.data.split(":")[1])
-    import aiohttp
-    backend = settings.BACKEND_URL
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{backend}/api/account/link/reject",
-                json={"confirmation_id": confirm_id},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
-                data = await r.json()
-        await callback.message.edit_text("❌ Привязка отклонена.")
-    except Exception as e:
-        logger.exception(f"link_reject error: {e}")
-        await callback.message.edit_text("❌ Ошибка соединения.")
+    await callback.message.edit_text("ℹ️ Привязка теперь работает через /link и ссылку на профиль.")
 
 
 # === /alarm — Топливный будильник (Premium) ===
@@ -1954,19 +1899,27 @@ async def cmd_profile(message: Message):
     else:
         text += "\n🎯 Сделай первый отчёт, чтобы получить бейдж 🥉 «Новичок»!"
 
-    from db import get_linked_account_info, get_link_group_id
-    linked = await get_linked_account_info(uid)
-    group_id = await get_link_group_id(uid)
-    if linked:
-        name = linked.get("first_name", "пользователь")
-        if linked.get("platform") == "vk":
-            lid = linked.get("vk_id", "?")
-            text += f"\n\n🔗 Привязан к VK: <b>{name}</b> (ID: <code>{lid}</code>)"
-        else:
-            lid = linked.get("telegram_id", "?")
-            text += f"\n\n🔗 Привязан к TG: <b>{name}</b> (ID: <code>{lid}</code>)"
-    if group_id:
-        text += f"\n🆔 Связка ID: <code>{group_id}</code>"
+    from db import get_user_id_by_vk_id
+    user_row = None
+    if USE_SQLITE:
+        from db import _fetch
+        user_row = await _fetch("SELECT vk_id, telegram_id FROM users WHERE id = ?", uid, one=True)
+    else:
+        import db as _db_mod
+        if _db_mod._db:
+            async with _db_mod._db.acquire() as conn:
+                user_row = await conn.fetchrow("SELECT vk_id, telegram_id FROM users WHERE id = $1", uid)
+    if user_row:
+        u = dict(user_row) if not isinstance(user_row, dict) else user_row
+        vk = u.get("vk_id")
+        tg = u.get("telegram_id", 0)
+        platforms = []
+        if tg and tg > 0:
+            platforms.append(f"TG: <code>{tg}</code>")
+        if vk:
+            platforms.append(f"VK: <code>{vk}</code>")
+        if len(platforms) > 1:
+            text += f"\n\n🔗 <b>Привязанные аккаунты:</b> {' | '.join(platforms)}"
 
     kb_rows = [
         [InlineKeyboardButton(text="🏪 Зарегистрировать АЗС", callback_data="go_register_owner")],

@@ -2052,7 +2052,7 @@
       }
     } catch (e) {}
 
-    // Load account info (TG ID, VK ID, link status, premium)
+    // Load account info (unified: one user = one record with telegram_id + vk_id)
     try {
       const tgId = getTgId();
       if (tgId) {
@@ -2070,44 +2070,30 @@
             }
           }
 
-          // Если VK привязан — показываем VK row
+          // VK row
           const vkRow = document.getElementById('account-vk-row');
           const vkEl = document.getElementById('account-vk-id');
-          if (accRes.linked_vk_id) {
-            if (vkRow) vkRow.style.display = 'flex';
-            if (vkEl) vkEl.textContent = accRes.linked_vk_id;
-          } else if (accRes.linked_via === 'vk' && accRes.vk_id) {
+          if (accRes.vk_id) {
             if (vkRow) vkRow.style.display = 'flex';
             if (vkEl) vkEl.textContent = accRes.vk_id;
           } else {
             if (vkRow) vkRow.style.display = 'none';
           }
 
-          // Если к этому аккаунту привязан другой (TG ←→ VK)
+          // Link row — show "Привязано" if has both platforms
           const linkRow = document.getElementById('account-link-row');
           const linkEl = document.getElementById('account-link-to');
-          const linkedName = accRes.linked_name || '';
-          if (isVkUser && accRes.linked_telegram_id) {
-            // VK юзер — показываем привязанный TG
+          const hasBoth = accRes.vk_id && accRes.telegram_id && accRes.telegram_id > 0;
+          if (hasBoth) {
             if (linkRow) linkRow.style.display = 'flex';
-            if (linkEl) linkEl.textContent = linkedName ? `${linkedName} (TG: ${accRes.linked_telegram_id})` : `TG ID: ${accRes.linked_telegram_id}`;
-          } else if (!isVkUser && accRes.linked_vk_id) {
-            // TG юзер — показываем привязанный VK
-            if (linkRow) linkRow.style.display = 'flex';
-            if (linkEl) linkEl.textContent = linkedName ? `${linkedName} (VK: ${accRes.linked_vk_id})` : `VK ID: ${accRes.linked_vk_id}`;
+            if (linkEl) linkEl.textContent = '✅ Обе платформы привязаны';
           } else {
             if (linkRow) linkRow.style.display = 'none';
           }
 
-          // Связка ID
+          // Hide group row (no longer exists)
           const groupRow = document.getElementById('account-group-row');
-          const groupEl = document.getElementById('account-group-id');
-          if (accRes.link_group_id) {
-            if (groupRow) groupRow.style.display = 'flex';
-            if (groupEl) groupEl.textContent = '#' + accRes.link_group_id;
-          } else {
-            if (groupRow) groupRow.style.display = 'none';
-          }
+          if (groupRow) groupRow.style.display = 'none';
 
           // Premium статус
           const premRow = document.getElementById('account-premium-row');
@@ -2134,27 +2120,24 @@
               premEl.textContent = `${tierName} ✅${expDate}`;
               premEl.style.color = '#fbbf24';
             }
-            // Показываем Founder badge
             if (accRes.is_founder) {
               if (founderRow) founderRow.style.display = 'flex';
               if (founderEl) founderEl.textContent = 'Основатель 🏆';
             } else {
               if (founderRow) founderRow.style.display = 'none';
             }
-            // Скрываем trial кнопку для premium
             const trialBtnProfile2 = document.getElementById('btn-trial-profile');
             if (trialBtnProfile2) trialBtnProfile2.style.display = 'none';
           } else {
             if (premRow) premRow.style.display = 'none';
             if (founderRow) founderRow.style.display = 'none';
-            // Показываем trial кнопку для non-premium
             const trialBtnProfile = document.getElementById('btn-trial-profile');
             if (trialBtnProfile) trialBtnProfile.style.display = 'block';
           }
 
           const statusEl = document.getElementById('accounts-status');
           if (statusEl) {
-            if (accRes.linked_telegram_id || accRes.linked_user_id) {
+            if (hasBoth) {
               statusEl.textContent = '✅ Аккаунты привязаны — Premium работает везде';
               statusEl.style.color = '#34d399';
             } else if (accRes.is_premium) {
@@ -2164,8 +2147,8 @@
             }
           }
 
-          // Show/hide link input vs unlink button based on linking status
-          const isLinked = !!(accRes.linked_user_id || accRes.linked_telegram_id);
+          // Show/hide link input vs unlink button
+          const isLinked = hasBoth;
           const linkInputSection = document.getElementById('link-input-section');
           const unlinkSection = document.getElementById('link-unlink-section');
           if (linkInputSection) linkInputSection.style.display = isLinked ? 'none' : 'block';
