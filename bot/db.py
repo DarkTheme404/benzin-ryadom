@@ -4944,11 +4944,11 @@ async def check_link_rate_limit(user_id: int) -> dict:
 
 async def record_link_operation(user_id: int) -> None:
     """Увеличивает счётчик операций и обновляет last_link_change_at."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
     if USE_SQLITE:
         await _execute(
             "UPDATE users SET link_ops_count = COALESCE(link_ops_count, 0) + 1, last_link_change_at = ? WHERE id = ?",
-            now, user_id,
+            now.isoformat(), user_id,
         )
     else:
         async with _db.acquire() as conn:
