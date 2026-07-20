@@ -1857,7 +1857,7 @@ async def handle_main_button(message: Message, state: FSMContext = None):
     except Exception as e:
         logger.exception(f"handle_main_button CRASHED for text={text!r}: {e}")
         try:
-            await message.answer("⚠️ Ошибка. Попробуй /start или /help")
+            await message.answer(f"⚠️ Ошибка. Попробуй /start или /help\n\n<code>{type(e).__name__}: {e}</code>")
         except Exception:
             pass
 
