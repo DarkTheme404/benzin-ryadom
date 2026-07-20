@@ -4648,52 +4648,6 @@ async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
         async with _db.acquire() as conn:
             await conn.execute("DELETE FROM users WHERE id = $1", merge_uid)
 
-    fk_tables = [
-        ("fuel_alarms", "user_id"),
-        ("favorites", "user_id"),
-        ("subscriptions", "user_id"),
-        ("owner_stations", "user_id"),
-        ("premium_subscriptions", "user_id"),
-        ("founder_purchases", "user_id"),
-        ("referral_withdrawals", "user_id"),
-    ]
-    for table, col in fk_tables:
-        try:
-            if USE_SQLITE:
-                await _execute(f"UPDATE {table} SET {col} = ? WHERE {col} = ?", keep_uid, merge_uid)
-            else:
-                async with _db.acquire() as conn:
-                    await conn.execute(f"UPDATE {table} SET {col} = $1 WHERE {col} = $2", keep_uid, merge_uid)
-        except Exception:
-            pass
-
-    for col in ("referrer_id", "referred_user_id"):
-        try:
-            if USE_SQLITE:
-                await _execute(f"UPDATE referral_bonuses SET {col} = ? WHERE {col} = ?", keep_uid, merge_uid)
-            else:
-                async with _db.acquire() as conn:
-                    await conn.execute(f"UPDATE referral_bonuses SET {col} = $1 WHERE {col} = $2", keep_uid, merge_uid)
-        except Exception:
-            pass
-
-    for table, col in [("reports", "user_id"), ("user_badges", "user_id")]:
-        try:
-            if USE_SQLITE:
-                await _execute(f"UPDATE {table} SET {col} = ? WHERE {col} = ?", keep_uid, merge_uid)
-            else:
-                async with _db.acquire() as conn:
-                    await conn.execute(f"UPDATE {table} SET {col} = $1 WHERE {col} = $2", keep_uid, merge_uid)
-        except Exception:
-            pass
-
-    if USE_SQLITE:
-        await _execute("DELETE FROM users WHERE id = ?", merge_uid)
-        await _db.commit()
-    else:
-        async with _db.acquire() as conn:
-            await conn.execute("DELETE FROM users WHERE id = $1", merge_uid)
-
 
 async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
     """Привязка: объединяет target_uid в current_uid.
@@ -4765,7 +4719,7 @@ async def unlink_user(uid: int, platform: str | None = None) -> dict:
                 await _db.commit()
             else:
                 async with _db.acquire() as conn:
-                    await conn.execute("UPDATE users SET vk_id = NULL, screen_name = NULL WHERE id = $1", uid)
+                    await conn.execute("UPDATE users SET vk_id = NULL WHERE id = $1", uid)
             return {"ok": True, "message": "VK отвязан."}
         elif target == "tg" and has_tg:
             return {"ok": False, "error": "Нельзя отвязать Telegram — это основной аккаунт."}
