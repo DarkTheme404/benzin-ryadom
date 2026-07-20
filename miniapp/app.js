@@ -2086,14 +2086,15 @@
           // Если к этому аккаунту привязан другой (TG ←→ VK)
           const linkRow = document.getElementById('account-link-row');
           const linkEl = document.getElementById('account-link-to');
+          const linkedName = accRes.linked_name || '';
           if (isVkUser && accRes.linked_telegram_id) {
             // VK юзер — показываем привязанный TG
             if (linkRow) linkRow.style.display = 'flex';
-            if (linkEl) linkEl.textContent = `TG ID: ${accRes.linked_telegram_id}`;
+            if (linkEl) linkEl.textContent = linkedName ? `${linkedName} (TG: ${accRes.linked_telegram_id})` : `TG ID: ${accRes.linked_telegram_id}`;
           } else if (!isVkUser && accRes.linked_vk_id) {
             // TG юзер — показываем привязанный VK
             if (linkRow) linkRow.style.display = 'flex';
-            if (linkEl) linkEl.textContent = `VK ID: ${accRes.linked_vk_id}`;
+            if (linkEl) linkEl.textContent = linkedName ? `${linkedName} (VK: ${accRes.linked_vk_id})` : `VK ID: ${accRes.linked_vk_id}`;
           } else {
             if (linkRow) linkRow.style.display = 'none';
           }

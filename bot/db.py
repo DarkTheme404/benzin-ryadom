@@ -4853,6 +4853,44 @@ async def unlink_user(uid: int) -> dict:
         return {"ok": False, "error": f"Ошибка отвязки: {e}"}
 
 
+async def get_linked_account_info(uid: int) -> dict | None:
+    """Возвращает информацию о привязанном аккаунте."""
+    try:
+        if USE_SQLITE:
+            row = await _fetch("SELECT linked_user_id FROM users WHERE id = ?", uid, one=True)
+        else:
+            async with _db.acquire() as conn:
+                row = await conn.fetchrow("SELECT linked_user_id FROM users WHERE id = $1", uid)
+        if not row:
+            return None
+        linked_uid = (row.get("linked_user_id") if isinstance(row, dict) else row[0]) if row else None
+        if not linked_uid:
+            return None
+        if USE_SQLITE:
+            t_row = await _fetch("SELECT first_name, vk_id, telegram_id FROM users WHERE id = ?", linked_uid, one=True)
+        else:
+            async with _db.acquire() as conn:
+                t_row = await conn.fetchrow("SELECT first_name, vk_id, telegram_id FROM users WHERE id = $1", linked_uid)
+        if not t_row:
+            return None
+        if isinstance(t_row, dict):
+            return {
+                "first_name": t_row.get("first_name", ""),
+                "vk_id": t_row.get("vk_id"),
+                "telegram_id": t_row.get("telegram_id"),
+                "platform": "vk" if t_row.get("vk_id") else "telegram",
+            }
+        return {
+            "first_name": t_row[0] or "",
+            "vk_id": t_row[1],
+            "telegram_id": t_row[2],
+            "platform": "vk" if t_row[1] else "telegram",
+        }
+    except Exception as e:
+        logger.warning(f"get_linked_account_info error: {e}")
+        return None
+
+
 async def find_tg_user_by_username(username: str) -> int | None:
     """Находит telegram_id по username (без @). Возвращает None если не найден."""
     clean = username.strip().lstrip("@").lower()

@@ -1954,6 +1954,17 @@ async def cmd_profile(message: Message):
     else:
         text += "\n🎯 Сделай первый отчёт, чтобы получить бейдж 🥉 «Новичок»!"
 
+    from db import get_linked_account_info
+    linked = await get_linked_account_info(uid)
+    if linked:
+        name = linked.get("first_name", "пользователь")
+        if linked.get("platform") == "vk":
+            lid = linked.get("vk_id", "?")
+            text += f"\n\n🔗 Привязан к VK: <b>{name}</b> (ID: <code>{lid}</code>)"
+        else:
+            lid = linked.get("telegram_id", "?")
+            text += f"\n\n🔗 Привязан к TG: <b>{name}</b> (ID: <code>{lid}</code>)"
+
     kb_rows = [
         [InlineKeyboardButton(text="🏪 Зарегистрировать АЗС", callback_data="go_register_owner")],
     ]

@@ -3637,24 +3637,26 @@ async def handle_account_info(request):
         linked_via = None
         linked_vk_id = None
         linked_tg_id = None
+        linked_name = None
         if user_data.get("linked_user_id"):
             # Есть привязка через linked_user_id
             linked_uid = user_data["linked_user_id"]
             if USE_SQLITE:
                 linked_row = await db._fetch(
-                    "SELECT telegram_id, vk_id FROM users WHERE id = ?",
+                    "SELECT telegram_id, vk_id, first_name FROM users WHERE id = ?",
                     linked_uid, one=True,
                 )
             else:
                 async with _db_mod._db.acquire() as conn:
                     linked_row = await conn.fetchrow(
-                        "SELECT telegram_id, vk_id FROM users WHERE id = $1",
+                        "SELECT telegram_id, vk_id, first_name FROM users WHERE id = $1",
                         linked_uid,
                     )
             if linked_row:
                 linked_row = dict(linked_row) if hasattr(linked_row, 'keys') else linked_row
                 linked_tg_id = linked_row.get("telegram_id")
                 linked_vk_id = linked_row.get("vk_id")
+                linked_name = linked_row.get("first_name", "")
             # Определяем тип текущего юзера
             if user_data.get("vk_id") and int(tid) == user_data.get("vk_id"):
                 linked_via = "vk"
@@ -3679,6 +3681,7 @@ async def handle_account_info(request):
             "linked_user_id": user_data.get("linked_user_id"),
             "linked_via": linked_via,
             "linked_vk_id": linked_vk_id,
+            "linked_name": linked_name,
             "is_premium": is_prem,
             "premium_tier": sub.get("tier") if sub else None,
             "premium_expires_at": str(sub.get("expires_at", "")) if sub else None,
