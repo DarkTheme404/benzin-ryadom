@@ -2076,16 +2076,10 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "", 
                 "SELECT id FROM users WHERE vk_id = $1", vk_id,
             )
             if row:
-                if screen_name:
-                    await conn.execute(
-                        "UPDATE users SET first_name = $1, screen_name = $2, last_active_at = NOW() WHERE id = $3",
-                        first_name, screen_name, row["id"],
-                    )
-                else:
-                    await conn.execute(
-                        "UPDATE users SET first_name = $1, last_active_at = NOW() WHERE id = $2",
-                        first_name, row["id"],
-                    )
+                await conn.execute(
+                    "UPDATE users SET first_name = $1, last_active_at = NOW() WHERE id = $2",
+                    first_name, row["id"],
+                )
                 return row["id"]
             # Fallback: старая запись с telegram_id=peer_id (до фикса)
             row = await conn.fetchrow(
