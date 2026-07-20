@@ -3587,7 +3587,7 @@ async def handle_account_info(request):
 
         if USE_SQLITE:
             row = await db._fetch(
-                "SELECT telegram_id, vk_id, screen_name, first_name, balance, pending_balance FROM users WHERE id = ?",
+                "SELECT telegram_id, vk_id, first_name FROM users WHERE id = ?",
                 uid, one=True,
             )
             user_data = dict(row) if row else {}
@@ -3596,10 +3596,16 @@ async def handle_account_info(request):
             if _db_mod._db is None:
                 return json_resp({"error": "db not ready"}, status=503)
             async with _db_mod._db.acquire() as conn:
-                row = await conn.fetchrow(
-                    "SELECT telegram_id, vk_id, screen_name, first_name, balance, pending_balance FROM users WHERE id = $1",
-                    uid,
-                )
+                try:
+                    row = await conn.fetchrow(
+                        "SELECT telegram_id, vk_id, first_name FROM users WHERE id = $1",
+                        uid,
+                    )
+                except Exception:
+                    row = await conn.fetchrow(
+                        "SELECT telegram_id, first_name FROM users WHERE id = $1",
+                        uid,
+                    )
                 user_data = dict(row) if row else {}
 
         sub = await get_user_premium(uid)
@@ -3621,8 +3627,6 @@ async def handle_account_info(request):
             "premium_tier": sub.get("tier") if sub else None,
             "premium_expires_at": str(sub.get("expires_at", "")) if sub else None,
             "is_founder": founder,
-            "balance": user_data.get("balance") or 0,
-            "pending_balance": user_data.get("pending_balance") or 0,
         })
     except Exception as e:
         logger.exception(f"account_info error: {e}")

@@ -4572,21 +4572,18 @@ from datetime import datetime, timedelta, timezone
 
 
 async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
-    """Переносит данные из merge_uid в keep_uid (balance, premium, FK refs, etc)."""
+    """Переносит данные из merge_uid в keep_uid (premium, VK id, FK refs, etc)."""
     if USE_SQLITE:
-        keep = await _fetch("SELECT * FROM users WHERE id = ?", keep_uid, one=True)
-        merge = await _fetch("SELECT * FROM users WHERE id = ?", merge_uid, one=True)
+        keep = await _fetch("SELECT vk_id, telegram_id, premium_tier, premium_expires_at, first_name, is_founder FROM users WHERE id = ?", keep_uid, one=True)
+        merge = await _fetch("SELECT vk_id, telegram_id, premium_tier, premium_expires_at, first_name, is_founder FROM users WHERE id = ?", merge_uid, one=True)
     else:
         async with _db.acquire() as conn:
-            keep = await conn.fetchrow("SELECT * FROM users WHERE id = $1", keep_uid)
-            merge = await conn.fetchrow("SELECT * FROM users WHERE id = $1", merge_uid)
+            keep = await conn.fetchrow("SELECT vk_id, telegram_id, premium_tier, premium_expires_at, first_name FROM users WHERE id = $1", keep_uid)
+            merge = await conn.fetchrow("SELECT vk_id, telegram_id, premium_tier, premium_expires_at, first_name FROM users WHERE id = $1", merge_uid)
     if not keep or not merge:
         return
     k = dict(keep) if not isinstance(keep, dict) else keep
     m = dict(merge) if not isinstance(merge, dict) else merge
-
-    new_balance = (k.get("balance") or 0) + (m.get("balance") or 0)
-    new_pending = (k.get("pending_balance") or 0) + (m.get("pending_balance") or 0)
 
     tier_order = {"economy": 1, "standard": 2, "elite": 3}
     k_tier = tier_order.get(k.get("premium_tier") or "", 0)
@@ -4598,34 +4595,30 @@ async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
         best_expires = m.get("premium_expires_at")
 
     vk_id = m.get("vk_id") or k.get("vk_id")
-    screen_name = m.get("screen_name") or k.get("screen_name") or ""
     first_name = k.get("first_name") or m.get("first_name") or ""
-    is_founder = bool(k.get("is_founder")) or bool(m.get("is_founder"))
+    is_founder = bool(k.get("is_founder")) if "is_founder" in k else False
+    is_founder = is_founder or (bool(m.get("is_founder")) if "is_founder" in m else False)
 
     if USE_SQLITE:
         await _execute(
-            """UPDATE users SET balance = ?, pending_balance = ?, premium_tier = ?,
+            """UPDATE users SET premium_tier = ?,
                premium_expires_at = ?, vk_id = COALESCE(?, vk_id),
-               screen_name = CASE WHEN ? != '' THEN ? ELSE screen_name END,
                first_name = CASE WHEN ? != '' THEN ? ELSE first_name END,
                is_founder = MAX(COALESCE(is_founder, 0), ?)
                WHERE id = ?""",
-            new_balance, new_pending, best_tier, best_expires,
-            vk_id, screen_name, screen_name, first_name, first_name,
+            best_tier, best_expires,
+            vk_id, first_name, first_name,
             1 if is_founder else 0, keep_uid,
         )
     else:
         async with _db.acquire() as conn:
             await conn.execute(
-                """UPDATE users SET balance = $1, pending_balance = $2, premium_tier = $3,
-                   premium_expires_at = $4, vk_id = COALESCE($5, vk_id),
-                   screen_name = CASE WHEN $6 != '' THEN $6 ELSE screen_name END,
-                   first_name = CASE WHEN $7 != '' THEN $7 ELSE first_name END,
-                   is_founder = GREATEST(COALESCE(is_founder, FALSE), $8)
-                   WHERE id = $9""",
-                new_balance, new_pending, best_tier, best_expires,
-                vk_id, screen_name, screen_name, first_name,
-                is_founder, keep_uid,
+                """UPDATE users SET premium_tier = $1,
+                   premium_expires_at = $2, vk_id = COALESCE($3, vk_id),
+                   first_name = CASE WHEN $4 != '' THEN $4 ELSE first_name END
+                   WHERE id = $5""",
+                best_tier, best_expires,
+                vk_id, first_name, keep_uid,
             )
 
     fk_tables = [
