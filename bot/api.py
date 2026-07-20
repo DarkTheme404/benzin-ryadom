@@ -2427,6 +2427,7 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/account/link/initiate", handle_account_link_initiate)
     app.router.add_post("/api/account/link-by-profile", handle_account_link_by_profile)
     app.router.add_post("/api/account/unlink", handle_account_unlink)
+    app.router.add_post("/api/admin/reset-link-ops", handle_admin_reset_link_ops)
     # Fuel alarms
     app.router.add_post("/api/fuel-alarm/create", handle_fuel_alarm_create)
     app.router.add_post("/api/fuel-alarm/delete", handle_fuel_alarm_delete)
@@ -3262,6 +3263,27 @@ async def handle_account_unlink(request):
         return json_resp({"error": "user not found"}, status=404)
 
     result = await unlink_user(uid)
+    return json_resp(result)
+
+
+async def handle_admin_reset_link_ops(request):
+    """POST /api/admin/reset-link-ops — сбросить лимит привязок."""
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+
+    from db import get_user_id_by_any, reset_link_ops
+
+    tid = body.get("telegram_id") or body.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"error": "user not found"}, status=404)
+
+    result = await reset_link_ops(uid)
     return json_resp(result)
 
 

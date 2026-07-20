@@ -5104,6 +5104,26 @@ async def check_link_rate_limit(user_id: int) -> dict:
     return {"ok": True}
 
 
+async def reset_link_ops(user_id: int) -> dict:
+    """Сбрасывает лимит привязок для пользователя."""
+    try:
+        if USE_SQLITE:
+            await _execute(
+                "UPDATE users SET link_ops_count = 0, last_link_change_at = NULL WHERE id = ?",
+                user_id,
+            )
+            await _db.commit()
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    "UPDATE users SET link_ops_count = 0, last_link_change_at = NULL WHERE id = $1",
+                    user_id,
+                )
+        return {"ok": True, "message": "Лимит сброшен"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 async def record_link_operation(user_id: int) -> None:
     """Увеличивает счётчик операций и обновляет last_link_change_at."""
     now = datetime.now(timezone.utc)
