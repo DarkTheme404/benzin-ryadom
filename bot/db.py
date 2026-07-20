@@ -4665,10 +4665,9 @@ async def _merge_user_data(keep_uid: int, merge_uid: int) -> None:
 
 
 async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
-    """Привязка: объединяет target_uid в current_uid.
+    """Привязка: ставит vk_id или telegram_id из target_uid на current_uid.
 
-    Один аккаунт (current) получает vk_id/telegram_id target'а.
-    Target удаляется, данные мёржатся.
+    Не мёржит两个用户 — просто привязывает платформу к текущему аккаунту.
     """
     if current_uid == target_uid:
         return {"ok": False, "error": "Нельзя привязать к самому себе"}
@@ -4689,14 +4688,46 @@ async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
     t_vk = t_row["vk_id"] if isinstance(t_row, dict) else t_row[0]
     t_tg = t_row["telegram_id"] if isinstance(t_row, dict) else t_row[1]
 
-    if s_vk and t_vk:
+    # Определяем: TG юзер привязывает VK или VK юзер привязывает TG?
+    source_is_tg = s_tg and s_tg > 0
+    source_has_vk = bool(s_vk)
+    target_has_vk = bool(t_vk)
+
+    if source_is_tg and not source_has_vk and target_has_vk:
+        # TG юзер привязывает VK — просто ставим vk_id
+        if USE_SQLITE:
+            await _execute("UPDATE users SET vk_id = ? WHERE id = ?", t_vk, current_uid)
+            await _db.commit()
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute("UPDATE users SET vk_id = $1 WHERE id = $2", t_vk, current_uid)
+        # Удаляем дубликат target если он был создан через upsert_user_vk
+        if t_tg and t_tg == 0:
+            try:
+                if USE_SQLITE:
+                    await _execute("DELETE FROM users WHERE id = ?", target_uid)
+                    await _db.commit()
+                else:
+                    async with _db.acquire() as conn:
+                        await conn.execute("DELETE FROM users WHERE id = $1", target_uid)
+            except Exception:
+                pass
+        return {"ok": True}
+
+    # Обратный случай: VK юзер привязывает TG
+    source_is_vk = bool(s_vk)
+    target_is_tg = t_tg and t_tg > 0
+    if source_is_vk and not target_is_tg and s_tg and s_tg > 0:
+        # VK юзер привязывает TG — уже есть TG, нечего делать
+        return {"ok": False, "error": "У тебя уже есть TG."}
+
+    # Мёрж: обе платформы есть у разных юзеров
+    if source_has_vk and target_has_vk:
         return {"ok": False, "error": "У тебя уже привязан VK аккаунт. Сначала отвяжи."}
-    if s_tg and s_tg > 0 and t_tg and t_tg > 0:
+    if source_is_tg and target_is_tg:
         return {"ok": False, "error": "У тебя уже привязан TG аккаунт. Сначала отвяжи."}
 
-    if not t_vk and not (t_tg and t_tg > 0):
-        return {"ok": False, "error": "У целевого аккаунта нет платформ для привязки."}
-
+    # Fallback: мёрж
     await _merge_user_data(current_uid, target_uid)
     return {"ok": True}
 
