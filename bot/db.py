@@ -485,6 +485,18 @@ async def _migrate_sqlite(db):
     """)
     await db.execute("CREATE INDEX IF NOT EXISTS idx_pending_link_tg ON pending_link_confirmations (to_tg_id, status)")
 
+    # === link_groups — единая связка аккаунтов (1 VK + 1 TG) ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS link_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    async with db.execute("PRAGMA table_info(users)") as cur:
+        all_cols = {row[1] for row in await cur.fetchall()}
+    if "link_group_id" not in all_cols:
+        await db.execute("ALTER TABLE users ADD COLUMN link_group_id INTEGER REFERENCES link_groups(id)")
+
     # === founder_purchases — Founder Pack покупки ===
     await db.execute("""
         CREATE TABLE IF NOT EXISTS founder_purchases (
@@ -667,6 +679,18 @@ async def _create_schema_pg(pool):
             """)
         except Exception as e:
             logger.warning(f"PG migration pending_link_confirmations: {e}")
+
+        # 3g. link_groups — единая связка аккаунтов
+        try:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS link_groups (
+                    id SERIAL PRIMARY KEY,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS link_group_id INTEGER REFERENCES link_groups(id)")
+        except Exception as e:
+            logger.warning(f"PG migration link_groups: {e}")
 
         # 1f. Founder Pack purchases
         try:
@@ -4775,12 +4799,12 @@ async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
 
     # Проверяем, не привязан ли уже кто-то из них
     if USE_SQLITE:
-        s_row = await _fetch("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = ?", current_uid, one=True)
-        t_row = await _fetch("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = ?", target_uid, one=True)
+        s_row = await _fetch("SELECT linked_user_id, linked_telegram_id, link_group_id FROM users WHERE id = ?", current_uid, one=True)
+        t_row = await _fetch("SELECT linked_user_id, linked_telegram_id, link_group_id FROM users WHERE id = ?", target_uid, one=True)
     else:
         async with _db.acquire() as conn:
-            s_row = await conn.fetchrow("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = $1", current_uid)
-            t_row = await conn.fetchrow("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = $1", target_uid)
+            s_row = await conn.fetchrow("SELECT linked_user_id, linked_telegram_id, link_group_id FROM users WHERE id = $1", current_uid)
+            t_row = await conn.fetchrow("SELECT linked_user_id, linked_telegram_id, link_group_id FROM users WHERE id = $1", target_uid)
 
     def _get_linked(row):
         if not row:
@@ -4789,40 +4813,54 @@ async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
             return row.get("linked_user_id") or row.get("linked_telegram_id")
         return row[0] or (row[1] if len(row) > 1 else None)
 
+    def _get_group(row):
+        if not row:
+            return None
+        if isinstance(row, dict):
+            return row.get("link_group_id")
+        return row[2] if len(row) > 2 else None
+
     s_linked = _get_linked(s_row)
     t_linked = _get_linked(t_row)
+    s_group = _get_group(s_row)
+    t_group = _get_group(t_row)
 
     if s_linked:
         return {"ok": False, "error": "У тебя уже есть привязанный аккаунт. Сначала отвяжи текущий."}
     if t_linked:
         return {"ok": False, "error": "Этот пользователь уже привязан к другому аккаунту."}
 
-    # Bidirectional linking
+    # Создаём или берём существующую группу
+    group_id = s_group or t_group
+    if not group_id:
+        group_id = await create_link_group()
+
+    # Bidirectional linking (старая логика + группа)
     try:
         if USE_SQLITE:
             await _execute(
-                "UPDATE users SET linked_user_id = ? WHERE id = ?",
-                target_uid, current_uid,
+                "UPDATE users SET linked_user_id = ?, link_group_id = ? WHERE id = ?",
+                target_uid, group_id, current_uid,
             )
             await _execute(
-                "UPDATE users SET linked_user_id = ? WHERE id = ?",
-                current_uid, target_uid,
+                "UPDATE users SET linked_user_id = ?, link_group_id = ? WHERE id = ?",
+                current_uid, group_id, target_uid,
             )
             await _db.commit()
         else:
             async with _db.acquire() as conn:
-                await conn.execute("UPDATE users SET linked_user_id = $1 WHERE id = $2", target_uid, current_uid)
-                await conn.execute("UPDATE users SET linked_user_id = $1 WHERE id = $2", current_uid, target_uid)
+                await conn.execute("UPDATE users SET linked_user_id = $1, link_group_id = $2 WHERE id = $3", target_uid, group_id, current_uid)
+                await conn.execute("UPDATE users SET linked_user_id = $1, link_group_id = $2 WHERE id = $3", current_uid, group_id, target_uid)
     except Exception as e:
         logger.warning(f"link_accounts_direct error: {e}")
         return {"ok": False, "error": "Ошибка привязки"}
 
     await record_link_operation(current_uid)
-    return {"ok": True}
+    return {"ok": True, "group_id": group_id}
 
 
 async def unlink_user(uid: int) -> dict:
-    """Отвязывает аккаунт: очищает linked_user_id и linked_telegram_id у обоих."""
+    """Отвязывает аккаунт: очищает linked_user_id, linked_telegram_id, link_group_id."""
     try:
         if USE_SQLITE:
             row = await _fetch("SELECT linked_user_id, linked_telegram_id FROM users WHERE id = ?", uid, one=True)
@@ -4832,8 +4870,11 @@ async def unlink_user(uid: int) -> dict:
             linked_tg = (row.get("linked_telegram_id") if row else None) if isinstance(row, dict) else (row[1] if len(row) > 1 else None)
             target_id = linked_uid or linked_tg
             if target_id:
-                await _execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL WHERE id = ?", uid)
-                await _execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL WHERE id = ?", target_id)
+                await _execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL, link_group_id = NULL WHERE id = ?", uid)
+                await _execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL, link_group_id = NULL WHERE id = ?", target_id)
+                await _db.commit()
+            else:
+                await _execute("UPDATE users SET link_group_id = NULL WHERE id = ?", uid)
                 await _db.commit()
         else:
             async with _db.acquire() as conn:
@@ -4844,13 +4885,96 @@ async def unlink_user(uid: int) -> dict:
                 linked_tg = row["linked_telegram_id"]
                 target_id = linked_uid or linked_tg
                 if target_id:
-                    await conn.execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL WHERE id = $1", uid)
-                    await conn.execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL WHERE id = $1", target_id)
+                    await conn.execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL, link_group_id = NULL WHERE id = $1", uid)
+                    await conn.execute("UPDATE users SET linked_user_id = NULL, linked_telegram_id = NULL, link_group_id = NULL WHERE id = $1", target_id)
+                else:
+                    await conn.execute("UPDATE users SET link_group_id = NULL WHERE id = $1", uid)
         await record_link_operation(uid)
         return {"ok": True, "message": "Аккаунт отвязан."}
     except Exception as e:
         logger.warning(f"unlink_user error for uid={uid}: {e}")
         return {"ok": False, "error": f"Ошибка отвязки: {e}"}
+
+
+async def create_link_group() -> int:
+    """Создаёт новую группу привязки. Возвращает group_id."""
+    if USE_SQLITE:
+        await _execute("INSERT INTO link_groups (created_at) VALUES (datetime('now'))")
+        row = await _fetch("SELECT last_insert_rowid() as id", one=True)
+        return row["id"] if isinstance(row, dict) else row[0]
+    else:
+        async with _db.acquire() as conn:
+            gid = await conn.fetchval("INSERT INTO link_groups DEFAULT VALUES RETURNING id")
+            return gid
+
+
+async def join_link_group(uid: int, group_id: int) -> dict:
+    """Добавляет пользователя в группу привязки. Проверяет: макс 1 VK + 1 TG в группе."""
+    try:
+        if USE_SQLITE:
+            me = await _fetch("SELECT vk_id, telegram_id FROM users WHERE id = ?", uid, one=True)
+            members = await _fetch("SELECT vk_id, telegram_id FROM users WHERE link_group_id = ?", group_id)
+        else:
+            async with _db.acquire() as conn:
+                me = await conn.fetchrow("SELECT vk_id, telegram_id FROM users WHERE id = $1", uid)
+                members = await conn.fetch("SELECT vk_id, telegram_id FROM users WHERE link_group_id = $1", group_id)
+        if not me:
+            return {"ok": False, "error": "Пользователь не найден"}
+        me_v = me.get("vk_id") if isinstance(me, dict) else me[0]
+        me_t = me.get("telegram_id") if isinstance(me, dict) else me[1]
+        has_vk = bool(me_v)
+        has_tg = bool(me_t and me_t > 0)
+        group_vk = sum(1 for m in (members or []) if (m.get("vk_id") if isinstance(m, dict) else m[0]))
+        group_tg = sum(1 for m in (members or []) if (m.get("telegram_id") if isinstance(m, dict) else m[1]) and ((m.get("telegram_id") if isinstance(m, dict) else m[1]) or 0) > 0)
+        if has_vk and group_vk >= 1:
+            return {"ok": False, "error": "В этой группе уже есть VK аккаунт"}
+        if has_tg and group_tg >= 1:
+            return {"ok": False, "error": "В этой группе уже есть TG аккаунт"}
+        if USE_SQLITE:
+            await _execute("UPDATE users SET link_group_id = ? WHERE id = ?", group_id, uid)
+            await _db.commit()
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute("UPDATE users SET link_group_id = $1 WHERE id = $2", group_id, uid)
+        return {"ok": True, "group_id": group_id}
+    except Exception as e:
+        logger.warning(f"join_link_group error: {e}")
+        return {"ok": False, "error": f"Ошибка: {e}"}
+
+
+async def get_link_group_id(uid: int) -> int | None:
+    """Возвращает link_group_id пользователя."""
+    try:
+        if USE_SQLITE:
+            row = await _fetch("SELECT link_group_id FROM users WHERE id = ?", uid, one=True)
+        else:
+            async with _db.acquire() as conn:
+                row = await conn.fetchrow("SELECT link_group_id FROM users WHERE id = $1", uid)
+        if not row:
+            return None
+        return (row.get("link_group_id") if isinstance(row, dict) else row[0])
+    except Exception:
+        return None
+
+
+async def get_link_group_members(group_id: int) -> list[dict]:
+    """Возвращает всех участников группы привязки."""
+    try:
+        if USE_SQLITE:
+            rows = await _fetch("SELECT id, first_name, vk_id, telegram_id FROM users WHERE link_group_id = ?", group_id)
+        else:
+            async with _db.acquire() as conn:
+                rows = await conn.fetch("SELECT id, first_name, vk_id, telegram_id FROM users WHERE link_group_id = $1", group_id)
+        result = []
+        for r in (rows or []):
+            if isinstance(r, dict):
+                result.append(r)
+            else:
+                result.append({"id": r[0], "first_name": r[1], "vk_id": r[2], "telegram_id": r[3]})
+        return result
+    except Exception as e:
+        logger.warning(f"get_link_group_members error: {e}")
+        return []
 
 
 async def get_linked_account_info(uid: int) -> dict | None:

@@ -2099,6 +2099,16 @@
             if (linkRow) linkRow.style.display = 'none';
           }
 
+          // Связка ID
+          const groupRow = document.getElementById('account-group-row');
+          const groupEl = document.getElementById('account-group-id');
+          if (accRes.link_group_id) {
+            if (groupRow) groupRow.style.display = 'flex';
+            if (groupEl) groupEl.textContent = '#' + accRes.link_group_id;
+          } else {
+            if (groupRow) groupRow.style.display = 'none';
+          }
+
           // Premium статус
           const premRow = document.getElementById('account-premium-row');
           const premEl = document.getElementById('account-premium');

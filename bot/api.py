@@ -3603,7 +3603,7 @@ async def handle_account_info(request):
         # Получаем telegram_id и linked данные
         if USE_SQLITE:
             row = await db._fetch(
-                "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = ?",
+                "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id, link_group_id FROM users WHERE id = ?",
                 uid, one=True,
             )
             user_data = dict(row) if row else {}
@@ -3614,7 +3614,7 @@ async def handle_account_info(request):
             async with _db_mod._db.acquire() as conn:
                 try:
                     row = await conn.fetchrow(
-                        "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id FROM users WHERE id = $1",
+                        "SELECT telegram_id, linked_telegram_id, linked_user_id, vk_id, link_group_id FROM users WHERE id = $1",
                         uid,
                     )
                     user_data = dict(row) if row else {}
@@ -3682,6 +3682,7 @@ async def handle_account_info(request):
             "linked_via": linked_via,
             "linked_vk_id": linked_vk_id,
             "linked_name": linked_name,
+            "link_group_id": user_data.get("link_group_id"),
             "is_premium": is_prem,
             "premium_tier": sub.get("tier") if sub else None,
             "premium_expires_at": str(sub.get("expires_at", "")) if sub else None,

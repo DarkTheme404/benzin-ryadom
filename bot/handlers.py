@@ -1954,8 +1954,9 @@ async def cmd_profile(message: Message):
     else:
         text += "\n🎯 Сделай первый отчёт, чтобы получить бейдж 🥉 «Новичок»!"
 
-    from db import get_linked_account_info
+    from db import get_linked_account_info, get_link_group_id
     linked = await get_linked_account_info(uid)
+    group_id = await get_link_group_id(uid)
     if linked:
         name = linked.get("first_name", "пользователь")
         if linked.get("platform") == "vk":
@@ -1964,6 +1965,8 @@ async def cmd_profile(message: Message):
         else:
             lid = linked.get("telegram_id", "?")
             text += f"\n\n🔗 Привязан к TG: <b>{name}</b> (ID: <code>{lid}</code>)"
+    if group_id:
+        text += f"\n🆔 Связка ID: <code>{group_id}</code>"
 
     kb_rows = [
         [InlineKeyboardButton(text="🏪 Зарегистрировать АЗС", callback_data="go_register_owner")],

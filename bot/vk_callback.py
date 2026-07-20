@@ -428,8 +428,9 @@ async def handle_profile(peer_id: int) -> None:
             text += f"  {b['emoji']} <b>{b['name']}</b> — {b['desc']}\n"
     else:
         text += "\n🎯 Сделай первый отчёт, чтобы получить бейдж 🥉 «Новичок»!"
-    from db import get_linked_account_info
+    from db import get_linked_account_info, get_link_group_id
     linked = await get_linked_account_info(uid)
+    group_id = await get_link_group_id(uid)
     if linked:
         name = linked.get("first_name", "пользователь")
         if linked.get("platform") == "telegram":
@@ -438,6 +439,8 @@ async def handle_profile(peer_id: int) -> None:
         else:
             lid = linked.get("vk_id", "?")
             text += f"\n\n🔗 Привязан к VK: <b>{name}</b> (ID: <code>{lid}</code>)"
+    if group_id:
+        text += f"\n🆔 Связка ID: <code>{group_id}</code>"
     await _vk_send(peer_id, text, vk_main_menu())
 async def handle_link(peer_id: int, text: str = "") -> None:
     """Привязка VK аккаунта к TG по ссылке на профиль.
