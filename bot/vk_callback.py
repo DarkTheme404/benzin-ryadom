@@ -445,15 +445,18 @@ async def handle_link(peer_id: int, text: str = "") -> None:
 
     # === link <URL> — привязать по ссылке ===
     if subcmd == "link" and arg:
-        # Очищаем ссылку: убираем протоколы и домены
-        profile_url = arg.strip()
-        for prefix in ("https://", "http://"):
-            if profile_url.lower().startswith(prefix):
-                profile_url = profile_url[len(prefix):]
-        for prefix in ("t.me/", "telegram.me/"):
-            if profile_url.lower().startswith(prefix):
-                profile_url = profile_url[len(prefix):]
-                break
+        import re
+        # Нормализуем: убираем протокол, www, домен — оставляем username
+        s = arg.strip().strip("/").strip().lstrip("@")
+        s = re.sub(r'^https?://', '', s, flags=re.IGNORECASE)
+        s = re.sub(r'^(www|m|mobile)\.', '', s, flags=re.IGNORECASE)
+        m = re.match(r'vk\.(com|ru)/([\w.]+)', s, re.IGNORECASE)
+        if m:
+            s = m.group(2).strip(".")
+        m = re.match(r'(?:t\.me|telegram\.me)/([\w]+)', s, re.IGNORECASE)
+        if m:
+            s = m.group(1)
+        profile_url = s
 
         try:
             async with aiohttp.ClientSession() as session:

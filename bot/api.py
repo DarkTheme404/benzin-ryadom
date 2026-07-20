@@ -3132,22 +3132,32 @@ async def handle_account_link_by_profile(request):
         return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
 
     import re
-    # Очищаем от протокола
-    cleaned = profile_url.strip()
-    for prefix in ("https://", "http://"):
-        if cleaned.lower().startswith(prefix):
-            cleaned = cleaned[len(prefix):]
-    # Извлекаем username из ссылки
-    username = cleaned
-    # vk.com/username, vk.ru/username, vk.com/id12345
-    m = re.search(r'vk\.(com|ru)/(\w+)', cleaned)
-    if m:
-        username = m.group(2)
-    # t.me/username
-    m = re.search(r't\.me/(\w+)', cleaned)
-    if m:
-        username = m.group(1)
-    username = username.strip().lstrip("@")
+
+    def normalize_profile_url(raw: str) -> str:
+        """Нормализует ссылку на профиль VK/TG. Возвращает username."""
+        s = raw.strip().strip("/").strip()
+        # Убираем @ в начале
+        s = s.lstrip("@")
+        # Убираем протокол
+        s = re.sub(r'^https?://', '', s, flags=re.IGNORECASE)
+        # Убираем www. / m. / mobile.
+        s = re.sub(r'^(www|m|mobile)\.', '', s, flags=re.IGNORECASE)
+        # Убираем trailing path after username: /darktheme303/info → darktheme303
+        # VK: vk.com/darktheme303, vk.ru/darktheme303, vk.com/id12345
+        m = re.match(r'vk\.(com|ru)/([\w.]+)', s, re.IGNORECASE)
+        if m:
+            return m.group(2).strip(".")
+        # TG: t.me/username, telegram.me/username
+        m = re.match(r'(?:t\.me|telegram\.me)/([\w]+)', s, re.IGNORECASE)
+        if m:
+            return m.group(1)
+        # Просто username без домена
+        if re.match(r'^[\w.]+$', s):
+            return s
+        # Не распознано — возвращаем как есть (бэкенд попробует найти)
+        return s
+
+    username = normalize_profile_url(profile_url)
 
     if not username:
         return json_resp({"error": "Не удалось извлечь username из ссылки"}, status=400)
