@@ -4695,14 +4695,17 @@ async def link_accounts_direct(current_uid: int, target_uid: int) -> dict:
 
     if source_is_tg and not source_has_vk and target_has_vk:
         # TG юзер привязывает VK — просто ставим vk_id
+        # Сначала обнуляем vk_id у target чтобы избежать unique violation
         if USE_SQLITE:
+            await _execute("UPDATE users SET vk_id = NULL WHERE id = ?", target_uid)
             await _execute("UPDATE users SET vk_id = ? WHERE id = ?", t_vk, current_uid)
             await _db.commit()
         else:
             async with _db.acquire() as conn:
+                await conn.execute("UPDATE users SET vk_id = NULL WHERE id = $1", target_uid)
                 await conn.execute("UPDATE users SET vk_id = $1 WHERE id = $2", t_vk, current_uid)
         # Удаляем дубликат target если он был создан через upsert_user_vk
-        if t_tg and t_tg == 0:
+        if not (t_tg and t_tg > 0):
             try:
                 if USE_SQLITE:
                     await _execute("DELETE FROM users WHERE id = ?", target_uid)
