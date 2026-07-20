@@ -445,9 +445,12 @@ async def handle_link(peer_id: int, text: str = "") -> None:
 
     # === link <URL> — привязать по ссылке ===
     if subcmd == "link" and arg:
-        # Очищаем ссылку: убираем https://, http://, t.me/
-        profile_url = arg
-        for prefix in ("https://t.me/", "http://t.me/", "https://telegram.me/", "http://telegram.me/"):
+        # Очищаем ссылку: убираем протоколы и домены
+        profile_url = arg.strip()
+        for prefix in ("https://", "http://"):
+            if profile_url.lower().startswith(prefix):
+                profile_url = profile_url[len(prefix):]
+        for prefix in ("t.me/", "telegram.me/"):
             if profile_url.lower().startswith(prefix):
                 profile_url = profile_url[len(prefix):]
                 break

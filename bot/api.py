@@ -3132,14 +3132,19 @@ async def handle_account_link_by_profile(request):
         return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
 
     import re
+    # Очищаем от протокола
+    cleaned = profile_url.strip()
+    for prefix in ("https://", "http://"):
+        if cleaned.lower().startswith(prefix):
+            cleaned = cleaned[len(prefix):]
     # Извлекаем username из ссылки
-    username = profile_url
+    username = cleaned
     # vk.com/username, vk.ru/username, vk.com/id12345
-    m = re.search(r'vk\.(com|ru)/(\w+)', profile_url)
+    m = re.search(r'vk\.(com|ru)/(\w+)', cleaned)
     if m:
         username = m.group(2)
     # t.me/username
-    m = re.search(r't\.me/(\w+)', profile_url)
+    m = re.search(r't\.me/(\w+)', cleaned)
     if m:
         username = m.group(1)
     username = username.strip().lstrip("@")
