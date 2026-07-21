@@ -35,6 +35,7 @@ from db import (
     add_report,
     add_review,
     add_subscription,
+    USE_SQLITE,
 )
 from vk_keyboards import (
     vk_main_menu,
@@ -52,6 +53,7 @@ from vk_keyboards import (
     vk_admin_keyboard,
     _callback_button,
     _link_button,
+    _vkapp_button,
     vk_keyboard,
 )
 
@@ -798,7 +800,7 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
     stats = balance_data.get("stats", {})
 
     ref_link_tg = f"https://t.me/benzyn_ryadom_bot?start=ref_{code}"
-    ref_link_vk = f"https://vk.com/benzyn_ryadom?ref={code}"
+    ref_link_vk = f"https://vk.com/benzyn_ryadom?start=ref_{code}"
 
     from db import get_user_premium, has_feature
     sub = await get_user_premium(uid) if uid else None
@@ -856,6 +858,20 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
             calc_lines += f"  {n_refs} рефералов × {rate}% = ~{monthly}₽/мес\n"
         calc_lines += "\n💡 <i>Приглашай друзей — Elite быстро окупается!</i>"
 
+    referred_users = balance_data.get("referred_users", [])
+    referred_text = ""
+    for r in referred_users[:5]:
+        referred_text += f"  • {r.get('name', '?')} — {r.get('total_commission', 0)}₽ ({r.get('payment_count', 0)} оплат)\n"
+
+    kb = vk_keyboard(inline=False)
+    kb["buttons"].append([
+        _callback_button("📋 Продающие тексты", {"a": "selling_texts"}),
+        _callback_button("📚 Как заработать", {"a": "training"}),
+    ])
+    kb["buttons"].append([
+        _callback_button("🏆 Топ рефереров", {"a": "leaderboard"}),
+    ])
+
     await _vk_send(peer_id,
         f"🎁 <b>Реферальная программа</b>\n\n"
         f"{commission_text}\n\n"
@@ -865,11 +881,14 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
         f"<b>VK:</b>\n{ref_link_vk}\n\n"
         f"<b>Твой код:</b> <code>{code}</code>\n\n"
         f"<b>💰 Баланс:</b> {balance.get('balance', 0)}₽\n"
-        f"<b>📊 Всего заработано:</b> {balance.get('total_earned', 0)}₽\n\n"
+        f"<b>📊 Всего заработано:</b> {balance.get('total_earned', 0)}₽\n"
+        f"<b>💸 Выведено:</b> {balance.get('total_withdrawn', 0)}₽\n\n"
         f"<b>Статистика:</b>\n"
         f"👥 Приглашено: {stats.get('total', 0)}\n"
         f"✅ Активировали: {stats.get('completed', 0)}\n\n"
+        f"{referred_text}"
         f"{calc_lines}",
+        json.dumps(kb),
     )
 
 
@@ -924,15 +943,15 @@ async def handle_selling_texts(peer_id: int) -> None:
 
     texts = data.get("texts", [])
     if not texts:
-        await _vk_send(peer_id, "Нет текстов для копирования.")
+        await _vk_send(peer_id, "Нет текстов для копирования.", vk_main_menu())
         return
 
     lines = ["📝 <b>Продающие тексты</b> (копируй и отправляй):\n"]
     for t in texts:
-        lines.append(f"<b>{t['platform']}:</b>\n<i>{t['text']}</i>\n")
+        lines.append(f"<b>{t['platform']}:</b>\n<code>{t['text']}</code>\n")
     lines.append("💡 Отправляй друзьям в мессенджерах, группах, соцсетях!")
 
-    await _vk_send(peer_id, "\n".join(lines))
+    await _vk_send(peer_id, "\n".join(lines), vk_main_menu())
 
 
 async def handle_training(peer_id: int) -> None:
@@ -964,7 +983,7 @@ async def handle_training(peer_id: int) -> None:
         "• 70% если вошёл в топ-3 месяца!\n\n"
         "💡 <i>Приглашай 5-10 друзей — уже 1250-2500₽/мес!</i>"
     )
-    await _vk_send(peer_id, text)
+    await _vk_send(peer_id, text, vk_main_menu())
 
 
 async def handle_premium(peer_id: int) -> None:
@@ -1685,6 +1704,11 @@ async def process_message_new(event: dict) -> None:
     geo = msg.get("geo")
     has_attachments = bool(msg.get("attachments"))
 
+    # VK deep link: ?start=ref_CODE
+    start_payload = msg.get("start") or ""
+    if not text and start_payload:
+        text = start_payload
+
     if not text and not geo and not has_attachments:
         return
     logger.info("[vk-cb] peer=%d text=%r geo=%s", peer_id, text[:50], bool(geo))
@@ -1729,6 +1753,11 @@ async def process_message_new(event: dict) -> None:
         await handle_alarm(peer_id)
     elif low.startswith("/referral") or low.startswith("referral"):
         await handle_referral(peer_id, text)
+    elif "ref_" in low:
+        import re
+        ref_match = re.search(r'ref_([A-Z0-9]+)', text, re.IGNORECASE)
+        if ref_match:
+            await handle_referral(peer_id, f"referral {ref_match.group(1)}")
     elif low in ("/leaderboard", "leaderboard", "топ", "лидерборд"):
         await handle_leaderboard(peer_id)
     elif low in ("/selling", "selling", "продающие", "тексты"):
@@ -2155,6 +2184,15 @@ async def process_message_event(event: dict) -> None:
             station = await get_station_by_id(int(station_id))
             if station:
                 await show_station(peer_id, station)
+
+    elif action == "selling_texts":
+        await handle_selling_texts(peer_id)
+
+    elif action == "training":
+        await handle_training(peer_id)
+
+    elif action == "leaderboard":
+        await handle_leaderboard(peer_id)
 
     elif action == "open_app":
         import os

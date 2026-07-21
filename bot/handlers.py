@@ -1843,6 +1843,10 @@ async def cmd_referral(message: Message):
         [InlineKeyboardButton(text="🏆 Топ рефереров", callback_data="leaderboard")],
     ])
 
+    # Кнопка вывода средств (если баланс > 0)
+    if balance.get("balance", 0) >= 100:
+        kb.inline_keyboard.append([InlineKeyboardButton(text=f"💸 Вывести {balance['balance']}₽", callback_data="ref_withdraw")])
+
     # Список приглашённых
     referred_text = ""
     for r in referred[:5]:
@@ -1880,7 +1884,7 @@ async def cmd_referral(message: Message):
 
 async def ref_selling_texts_callback(callback: CallbackQuery):
     """Продающие тексты для копирования."""
-    telegram_id = _tg_id(callback.message)
+    telegram_id = callback.from_user.id
     import aiohttp
     backend = settings.BACKEND_URL
     try:
@@ -1905,6 +1909,46 @@ async def ref_selling_texts_callback(callback: CallbackQuery):
     lines.append("💡 Отправляй друзьям в мессенджерах, группах, соцсетях!")
 
     await callback.message.answer("\n".join(lines), parse_mode="HTML")
+    await callback.answer()
+
+
+async def ref_withdraw_callback(callback: CallbackQuery):
+    """Заявка на вывод средств — открой Mini App."""
+    telegram_id = callback.from_user.id
+    import aiohttp
+    backend = settings.BACKEND_URL
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/referral/balance",
+                params={"telegram_id": telegram_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                balance_data = await r.json()
+    except Exception:
+        await callback.answer("Ошибка соединения", show_alert=True)
+        return
+
+    balance = balance_data.get("balance", {})
+    bal = balance.get("balance", 0)
+    if bal < 100:
+        await callback.answer(f"Минимум для вывода 100₽. У тебя {bal}₽", show_alert=True)
+        return
+
+    from config import settings as _s
+    webapp_url = f"{_s.MINI_APP_URL or _s.BACKEND_URL}?withdraw=1"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Открыть вывод средств", web_app={"url": webapp_url})],
+    ])
+    await callback.message.answer(
+        f"<b>💸 Вывод средств</b>\n\n"
+        f"Баланс: <b>{bal}₽</b>\n"
+        f"Минимум: 100₽\n\n"
+        f"Открой приложение для вывода средств.",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
@@ -4415,6 +4459,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(ref_selling_texts_callback, F.data == "ref_selling_texts")
     dp.callback_query.register(ref_training_callback, F.data == "ref_training")
     dp.callback_query.register(leaderboard_callback, F.data == "leaderboard")
+    dp.callback_query.register(ref_withdraw_callback, F.data == "ref_withdraw")
 
     # IMPORTANT: handle_main_button должен быть ПОСЛЕДНИМ —
     # он перехватывает все текстовые сообщения.

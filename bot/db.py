@@ -5424,7 +5424,21 @@ async def use_discount(discount_id: int) -> bool:
 
 
 async def complete_referral(code: str, referred_user_id: int, referred_telegram_id: int) -> bool:
-    """Завершает реферал: создаёт связь + 15% скидка приглашённому. Реферер получает 50% комиссии с оплат."""
+    """Завершает реферал: создаёт связь + 15% скидка приглашённому (только первый раз)."""
+    # Проверяем, не приглашён ли уже кто-то этим пользователем
+    if USE_SQLITE:
+        existing = await _fetch(
+            "SELECT 1 FROM referral_relationships WHERE referred_user_id = ?",
+            referred_user_id, one=True,
+        )
+    else:
+        existing = await _fetch(
+            "SELECT 1 FROM referral_relationships WHERE referred_user_id = $1",
+            referred_user_id, one=True,
+        )
+    if existing:
+        return False
+
     if USE_SQLITE:
         row = await _fetch(
             "SELECT referrer_user_id FROM referrals WHERE referral_code = ? AND status = 'active'",
@@ -5537,7 +5551,7 @@ async def get_referral_leaderboard(limit: int = 10) -> list:
                LEFT JOIN users u ON r.referrer_user_id = u.id
                LEFT JOIN referral_balances rb ON rb.user_id = r.referrer_user_id
                WHERE r.status IN ('active', 'completed')
-               GROUP BY r.referrer_user_id
+               GROUP BY r.referrer_user_id, rb.total_earned, rb.balance, u.first_name
                ORDER BY referral_count DESC, total_earned DESC
                LIMIT $1""",
             limit,
@@ -5731,7 +5745,7 @@ async def calculate_top3(month: str = None) -> list:
                JOIN premium_users pu ON r.referred_user_id = pu.user_id AND pu.is_active = TRUE
                WHERE r.status = 'completed'
                  AND r.completed_at >= ($1 || '-01')::date
-                 AND r.completed_at < ($1 || '-32')::date
+                 AND r.completed_at < ($1 || '-01')::date + INTERVAL '1 month'
                GROUP BY r.referrer_user_id
                ORDER BY cnt DESC
                LIMIT 3""",
