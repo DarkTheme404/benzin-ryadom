@@ -5463,18 +5463,18 @@ async def get_referral_stats(user_id: int) -> dict:
 
 
 async def get_referral_leaderboard(limit: int = 10) -> list:
-    """Топ рефереров по количеству активных рефералов + заработку."""
+    """Топ рефереров: все кто создал реферальный код, по количеству активных рефералов."""
     if USE_SQLITE:
         return await _fetch(
             """SELECT r.referrer_user_id as user_id,
                       COALESCE(rb.total_earned, 0) as total_earned,
                       COALESCE(rb.balance, 0) as balance,
                       COALESCE(u.first_name, 'User') as first_name,
-                      COUNT(*) as referral_count
+                      (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = r.referrer_user_id AND status = 'completed') as referral_count
                FROM referrals r
                LEFT JOIN users u ON r.referrer_user_id = u.id
                LEFT JOIN referral_balances rb ON rb.user_id = r.referrer_user_id
-               WHERE r.status = 'completed'
+               WHERE r.status IN ('active', 'completed')
                GROUP BY r.referrer_user_id
                ORDER BY referral_count DESC, total_earned DESC
                LIMIT ?""",
@@ -5486,11 +5486,11 @@ async def get_referral_leaderboard(limit: int = 10) -> list:
                       COALESCE(rb.total_earned, 0) as total_earned,
                       COALESCE(rb.balance, 0) as balance,
                       COALESCE(u.first_name, 'User') as first_name,
-                      COUNT(*) as referral_count
+                      (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = r.referrer_user_id AND status = 'completed') as referral_count
                FROM referrals r
                LEFT JOIN users u ON r.referrer_user_id = u.id
                LEFT JOIN referral_balances rb ON rb.user_id = r.referrer_user_id
-               WHERE r.status = 'completed'
+               WHERE r.status IN ('active', 'completed')
                GROUP BY r.referrer_user_id
                ORDER BY referral_count DESC, total_earned DESC
                LIMIT $1""",
