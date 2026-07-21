@@ -4884,6 +4884,36 @@ async def get_pending_payments(limit: int = 50) -> list[dict]:
     return result
 
 
+async def get_pending_founder_purchases(limit: int = 30) -> list[dict]:
+    """Возвращает список ожидающих оплаты Founder Pack (для polling worker)."""
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT fp.id, fp.user_id, fp.amount, fp.payment_token AS external_id,
+                      fp.created_at, u.telegram_id, u.username, u.first_name
+               FROM founder_purchases fp
+               LEFT JOIN users u ON u.id = fp.user_id
+               WHERE fp.status = 'pending'
+               ORDER BY fp.created_at DESC LIMIT ?""",
+            limit,
+        )
+    else:
+        async with _db.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT fp.id, fp.user_id, fp.amount, fp.payment_token AS external_id,
+                          fp.created_at, u.telegram_id, u.username, u.first_name
+                   FROM founder_purchases fp
+                   LEFT JOIN users u ON u.id = fp.user_id
+                   WHERE fp.status = 'pending'
+                   ORDER BY fp.created_at DESC LIMIT $1""",
+                limit,
+            )
+    result = []
+    for r in (rows if not USE_SQLITE else rows):
+        d = dict(r) if not USE_SQLITE else r
+        result.append(d)
+    return result
+
+
 # === Привязка аккаунтов TG ↔ VK ↔ MiniApp ===
 
 import secrets
