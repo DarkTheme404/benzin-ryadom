@@ -5265,6 +5265,22 @@ async def confirm_payment(token: str) -> dict | None:
         amount=payment["amount"],
     )
 
+    # Помечаем скидку использованной (на случай если create-payment её не пометил)
+    try:
+        if USE_SQLITE:
+            await _execute(
+                "UPDATE referral_discounts SET used = 1 WHERE user_id = ? AND used = 0",
+                payment["user_id"],
+            )
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    "UPDATE referral_discounts SET used = TRUE WHERE user_id = $1 AND used = FALSE",
+                    payment["user_id"],
+                )
+    except Exception as e:
+        logger.warning(f"Failed to mark discount used: {e}")
+
     # Record referral commission (multi-level: 50-70% 1st, 5% 2nd, 3% 3rd for top-3)
     try:
         await record_referral_commission(payment["user_id"], payment.get("id", 0), payment["amount"])
