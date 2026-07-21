@@ -82,6 +82,7 @@ from keyboards import (
     BTN_FIND, BTN_REPORT, BTN_SUBSCRIBE, BTN_PROFILE,
     BTN_OWNER, BTN_MY_STATIONS, BTN_HELP, BTN_PREMIUM, BTN_HOME,
     BTN_APP, BTN_BUG, BTN_IDEA, BTN_DONATE, BTN_ROUTE, BTN_LINK, BTN_REFERRAL,
+    BTN_ANTITRAFFIC, BTN_SOS, BTN_ALARM,
 )
 from utils import format_distance, format_station_card
 from config import settings
@@ -435,6 +436,87 @@ class RouteSearchStates(StatesGroup):
     waiting_route_query = State()
 
 
+# === FSM: анти-пробка ===
+class AntiTrafficStates(StatesGroup):
+    waiting_from = State()
+    waiting_to = State()
+
+
+# === FSM: SOS Elite ===
+class SOSStates(StatesGroup):
+    waiting_location = State()
+
+
+async def cmd_sos(message: Message, state: FSMContext | None = None):
+    """SOS Elite — запрос геолокации для экстренного сигнала."""
+    uid = await get_user_id_by_any(message.from_user.id)
+    if not uid:
+        await message.answer("❌ Напиши /start", reply_markup=main_menu_keyboard())
+        return
+    from db import get_user_premium, has_feature
+    sub = await get_user_premium(uid)
+    tier = sub.get("tier") if sub else None
+    if not has_feature(tier, "sos_elite"):
+        await message.answer(
+            "🚨 <b>SOS-режим</b> — Elite-фича.\n\n"
+            "Рассылает SOS-сигнал всем водителям в радиусе 50 км.\n\n"
+            "⭐ Купи Premium Elite, чтобы использовать.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+    if state is not None:
+        await state.set_state(SOSStates.waiting_location)
+    await message.answer(
+        "🚨 <b>SOS — экстренная помощь</b>\n\n"
+        "📍 Отправь геолокацию — рассылка пойдёт водителям в радиусе 50 км.",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="📍 Отправить геолокацию", request_location=True)]],
+            resize_keyboard=True,
+        ),
+    )
+
+
+async def sos_location_handler(message: Message, state: FSMContext):
+    """Получена геолокация для SOS."""
+    uid = await get_user_id_by_any(message.from_user.id)
+    if state:
+        await state.clear()
+    if not uid or not message.location:
+        await message.answer("❌ Ошибка. Нажми /start", reply_markup=main_menu_keyboard())
+        return
+
+    lat = message.location.latitude
+    lon = message.location.longitude
+
+    import aiohttp, os
+    backend = os.getenv("BACKEND_URL", "")
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{backend}/api/sos/broadcast",
+                json={"telegram_id": message.from_user.id, "lat": lat, "lon": lon, "message": "🚨 Помогите! Нужна помощь на дороге!"},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                result = await r.json()
+    except Exception as e:
+        await message.answer(f"❌ Ошибка соединения: {e}", reply_markup=main_menu_keyboard())
+        return
+
+    if result.get("error") == "elite_required":
+        await message.answer("🚨 SOS — Elite-only. ⭐ Купи Premium Elite.", reply_markup=main_menu_keyboard())
+        return
+    if result.get("ok"):
+        count = result.get("broadcasted", 0)
+        await message.answer(
+            f"🚨 <b>SOS отправлен!</b>\n\n"
+            f"👥 {count} пользователей уведомлены.\n"
+            f"Жди помощи — кто-то уже едет!",
+            reply_markup=main_menu_keyboard(),
+        )
+    else:
+        await message.answer(f"❌ {result.get('message', result.get('error', 'ошибка'))}", reply_markup=main_menu_keyboard())
+
+
 async def cmd_route_search(message: Message, state: FSMContext | None = None):
     """Поиск АЗС вдоль федеральных/региональных трасс РФ."""
     if state is not None:
@@ -594,6 +676,195 @@ async def route_new_callback(callback: CallbackQuery, state: FSMContext):
         "Примеры: <code>М-4</code>, <code>М-7</code>, <code>Р-217</code>, <code>дон</code>"
     )
     await callback.answer()
+
+
+# === Анти-пробка ===
+async def cmd_anti_traffic(message: Message, state: FSMContext | None = None):
+    """Анти-пробка: маршрут с учётом трафика. Elite-only."""
+    telegram_id = _tg_id(message)
+    uid = await get_user_id_by_telegram_id(telegram_id)
+    if uid:
+        from db import get_user_premium, has_feature
+        sub = await get_user_premium(uid)
+        tier = sub.get("tier") if sub else None
+        if not has_feature(tier, "anti_traffic"):
+            await message.answer(
+                "🚗 <b>Анти-пробка</b> — функция для <b>Elite</b>\n\n"
+                "Показывает пробки, время в пути и лучшее время для поездки.\n\n"
+                "⭐ Купи Premium Elite чтобы пользоваться.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="💎 Premium", callback_data="cmd_premium")],
+                ]),
+            )
+        return
+    if state:
+        await state.set_state(AntiTrafficStates.waiting_from)
+    await message.answer(
+        "🚗 <b>Анти-пробка</b>\n\n"
+        "📍 <b>Откуда едешь?</b>\n"
+        "Введи координаты или город:\n"
+        "• <code>56.85,40.98</code> (широта, долгота)\n"
+        "• <code>Иваново</code>\n\n"
+        "Или отправь 📍 геолокацию."
+    )
+
+
+async def anti_traffic_from_handler(message: Message, state: FSMContext):
+    """Получаем точку отправления."""
+    text = (message.text or "").strip()
+    if text in ("/cancel", "отмена", "Отмена"):
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+        return
+
+    lat, lon = None, None
+
+    if message.location:
+        lat, lon = message.location.latitude, message.location.longitude
+    else:
+        parts = text.replace(" ", "").split(",")
+        if len(parts) == 2:
+            try:
+                lat, lon = float(parts[0]), float(parts[1])
+            except ValueError:
+                pass
+        if lat is None:
+            from config import settings
+            backend = settings.BACKEND_URL
+            import aiohttp
+            try:
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(
+                        f"{backend}/api/search?q={text}",
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as r:
+                        data = await r.json()
+                        results = data.get("results", [])
+                        if results:
+                            lat, lon = results[0].get("lat"), results[0].get("lon")
+            except Exception:
+                pass
+
+    if lat is None or lon is None:
+        await message.answer("❌ Не распознал координаты. Попробуй:\n• <code>56.85,40.98</code>\n• Или отправь 📍 геолокацию")
+        return
+
+    await state.update_data(from_lat=lat, from_lon=lon)
+    await state.set_state(AntiTrafficStates.waiting_to)
+    await message.answer(
+        f"✅ Откуда: <code>{lat}, {lon}</code>\n\n"
+        "📍 <b>Куда едешь?</b>\n"
+        "Введи координаты или город."
+    )
+
+
+async def anti_traffic_to_handler(message: Message, state: FSMContext):
+    """Получаем точку назначения, вызываем API."""
+    data = await state.get_data()
+    from_lat = data["from_lat"]
+    from_lon = data["from_lon"]
+
+    text = (message.text or "").strip()
+    if text in ("/cancel", "отмена", "Отмена"):
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=main_menu_keyboard())
+        return
+
+    lat, lon = None, None
+    if message.location:
+        lat, lon = message.location.latitude, message.location.longitude
+    else:
+        parts = text.replace(" ", "").split(",")
+        if len(parts) == 2:
+            try:
+                lat, lon = float(parts[0]), float(parts[1])
+            except ValueError:
+                pass
+        if lat is None:
+            from config import settings
+            backend = settings.BACKEND_URL
+            import aiohttp
+            try:
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(
+                        f"{backend}/api/search?q={text}",
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as r:
+                        data2 = await r.json()
+                        results = data2.get("results", [])
+                        if results:
+                            lat, lon = results[0].get("lat"), results[0].get("lon")
+            except Exception:
+                pass
+
+    if lat is None or lon is None:
+        await message.answer("❌ Не распознал координаты. Попробуй:\n• <code>56.85,40.98</code>\n• Или отправь 📍 геолокацию")
+        return
+
+    await state.clear()
+
+    from config import settings
+    backend = settings.BACKEND_URL
+    telegram_id = _tg_id(message)
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{backend}/api/route/anti-traffic",
+                params={
+                    "from_lat": from_lat, "from_lon": from_lon,
+                    "to_lat": lat, "to_lon": lon,
+                    "telegram_id": telegram_id,
+                    "fuel": "95",
+                },
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                result = await r.json()
+    except Exception as e:
+        await message.answer(f"❌ Ошибка соединения: {e}", reply_markup=main_menu_keyboard())
+        return
+
+    if result.get("error"):
+        err = result["error"]
+        if err == "elite_required":
+            await message.answer("🚗 <b>Анти-пробка</b> — Elite-only.\n\n⭐ Купи Premium Elite.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💎 Premium", callback_data="cmd_premium")],
+            ]))
+        else:
+            await message.answer(f"❌ {result.get('message', err)}", reply_markup=main_menu_keyboard())
+        return
+
+    traffic = result.get("traffic", {})
+    dist = result.get("total_distance_km", 0)
+    level = traffic.get("level", "?")
+    desc = traffic.get("description", "")
+    eta = traffic.get("eta_minutes", 0)
+    eta_free = traffic.get("eta_without_traffic", 0)
+    delay = traffic.get("delay_minutes", 0)
+    best = result.get("best_time")
+    stops = result.get("stop_points", [])
+
+    emoji = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(level, "⚪")
+
+    text_msg = (
+        f"🚗 <b>Анти-пробка</b>\n\n"
+        f"📏 Расстояние: <b>{dist} км</b>\n"
+        f"{emoji} Пробки: <b>{desc}</b>\n"
+        f"⏱ Время в пути: <b>{eta} мин</b>"
+    )
+    if delay > 0:
+        text_msg += f" (задержка +{delay} мин)"
+    if eta_free:
+        text_msg += f"\n🏎 Без пробок: {eta_free} мин"
+    if best:
+        text_msg += f"\n\n💡 {best}"
+
+    if stops:
+        text_msg += f"\n\n⛽ <b>Точки заправки ({len(stops)}):</b>"
+        for sp in stops[:5]:
+            text_msg += f"\n• {sp.get('km_from_start', '?')} км — {sp.get('suggestion', '')}"
+
+    await message.answer(text_msg, reply_markup=main_menu_keyboard())
 
 
 # === /subscribe ===
@@ -1824,6 +2095,12 @@ async def handle_main_button(message: Message, state: FSMContext = None):
             await cmd_find(message)
         elif text == BTN_ROUTE or text == "🛣 Поиск по трассе":
             await cmd_route_search(message, state)
+        elif text == BTN_ANTITRAFFIC or text == "🚗 Анти-пробка":
+            await cmd_anti_traffic(message, state)
+        elif text == BTN_SOS or text == "🚨 SOS":
+            await cmd_sos(message, state)
+        elif text == BTN_ALARM or text == "🔔 Будильник":
+            await cmd_alarm(message)
         elif text == BTN_REPORT or text == "📝 Сообщить о наличии":
             await message.answer(
                 "📝 <b>Выбери город, чтобы сообщить о наличии:</b>",
@@ -3858,6 +4135,9 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_limit, F.text)
     dp.message.register(handle_report_extras_input, ReportExtrasStates.waiting_queue, F.text)
     dp.message.register(handle_route_query, RouteSearchStates.waiting_route_query, F.text)
+    dp.message.register(anti_traffic_from_handler, AntiTrafficStates.waiting_from, F.text | F.location)
+    dp.message.register(anti_traffic_to_handler, AntiTrafficStates.waiting_to, F.text | F.location)
+    dp.message.register(sos_location_handler, SOSStates.waiting_location, F.location)
 
     # Callback (кнопки)
     dp.callback_query.register(show_station_details, F.data.startswith("st:"))

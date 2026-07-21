@@ -1195,11 +1195,11 @@ async def handle_price_forecast(request):
     is_premium = False
     if tid:
         try:
-            from db import get_user_id_by_any, get_user_premium
+            from db import get_user_id_by_any, get_user_premium, has_feature
             uid = await get_user_id_by_any(int(tid))
             if uid:
                 sub = await get_user_premium(uid)
-                is_premium = bool(sub and sub.get("tier"))
+                is_premium = has_feature(sub.get("tier") if sub else None, "forecast_7d")
         except Exception:
             pass
 
@@ -2435,6 +2435,7 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/referral/withdrawals", handle_referral_withdrawals_list)
     app.router.add_post("/api/referral/withdrawals/process", handle_referral_withdrawals_process)
     app.router.add_get("/api/account/info", handle_account_info)
+    app.router.add_get("/api/user/stats", handle_user_stats)
     app.router.add_post("/api/user/ensure-vk", handle_user_ensure_vk)
     app.router.add_post("/api/user/register", handle_user_register)
     app.router.add_post("/api/user/login", handle_user_login)
@@ -3641,6 +3642,32 @@ async def handle_account_info(request):
         return json_resp({"error": f"internal error: {type(e).__name__}"}, status=500)
 
 
+async def handle_user_stats(request):
+    """GET /api/user/stats?telegram_id=... — статистика пользователя (отчёты, бейджи)."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+    try:
+        from db import get_user_id_by_any, get_user_stats_summary
+        uid = await get_user_id_by_any(int(tid))
+        if not uid:
+            return json_resp({"ok": True, "reports": 0, "badges": [], "reputation": 0})
+        stats = await get_user_stats_summary(uid)
+        return json_resp({
+            "ok": True,
+            "reports": stats.get("total_reports", 0),
+            "confirmed_reports": stats.get("confirmed_reports", 0),
+            "badges": stats.get("badges", []),
+            "reputation": stats.get("reputation", 0),
+            "city": stats.get("city"),
+        })
+    except Exception as e:
+        logger.exception(f"user_stats error: {e}")
+        return json_resp({"error": f"internal error: {type(e).__name__}"}, status=500)
+
+
 # === Fuel Alarm endpoints ===
 
 async def handle_fuel_alarm_create(request):
@@ -3665,16 +3692,16 @@ async def handle_fuel_alarm_create(request):
         return json_resp({"error": "invalid fuel_type"}, status=400)
 
     # Premium check
-    from db import get_user_id_by_any, get_user_premium, create_fuel_alarm
+    from db import get_user_id_by_any, get_user_premium, create_fuel_alarm, has_feature
     uid = await get_user_id_by_any(int(tid))
     if not uid:
         return json_resp({"error": "user not found"}, status=404)
     sub = await get_user_premium(uid)
-    if not sub or not sub.get("tier"):
+    if not sub or not has_feature(sub.get("tier"), "fuel_alarm"):
         return json_resp({
             "error": "premium_required",
             "feature": "fuel_alarm",
-            "message": "Топливный будильник доступен только для Premium",
+            "message": "Топливный будильник доступен только для Standard+",
         }, status=402)
 
     try:
@@ -3808,7 +3835,8 @@ async def handle_sos_broadcast(request):
         return json_resp({"error": "user not found"}, status=404)
 
     sub = await get_user_premium(uid)
-    if not sub or sub.get("tier") != "elite":
+    from db import has_feature
+    if not sub or not has_feature(sub.get("tier"), "sos_elite"):
         return json_resp({
             "error": "elite_required",
             "feature": "sos_elite",
@@ -4323,13 +4351,13 @@ async def handle_route_fuel(request):
     user_tier = None
     if tid:
         try:
-            from db import get_user_id_by_any, get_user_premium
+            from db import get_user_id_by_any, get_user_premium, has_feature
             uid = await get_user_id_by_any(int(tid))
             if uid:
                 sub = await get_user_premium(uid)
-                if sub and sub.get("tier"):
+                user_tier = sub.get("tier") if sub else None
+                if has_feature(user_tier, "route_fuel"):
                     is_premium = True
-                    user_tier = sub.get("tier")
         except Exception:
             pass
 
@@ -4501,12 +4529,12 @@ async def handle_route_anti_traffic(request):
     if not tid:
         return json_resp({"error": "telegram_id or vk_user_id required for anti-traffic"}, status=400)
 
-    from db import get_user_id_by_any, get_user_premium
+    from db import get_user_id_by_any, get_user_premium, has_feature
     uid = await get_user_id_by_any(int(tid))
     if not uid:
         return json_resp({"error": "user not found"}, status=404)
     sub = await get_user_premium(uid)
-    if not sub or sub.get("tier") != "elite":
+    if not sub or not has_feature(sub.get("tier"), "anti_traffic"):
         return json_resp({
             "error": "elite_required",
             "feature": "anti_traffic",

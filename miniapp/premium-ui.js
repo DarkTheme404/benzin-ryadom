@@ -211,11 +211,11 @@
   }
 
   function getMinTier(featureIds) {
-    const ranks = { economy: 1, standard: 2, elite: 3 };
-    let min = 3;
+    const ranks = { economy: 1, standard: 2, elite: 3, founder: 4 };
+    let min = 4;
     featureIds.forEach(id => {
       const f = window.PREMIUM_CATALOG[id];
-      if (f && ranks[f.tier] < min) min = ranks[f.tier];
+      if (f && ranks[f.tier] !== undefined && ranks[f.tier] < min) min = ranks[f.tier];
     });
     return Object.keys(ranks).find(k => ranks[k] === min);
   }

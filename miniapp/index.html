@@ -599,6 +599,10 @@
       <span class="nav-icon">🅰️</span>
       <span class="nav-label">A→B</span>
     </button>
+    <button class="nav-item" data-tab="anti-traffic">
+      <span class="nav-icon">🚗</span>
+      <span class="nav-label">Пробки</span>
+    </button>
     <button class="nav-item" data-tab="report">
       <span class="nav-icon">📝</span>
       <span class="nav-label">Отчёт</span>
@@ -617,6 +621,33 @@
     </div>
     <div id="routes-list" class="routes-list"></div>
     <div id="routes-results" class="routes-results"></div>
+  </div>
+
+  <!-- ============= ANTI-TRAFFIC TAB ============= -->
+  <div class="tab-content" id="tab-anti-traffic" hidden>
+    <div style="padding: 16px;">
+      <h3 style="margin: 0 0 4px;">🚗 Анти-пробка</h3>
+      <p style="margin: 0 0 16px; font-size: 13px; color: var(--text-secondary);">Маршрут с учётом трафика. Elite-фича.</p>
+      <div class="route-fuel-form">
+        <div class="route-fuel-point">
+          <div class="route-fuel-point-label">📍 Откуда</div>
+          <div class="route-fuel-input-row">
+            <input type="text" id="anti-traffic-from" placeholder="Город или координаты" class="route-fuel-input">
+          </div>
+          <div class="route-fuel-coords" id="anti-traffic-from-coords"></div>
+        </div>
+        <div class="route-fuel-arrow">↓</div>
+        <div class="route-fuel-point">
+          <div class="route-fuel-point-label">📍 Куда</div>
+          <div class="route-fuel-input-row">
+            <input type="text" id="anti-traffic-to" placeholder="Город или координаты" class="route-fuel-input">
+          </div>
+          <div class="route-fuel-coords" id="anti-traffic-to-coords"></div>
+        </div>
+        <button class="btn btn-primary" id="anti-traffic-submit" style="width: 100%; margin-top: 12px;">🚗 Проверить пробки</button>
+      </div>
+      <div id="anti-traffic-results" style="margin-top: 16px;"></div>
+    </div>
   </div>
 
 </div>

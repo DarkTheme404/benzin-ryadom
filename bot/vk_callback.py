@@ -378,6 +378,140 @@ async def handle_route_search_text(peer_id: int, text: str) -> None:
     _clear_state(peer_id)
 
 
+async def handle_anti_traffic_start(peer_id: int) -> None:
+    """Анти-пробка: Elite-only."""
+    from db import get_user_id_by_vk_id, get_user_premium, has_feature
+    uid = await get_user_id_by_vk_id(peer_id)
+    if uid:
+        sub = await get_user_premium(uid)
+        tier = sub.get("tier") if sub else None
+        if not has_feature(tier, "anti_traffic"):
+            await _vk_send(peer_id,
+                "🚗 <b>Анти-пробка</b> — Elite-фича.\n\n"
+                "Показывает пробки, время в пути и лучшее время поездки.\n\n"
+                "⭐ Купи Premium Elite.",
+                vk_main_menu())
+            return
+    _set_state(peer_id, {"flow": "anti_traffic", "step": "waiting_from"})
+    await _vk_send(peer_id,
+        "🚗 <b>Анти-пробка</b>\n\n"
+        "📍 <b>Откуда едешь?</b>\n"
+        "Введи координаты или город:\n"
+        "• <code>56.85,40.98</code>\n"
+        "• <code>Иваново</code>",
+        vk_main_menu())
+
+
+async def handle_anti_traffic_from(peer_id: int, text: str) -> None:
+    """Получаем точку отправления."""
+    import re
+    lat, lon = None, None
+    parts = text.replace(" ", "").split(",")
+    if len(parts) == 2:
+        try:
+            lat, lon = float(parts[0]), float(parts[1])
+        except ValueError:
+            pass
+    if lat is None:
+        import aiohttp, os
+        backend = os.getenv("BACKEND_URL", "")
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{backend}/api/search?q={text}", timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    data = await r.json()
+                    results = data.get("results", [])
+                    if results:
+                        lat, lon = results[0].get("lat"), results[0].get("lon")
+        except Exception:
+            pass
+    if lat is None or lon is None:
+        await _vk_send(peer_id, "❌ Не распознал координаты. Попробуй:\n• <code>56.85,40.98</code>\n• Или город")
+        return
+    _set_state(peer_id, {"flow": "anti_traffic", "step": "waiting_to", "from_lat": lat, "from_lon": lon})
+    await _vk_send(peer_id, f"✅ Откуда: <code>{lat}, {lon}</code>\n\n📍 <b>Куда едешь?</b>")
+
+
+async def handle_anti_traffic_to(peer_id: int, text: str) -> None:
+    """Получаем точку назначения, вызываем API."""
+    state = _get_state(peer_id)
+    from_lat, from_lon = state.get("from_lat"), state.get("from_lon")
+    _clear_state(peer_id)
+
+    lat, lon = None, None
+    parts = text.replace(" ", "").split(",")
+    if len(parts) == 2:
+        try:
+            lat, lon = float(parts[0]), float(parts[1])
+        except ValueError:
+            pass
+    if lat is None:
+        import aiohttp, os
+        backend = os.getenv("BACKEND_URL", "")
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{backend}/api/search?q={text}", timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    data = await r.json()
+                    results = data.get("results", [])
+                    if results:
+                        lat, lon = results[0].get("lat"), results[0].get("lon")
+        except Exception:
+            pass
+    if lat is None or lon is None:
+        await _vk_send(peer_id, "❌ Не распознал координаты.", vk_main_menu())
+        return
+
+    import aiohttp, os
+    backend = os.getenv("BACKEND_URL", "")
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{backend}/api/route/anti-traffic",
+                params={"from_lat": from_lat, "from_lon": from_lon, "to_lat": lat, "to_lon": lon, "vk_user_id": peer_id, "fuel": "95"},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                result = await r.json()
+    except Exception as e:
+        await _vk_send(peer_id, f"❌ Ошибка: {e}", vk_main_menu())
+        return
+
+    if result.get("error"):
+        err = result["error"]
+        if err == "elite_required":
+            await _vk_send(peer_id, "🚗 Анти-пробка — Elite-only.\n\n⭐ Купи Premium Elite.", vk_main_menu())
+        else:
+            await _vk_send(peer_id, f"❌ {result.get('message', err)}", vk_main_menu())
+        return
+
+    t = result.get("traffic", {})
+    dist = result.get("total_distance_km", 0)
+    level = t.get("level", "?")
+    desc = t.get("description", "")
+    eta = t.get("eta_minutes", 0)
+    delay = t.get("delay_minutes", 0)
+    best = result.get("best_time")
+    stops = result.get("stop_points", [])
+    emoji = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(level, "⚪")
+
+    text_msg = (
+        f"🚗 <b>Анти-пробка</b>\n\n"
+        f"📏 Расстояние: <b>{dist} км</b>\n"
+        f"{emoji} Пробки: <b>{desc}</b>\n"
+        f"⏱ Время в пути: <b>{eta} мин</b>"
+    )
+    if delay > 0:
+        text_msg += f" (задержка +{delay} мин)"
+    if best:
+        text_msg += f"\n\n💡 {best}"
+    if stops:
+        text_msg += f"\n\n⛽ <b>Точки заправки ({len(stops)}):</b>"
+        for sp in stops[:5]:
+            text_msg += f"\n• {sp.get('km_from_start', '?')} км — {sp.get('suggestion', '')}"
+
+    buttons = [[_callback_button("🏠 В начало", {"a": "home"})]]
+    await _vk_send(peer_id, text_msg, vk_keyboard(buttons))
+    _clear_state(peer_id)
+
+
 async def handle_find(peer_id: int) -> None:
     _clear_state(peer_id)
     await _vk_send(
@@ -387,6 +521,37 @@ async def handle_find(peer_id: int) -> None:
         "Или напиши свой город в сообщении — бот найдёт АЗС.",
         vk_city_keyboard(),
     )
+
+
+async def handle_sos(peer_id: int) -> None:
+    """SOS Elite — VK (без геолокации — открывает MiniApp)."""
+    from db import get_user_id_by_vk_id, get_user_premium, has_feature
+    uid = await get_user_id_by_vk_id(peer_id)
+    if uid:
+        sub = await get_user_premium(uid)
+        tier = sub.get("tier") if sub else None
+        if not has_feature(tier, "sos_elite"):
+            await _vk_send(peer_id,
+                "🚨 <b>SOS-режим</b> — Elite-фича.\n\n"
+                "Рассылает SOS-сигнал всем водителям в радиусе 50 км.\n\n"
+                "⭐ Купи Premium Elite.",
+                vk_main_menu())
+            return
+    app_id = os.getenv("VK_MINI_APP_ID", "")
+    if app_id and app_id.isdigit():
+        app_url = f"https://vk.com/app{app_id}#sos"
+        buttons = [[_vkapp_button("🚨 Отправить SOS", int(app_id))]]
+        await _vk_send(peer_id,
+            "🚨 <b>SOS — экстренная помощь</b>\n\n"
+            "Нажми кнопку, чтобы отправить SOS с геолокацией.\n"
+            "Водители в радиусе 50 км получат уведомление.",
+            vk_keyboard(buttons))
+    else:
+        await _vk_send(peer_id,
+            "🚨 <b>SOS — экстренная помощь</b>\n\n"
+            "VK Mini App не настроен. Используй Telegram-бота:\n"
+            "https://t.me/benzyn_ryadom_bot",
+            vk_main_menu())
 
 
 async def handle_subscribe(peer_id: int) -> None:
@@ -530,9 +695,10 @@ async def handle_alarm(peer_id: int) -> None:
         return
 
     sub = await get_user_premium(uid)
-    is_premium = bool(sub and sub.get("tier"))
+    from db import has_feature
+    is_prem = has_feature(sub.get("tier") if sub else None, "fuel_alarm")
 
-    if not is_premium:
+    if not is_prem:
         kb = vk_keyboard([
             [_callback_button("💎 Купить Premium", {"a": "premium"}, "positive")],
         ])
@@ -1412,6 +1578,10 @@ async def process_message_new(event: dict) -> None:
         await handle_referral(peer_id, text)
     elif low.startswith("/link") or low.startswith("link "):
         await handle_link(peer_id, text)
+    elif low in ("/anti-traffic", "anti-traffic", "анти-пробка", "🚗 анти-пробка"):
+        await handle_anti_traffic_start(peer_id)
+    elif low in ("/sos", "sos", "экстренная помощь"):
+        await handle_sos(peer_id)
     elif low in ("/owner", "owner", "владелец", "я владелец"):
         await handle_owner_info(peer_id)
     elif low in ("/home", "home", "в начало", "главное меню"):
@@ -1470,6 +1640,10 @@ async def process_message_new(event: dict) -> None:
             await handle_report_extras_text(peer_id, text)
         elif state.get("flow") == "route_search" and state.get("step") == "waiting_query":
             await handle_route_search_text(peer_id, text)
+        elif state.get("flow") == "anti_traffic" and state.get("step") == "waiting_from":
+            await handle_anti_traffic_from(peer_id, text)
+        elif state.get("flow") == "anti_traffic" and state.get("step") == "waiting_to":
+            await handle_anti_traffic_to(peer_id, text)
         elif state.get("flow") == "report" and state.get("step") == "choose_station":
             # Поиск АЗС для отчёта
             stations = await find_stations_by_name(text, limit=5)
@@ -1567,6 +1741,12 @@ async def process_message_event(event: dict) -> None:
 
     elif action == "route_search":
         await handle_route_search_start(peer_id)
+
+    elif action == "anti_traffic":
+        await handle_anti_traffic_start(peer_id)
+
+    elif action == "sos":
+        await handle_sos(peer_id)
 
     elif action == "route_more":
         q = payload.get("q", "")

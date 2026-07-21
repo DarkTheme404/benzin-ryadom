@@ -2031,8 +2031,11 @@
       const tgId = getTgId();
       if (tgId) {
         const idParam = platform.vk ? `vk_user_id=${tgId}` : `telegram_id=${tgId}`;
-        const stats = await api(`/api/stations?lat=0&lon=0&${idParam}`).catch(() => null);
-        // No dedicated stats endpoint — use reports count via admin
+        const stats = await api(`/api/user/stats?${idParam}`).catch(() => null);
+        if (stats && stats.ok) {
+          if (dom.statReports) dom.statReports.textContent = stats.reports || 0;
+          if (dom.statBadges) dom.statBadges.textContent = (stats.badges || []).length || 0;
+        }
       }
     } catch (e) {}
 
@@ -3242,6 +3245,75 @@
       routeFuelBtn.addEventListener('click', () => {
         haptic('medium');
         findRouteFuel();
+      });
+    }
+
+    // === Anti-Traffic ===
+    const antiTrafficBtn = $('#anti-traffic-submit');
+    if (antiTrafficBtn) {
+      antiTrafficBtn.addEventListener('click', async () => {
+        haptic('medium');
+        const fromVal = ($('#anti-traffic-from')?.value || '').trim();
+        const toVal = ($('#anti-traffic-to')?.value || '').trim();
+        const resultsEl = $('#anti-traffic-results');
+        if (!fromVal || !toVal) {
+          if (resultsEl) resultsEl.innerHTML = '<p style="color:#ef4444">Введи обе точки</p>';
+          return;
+        }
+        const uid = getTgId();
+        if (!uid) {
+          if (resultsEl) resultsEl.innerHTML = '<p style="color:#ef4444">ID не определён</p>';
+          return;
+        }
+        // Resolve coordinates via search API
+        async function resolveCoords(q) {
+          const r = await api(`/api/search?q=${encodeURIComponent(q)}`);
+          const results = r?.results || [];
+          if (results.length > 0) return { lat: results[0].lat, lon: results[0].lon };
+          const parts = q.replace(/\s/g, '').split(',');
+          if (parts.length === 2) { const la = parseFloat(parts[0]), lo = parseFloat(parts[1]); if (!isNaN(la) && !isNaN(lo)) return { lat: la, lon: lo }; }
+          return null;
+        }
+        try {
+          if (resultsEl) resultsEl.innerHTML = '<p style="color:var(--text-secondary)">Загрузка...</p>';
+          const from = await resolveCoords(fromVal);
+          const to = await resolveCoords(toVal);
+          if (!from || !to) {
+            if (resultsEl) resultsEl.innerHTML = '<p style="color:#ef4444">Не удалось распознать координаты</p>';
+            return;
+          }
+          const idParam = platform.vk ? `vk_user_id=${uid}` : `telegram_id=${uid}`;
+          const res = await api(`/api/route/anti-traffic?from_lat=${from.lat}&from_lon=${from.lon}&to_lat=${to.lat}&to_lon=${to.lon}&fuel=95&${idParam}`);
+          if (res.error) {
+            if (res.error === 'elite_required') {
+              if (resultsEl) resultsEl.innerHTML = '<div style="text-align:center;padding:20px"><p>🚗 Анти-пробка — Elite-фича</p><button class="btn btn-primary" onclick="setTab(\'profile\')">💎 Premium</button></div>';
+            } else {
+              if (resultsEl) resultsEl.innerHTML = `<p style="color:#ef4444">${res.message || res.error}</p>`;
+            }
+            return;
+          }
+          const t = res.traffic || {};
+          const emoji = { low: '🟢', medium: '🟡', high: '🔴' }[t.level] || '⚪';
+          let html = `<div class="route-fuel-result" style="padding:12px">`;
+          html += `<div style="font-size:15px;font-weight:600;margin-bottom:8px">🚗 Анти-пробка</div>`;
+          html += `<div>📏 <b>${res.total_distance_km} км</b></div>`;
+          html += `<div>${emoji} Пробки: <b>${t.description || ''}</b></div>`;
+          html += `<div>⏱ Время: <b>${t.eta_minutes || 0} мин</b>`;
+          if (t.delay_minutes > 0) html += ` (+${t.delay_minutes} мин)`;
+          html += `</div>`;
+          if (t.eta_without_traffic) html += `<div>🏎 Без пробок: ${t.eta_without_traffic} мин</div>`;
+          if (res.best_time) html += `<div style="margin-top:8px;color:#fbbf24">💡 ${res.best_time}</div>`;
+          if (res.stop_points && res.stop_points.length > 0) {
+            html += `<div style="margin-top:8px"><b>⛽ Заправки:</b></div>`;
+            res.stop_points.slice(0, 5).forEach(sp => {
+              html += `<div style="font-size:13px;color:var(--text-secondary)">• ${sp.km_from_start} км — ${sp.suggestion}</div>`;
+            });
+          }
+          html += `</div>`;
+          if (resultsEl) resultsEl.innerHTML = html;
+        } catch (e) {
+          if (resultsEl) resultsEl.innerHTML = `<p style="color:#ef4444">Ошибка: ${e.message}</p>`;
+        }
       });
     }
     // Кнопки "Выбрать на карте" для A и B

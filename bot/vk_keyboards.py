@@ -159,6 +159,8 @@ def vk_main_menu() -> str:
             else _button(VK_BTN_ROUTE, "primary"),
         ],
         [
+            _callback_button("🚗 Анти-пробка", {"a": "anti_traffic"}) if use_callback
+            else _button("🚗 Анти-пробка"),
             _callback_button(VK_BTN_REPORT, {"a": "report_start"}, "positive") if use_callback
             else _button(VK_BTN_REPORT, "positive"),
         ],
@@ -192,8 +194,12 @@ def vk_main_menu() -> str:
         else _button(VK_BTN_REFERRAL, "secondary"),
     ])
     rows.append([
+        _callback_button("🚨 SOS", {"a": "sos"}, "negative") if use_callback
+        else _button("🚨 SOS", "negative"),
         _callback_button(VK_BTN_PROFILE, {"a": "profile"}) if use_callback
         else _button(VK_BTN_PROFILE),
+    ])
+    rows.append([
         _callback_button(VK_BTN_HELP, {"a": "help"}) if use_callback
         else _button(VK_BTN_HELP),
     ])

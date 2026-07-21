@@ -26,6 +26,9 @@ BTN_DONATE = "❤️ Поддержать"
 BTN_BUG = "🐛 Ошибка"
 BTN_IDEA = "💡 Предложение"
 BTN_HOME = "🏠 В начало"
+BTN_ANTITRAFFIC = "🚗 Анти-пробка"
+BTN_SOS = "🚨 SOS"
+BTN_ALARM = "🔔 Будильник"
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
@@ -33,12 +36,13 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_FIND), KeyboardButton(text=BTN_ROUTE)],
-            [KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_SUBSCRIBE)],
-            [KeyboardButton(text=BTN_OWNER), KeyboardButton(text=BTN_APP)],
+            [KeyboardButton(text=BTN_ANTITRAFFIC), KeyboardButton(text=BTN_REPORT)],
+            [KeyboardButton(text=BTN_SUBSCRIBE), KeyboardButton(text=BTN_OWNER)],
             [KeyboardButton(text=BTN_PROFILE), KeyboardButton(text=BTN_MY_STATIONS)],
             [KeyboardButton(text=BTN_HELP), KeyboardButton(text=BTN_PREMIUM)],
             [KeyboardButton(text=BTN_LINK), KeyboardButton(text=BTN_REFERRAL)],
-            [KeyboardButton(text=BTN_DONATE), KeyboardButton(text=BTN_BUG)],
+            [KeyboardButton(text=BTN_SOS), KeyboardButton(text=BTN_DONATE)],
+            [KeyboardButton(text=BTN_ALARM), KeyboardButton(text=BTN_BUG)],
         ],
         resize_keyboard=True,
     )
