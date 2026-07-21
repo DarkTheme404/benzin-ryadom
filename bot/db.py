@@ -5463,28 +5463,36 @@ async def get_referral_stats(user_id: int) -> dict:
 
 
 async def get_referral_leaderboard(limit: int = 10) -> list:
-    """Топ рефереров по заработку."""
+    """Топ рефереров по количеству активных рефералов + заработку."""
     if USE_SQLITE:
         return await _fetch(
-            """SELECT rb.user_id, rb.total_earned, rb.balance,
+            """SELECT r.referrer_user_id as user_id,
+                      COALESCE(rb.total_earned, 0) as total_earned,
+                      COALESCE(rb.balance, 0) as balance,
                       COALESCE(u.first_name, 'User') as first_name,
-                      (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = rb.user_id AND status = 'completed') as referral_count
-               FROM referral_balances rb
-               LEFT JOIN users u ON rb.user_id = u.id
-               WHERE rb.total_earned > 0
-               ORDER BY rb.total_earned DESC
+                      COUNT(*) as referral_count
+               FROM referrals r
+               LEFT JOIN users u ON r.referrer_user_id = u.id
+               LEFT JOIN referral_balances rb ON rb.user_id = r.referrer_user_id
+               WHERE r.status = 'completed'
+               GROUP BY r.referrer_user_id
+               ORDER BY referral_count DESC, total_earned DESC
                LIMIT ?""",
             limit,
         )
     else:
         return await _fetch(
-            """SELECT rb.user_id, rb.total_earned, rb.balance,
+            """SELECT r.referrer_user_id as user_id,
+                      COALESCE(rb.total_earned, 0) as total_earned,
+                      COALESCE(rb.balance, 0) as balance,
                       COALESCE(u.first_name, 'User') as first_name,
-                      (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = rb.user_id AND status = 'completed') as referral_count
-               FROM referral_balances rb
-               LEFT JOIN users u ON rb.user_id = u.id
-               WHERE rb.total_earned > 0
-               ORDER BY rb.total_earned DESC
+                      COUNT(*) as referral_count
+               FROM referrals r
+               LEFT JOIN users u ON r.referrer_user_id = u.id
+               LEFT JOIN referral_balances rb ON rb.user_id = r.referrer_user_id
+               WHERE r.status = 'completed'
+               GROUP BY r.referrer_user_id
+               ORDER BY referral_count DESC, total_earned DESC
                LIMIT $1""",
             limit,
         )
