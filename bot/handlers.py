@@ -4308,6 +4308,81 @@ async def donate_callback(callback: CallbackQuery):
     await callback.answer()
 
 
+# === Админ: заявки на вывод реферальных средств ===
+async def cmd_withdrawals(message: Message):
+    """Список pending заявок на вывод. Только для админа."""
+    if not settings.is_admin(user_id=message.from_user.id, username=message.from_user.username):
+        await message.answer("⛔ Только для администраторов.")
+        return
+    from db import get_pending_withdrawals
+    pending = await get_pending_withdrawals()
+    if not pending:
+        await message.answer("✅ Нет pending заявок на вывод.", reply_markup=main_menu_keyboard())
+        return
+    text = f"💸 <b>Заявки на вывод ({len(pending)}):</b>\n\n"
+    kb_rows = []
+    for w in pending:
+        method = (w.get("method") or "").upper()
+        details = w.get("details") or ""
+        uname = w.get("username") or ""
+        fname = w.get("first_name") or ""
+        tid = w.get("telegram_id")
+        amt = w.get("amount")
+        created = w.get("created_at")
+        text += (
+            f"#{w.get('id')} — {amt}₽ ({method})\n"
+            f"👤 {fname} (@{uname}, id={tid})\n"
+            f"💳 {details}\n"
+            f"📅 {created}\n\n"
+        )
+        kb_rows.append([
+            InlineKeyboardButton(
+                text=f"✅ #{w.get('id')} {amt}₽",
+                callback_data=f"wd_paid:{w.get('id')}",
+            ),
+            InlineKeyboardButton(
+                text=f"❌ #{w.get('id')}",
+                callback_data=f"wd_reject:{w.get('id')}",
+            ),
+        ])
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+
+
+async def wd_process_callback(callback: CallbackQuery):
+    """Обработка кнопок ✅/❌ для заявки на вывод."""
+    if not settings.is_admin(user_id=callback.from_user.id, username=callback.from_user.username):
+        await callback.answer("⛔ Только для админа", show_alert=True)
+        return
+    data = callback.data or ""
+    if ":" not in data:
+        await callback.answer("Некорректные данные")
+        return
+    action, wid_str = data.split(":", 1)
+    try:
+        wid = int(wid_str)
+    except ValueError:
+        await callback.answer("Некорректный ID")
+        return
+    from db import process_withdrawal
+    if action == "wd_paid":
+        result = await process_withdrawal(wid, "paid")
+        if result:
+            await callback.answer("✅ Заявка отмечена как оплаченная", show_alert=True)
+        else:
+            await callback.answer("❌ Не удалось обновить заявку", show_alert=True)
+    elif action == "wd_reject":
+        result = await process_withdrawal(wid, "rejected")
+        if result:
+            await callback.answer("❌ Заявка отклонена (баланс возвращён)", show_alert=True)
+        else:
+            await callback.answer("❌ Не удалось обновить заявку", show_alert=True)
+    # Обновим сообщение (убираем кнопки)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+
 # === Баг-репорт ===
 async def cmd_bug_report(message: Message, state: FSMContext | None = None):
     """Отправка баг-репорта."""
@@ -4352,6 +4427,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(cmd_promote, Command("promote"))
     dp.message.register(cmd_my_id, Command("my_id"))
     dp.message.register(cmd_find_raw, Command("find_raw"))
+    dp.message.register(cmd_withdrawals, Command("withdrawals"))
 
     # FSM: подписки
     dp.message.register(handle_location, F.location, StateFilter(SubscribeStates.waiting_geo))
@@ -4460,6 +4536,8 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(ref_training_callback, F.data == "ref_training")
     dp.callback_query.register(leaderboard_callback, F.data == "leaderboard")
     dp.callback_query.register(ref_withdraw_callback, F.data == "ref_withdraw")
+    dp.callback_query.register(wd_process_callback, F.data.startswith("wd_paid:"))
+    dp.callback_query.register(wd_process_callback, F.data.startswith("wd_reject:"))
 
     # IMPORTANT: handle_main_button должен быть ПОСЛЕДНИМ —
     # он перехватывает все текстовые сообщения.
