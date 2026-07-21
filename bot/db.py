@@ -187,6 +187,8 @@ async def _migrate_sqlite(db):
         await db.execute("ALTER TABLE users ADD COLUMN tg_profile_link TEXT")
     if "password_hash" not in user_cols:
         await db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+        await db.execute("ALTER TABLE users ADD COLUMN legal_accepted BOOLEAN DEFAULT 0")
+        await db.execute("ALTER TABLE users ADD COLUMN legal_accepted_at TEXT")
     # Миграция: убираем UNIQUE constraint с telegram_id (для VK юзеров с telegram_id=0)
     # Создаём partial unique index — telegram_id уникален только когда > 0
     try:
@@ -748,6 +750,13 @@ async def _create_schema_pg(pool):
             await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS link_group_id INTEGER REFERENCES link_groups(id)")
         except Exception as e:
             logger.warning(f"PG migration link_groups: {e}")
+
+        # legal_accepted
+        try:
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS legal_accepted BOOLEAN DEFAULT FALSE")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS legal_accepted_at TIMESTAMPTZ")
+        except Exception as e:
+            logger.warning(f"PG migration legal_accepted: {e}")
 
         # 1f. Founder Pack purchases
         try:

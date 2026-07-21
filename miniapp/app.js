@@ -3774,7 +3774,128 @@
   });
 
   // ============= INIT =============
+  // === Обязательное принятие юридических документов перед использованием ===
+  const LEGAL_DOCS_VERSION = '2026-07-21';
+  const REQUIRED_LEGAL = [
+    { id: 'terms', name: 'Пользовательское соглашение' },
+    { id: 'privacy', name: 'Политика конфиденциальности' },
+    { id: 'consent', name: 'Согласие на обработку ПДн' },
+    { id: 'disclaimer', name: 'Дисклеймер (disclaimer)' },
+  ];
+
+  async function requireLegalAcceptance() {
+    const uid = getTgId();
+    if (!uid) {
+      // Без ID вообще ничего не показываем
+      showLegalBlocked('Не удалось определить пользователя');
+      return false;
+    }
+    const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+    try {
+      const status = await api(`/api/user/legal-status?${idParam}=${uid}`);
+      if (status && status.legal_accepted && status.version === LEGAL_DOCS_VERSION) {
+        return true;
+      }
+    } catch (e) {
+      // Если API не отвечает — не блокируем, но покажем
+    }
+    // Показываем блокирующую модалку
+    return showLegalModal(uid);
+  }
+
+  function showLegalBlocked(reason) {
+    document.body.innerHTML = `
+      <div style="position:fixed;inset:0;background:#0f172a;color:#fff;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center">
+        <div>
+          <h1 style="font-size:24px;margin-bottom:16px">⛔ Сервис недоступен</h1>
+          <p style="color:#94a3b8;margin-bottom:24px">${reason}</p>
+          <button onclick="location.reload()" style="padding:12px 24px;background:#f59e0b;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:15px">Повторить</button>
+        </div>
+      </div>
+    `;
+  }
+
+  async function showLegalModal(uid) {
+    return new Promise((resolve) => {
+      const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+      const docsHtml = REQUIRED_LEGAL.map(d => `
+        <label style="display:flex;gap:10px;align-items:flex-start;padding:10px;background:rgba(255,255,255,0.05);border-radius:8px;margin-bottom:8px;cursor:pointer">
+          <input type="checkbox" class="legal-cb" data-doc="${d.id}" style="margin-top:3px;width:18px;height:18px;flex-shrink:0">
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:500">${d.name}</div>
+            <a href="/legal/${d.id}.html" target="_blank" style="color:#fbbf24;font-size:12px;text-decoration:underline">Открыть документ</a>
+          </div>
+        </label>
+      `).join('');
+
+      const overlay = document.createElement('div');
+      overlay.id = 'legal-block-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:999999;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
+      overlay.innerHTML = `
+        <div style="background:#1e293b;border-radius:16px;padding:24px;max-width:420px;width:100%;color:#fff;max-height:90vh;overflow-y:auto">
+          <div style="text-align:center;margin-bottom:18px">
+            <div style="font-size:36px;margin-bottom:8px">📄</div>
+            <h2 style="font-size:19px;margin:0 0 6px">Добро пожаловать в «Бензин рядом»</h2>
+            <p style="font-size:13px;color:#94a3b8;margin:0">Чтобы пользоваться сервисом, примите документы:</p>
+          </div>
+          <div style="margin-bottom:16px">${docsHtml}</div>
+          <label style="display:flex;gap:8px;align-items:flex-start;padding:12px;background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:8px;margin-bottom:14px;cursor:pointer">
+            <input type="checkbox" id="legal-master-cb" style="margin-top:3px;width:18px;height:18px;flex-shrink:0">
+            <span style="font-size:13px;line-height:1.4">Я ознакомлен(-а) и согласен(-на) со всеми документами. Подтверждаю, что мне исполнилось 18 лет.</span>
+          </label>
+          <button id="legal-ok" disabled style="width:100%;padding:14px;background:#f59e0b;color:#fff;border:none;border-radius:10px;cursor:pointer;font-size:15px;font-weight:600;opacity:0.5">Принять и продолжить</button>
+          <p style="font-size:11px;color:#64748b;text-align:center;margin:10px 0 0">Без согласия с документами сервис недоступен.<br>Документы: ${LEGAL_DOCS_VERSION}</p>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      const masterCb = document.getElementById('legal-master-cb');
+      const docCbs = overlay.querySelectorAll('.legal-cb');
+      const okBtn = document.getElementById('legal-ok');
+
+      function checkAll() {
+        const allChecked = Array.from(docCbs).every(cb => cb.checked);
+        masterCb.checked = allChecked;
+        okBtn.disabled = !(allChecked && masterCb.checked);
+        okBtn.style.opacity = okBtn.disabled ? '0.5' : '1';
+      }
+
+      masterCb.addEventListener('change', () => {
+        docCbs.forEach(cb => { cb.checked = masterCb.checked; });
+        checkAll();
+      });
+      docCbs.forEach(cb => cb.addEventListener('change', checkAll));
+
+      okBtn.addEventListener('click', async () => {
+        try {
+          const resp = await api('/api/user/accept-legal', {
+            method: 'POST',
+            body: JSON.stringify({
+              [idParam]: uid,
+              version: LEGAL_DOCS_VERSION,
+            }),
+          });
+          if (resp && resp.ok) {
+            overlay.remove();
+            resolve(true);
+          } else {
+            showToast('Ошибка: ' + (resp?.error || 'неизвестно'), 'error');
+          }
+        } catch (e) {
+          showToast('Ошибка соединения: ' + e.message, 'error');
+        }
+      });
+    });
+  }
+
   async function init() {
+    // === ОБЯЗАТЕЛЬНОЕ согласие с юридическими документами ===
+    // Блокирует весь сервис до принятия
+    const legalOk = await requireLegalAcceptance();
+    if (!legalOk) {
+      return;
+    }
+
     bindEvents();
 
     // === Загружаем Premium статус и обновляем UI ===

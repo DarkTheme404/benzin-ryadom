@@ -2441,6 +2441,8 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/admin/balances-summary", handle_balances_summary)
     app.router.add_post("/api/consent", handle_record_consent)
     app.router.add_get("/api/consent/check", handle_check_consent)
+    app.router.add_get("/api/user/legal-status", handle_legal_status)
+    app.router.add_post("/api/user/accept-legal", handle_accept_legal)
     app.router.add_get("/api/account/info", handle_account_info)
     app.router.add_get("/api/user/stats", handle_user_stats)
     app.router.add_post("/api/user/ensure-vk", handle_user_ensure_vk)
@@ -5177,7 +5179,30 @@ async def handle_record_consent(request):
                 uid, docs_str, version,
             )
 
-    return json_resp({"ok": True, "user_id": uid, "documents": documents, "version": version})
+    # Если приняты ВСЕ обязательные документы — проставляем legal_accepted
+    all_required = set(REQUIRED_LEGAL_DOCS)
+    given = set(documents)
+    if all_required.issubset(given):
+        if USE_SQLITE:
+            from db import _execute as _exec2
+            await _exec2(
+                "UPDATE users SET legal_accepted = 1, legal_accepted_at = datetime('now') WHERE id = ?",
+                uid,
+            )
+        else:
+            async with __import__("db")._db.acquire() as conn:
+                await conn.execute(
+                    "UPDATE users SET legal_accepted = TRUE, legal_accepted_at = NOW() WHERE id = $1",
+                    uid,
+                )
+
+    return json_resp({
+        "ok": True,
+        "user_id": uid,
+        "documents": documents,
+        "version": version,
+        "legal_accepted": all_required.issubset(given),
+    })
 
 
 async def handle_check_consent(request):
@@ -5209,6 +5234,128 @@ async def handle_check_consent(request):
             )
     if not rows:
         return json_resp({"has_consent": False, "user_id": uid})
+
+
+# === Принудительный legal acceptance (обязательно при первом входе) ===
+LEGAL_DOCUMENTS_VERSION = "2026-07-21"
+REQUIRED_LEGAL_DOCS = ["terms", "privacy", "consent", "disclaimer"]
+
+
+async def handle_legal_status(request):
+    """GET /api/user/legal-status?telegram_id=...&vk_user_id=...
+    Проверяет, принял ли Пользователь все обязательные юридические документы.
+    """
+    tid = request.query.get("telegram_id")
+    vkid = request.query.get("vk_user_id")
+    if not (tid or vkid):
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+    from db import get_user_id_by_any, USE_SQLITE
+    uid = None
+    if tid:
+        uid = await get_user_id_by_any(int(tid))
+    if not uid and vkid:
+        uid = await get_user_id_by_any(int(vkid))
+    if not uid:
+        return json_resp({"legal_accepted": False, "user_id": None, "required_documents": REQUIRED_LEGAL_DOCS})
+
+    if USE_SQLITE:
+        from db import _fetch
+        row = await _fetch(
+            "SELECT legal_accepted, legal_accepted_at FROM users WHERE id = ?",
+            uid, one=True,
+        )
+    else:
+        async with __import__("db")._db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT legal_accepted, legal_accepted_at FROM users WHERE id = $1",
+                uid,
+            )
+    if not row:
+        return json_resp({"legal_accepted": False, "user_id": None, "required_documents": REQUIRED_LEGAL_DOCS})
+    r = dict(row) if not USE_SQLITE else row
+    accepted = bool(r.get("legal_accepted"))
+    return json_resp({
+        "legal_accepted": accepted,
+        "accepted_at": str(r.get("legal_accepted_at") or ""),
+        "version": LEGAL_DOCUMENTS_VERSION,
+        "required_documents": REQUIRED_LEGAL_DOCS,
+        "user_id": uid,
+    })
+
+
+async def handle_accept_legal(request):
+    """POST /api/user/accept-legal — записывает факт принятия всех обязательных документов.
+
+    Body: {"telegram_id": 123, "vk_id": 456, "version": "2026-07-21"}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    tid = body.get("telegram_id")
+    vkid = body.get("vk_id")
+    version = body.get("version", LEGAL_DOCUMENTS_VERSION)
+    if version != LEGAL_DOCUMENTS_VERSION:
+        return json_resp({
+            "error": "version_mismatch",
+            "current_version": LEGAL_DOCUMENTS_VERSION,
+            "your_version": version,
+        }, status=409)
+    if not (tid or vkid):
+        return json_resp({"error": "telegram_id or vk_id required"}, status=400)
+
+    from db import get_user_id_by_any, upsert_user, upsert_user_vk, USE_SQLITE
+    uid = None
+    if tid:
+        uid = await get_user_id_by_any(int(tid))
+    if not uid and vkid:
+        uid = await get_user_id_by_any(int(vkid))
+    if not uid:
+        # Создаём юзера
+        if tid:
+            await upsert_user(int(tid), username=None, first_name="User")
+            uid = await get_user_id_by_any(int(tid))
+        elif vkid:
+            await upsert_user_vk(int(vkid))
+            uid = await get_user_id_by_any(int(vkid))
+    if not uid:
+        return json_resp({"error": "user creation failed"}, status=500)
+
+    if USE_SQLITE:
+        from db import _execute
+        await _execute(
+            "UPDATE users SET legal_accepted = 1, legal_accepted_at = datetime('now') WHERE id = ?",
+            uid,
+        )
+    else:
+        async with __import__("db")._db.acquire() as conn:
+            await conn.execute(
+                "UPDATE users SET legal_accepted = TRUE, legal_accepted_at = NOW() WHERE id = $1",
+                uid,
+            )
+
+    # Дублируем в user_consents для аудита
+    docs_str = ",".join(sorted(REQUIRED_LEGAL_DOCS))
+    if USE_SQLITE:
+        from db import _execute
+        await _execute(
+            "INSERT INTO user_consents (user_id, documents, version, created_at) VALUES (?, ?, ?, datetime('now'))",
+            uid, docs_str, version,
+        )
+    else:
+        async with __import__("db")._db.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO user_consents (user_id, documents, version, created_at) VALUES ($1, $2, $3, NOW())",
+                uid, docs_str, version,
+            )
+
+    return json_resp({
+        "ok": True,
+        "user_id": uid,
+        "legal_accepted": True,
+        "documents": REQUIRED_LEGAL_DOCS,
+        "version": version,
+    })
 
     # Проверяем, что есть согласие на ВСЕ требуемые документы
     for r in rows:
