@@ -4396,24 +4396,21 @@ async def handle_notify_withdrawal(request):
     try:
         from config import settings
         if settings.bot:
-            for admin_tid in settings.ADMIN_IDS:
+            # Хардкод — ТВОЙ TG ID
+            admin_tg_ids = list(settings.ADMIN_IDS) if settings.ADMIN_IDS else []
+            # Добавляем твой личный ID (исправлено: раньше искали по username darkt30,
+            # но в базе username=null — поэтому уведомления не доходили)
+            HARDCODED_ADMIN_IDS = [516695556, 772577887]  # darkt30 (оба аккаунта)
+            for hid in HARDCODED_ADMIN_IDS:
+                if hid not in admin_tg_ids:
+                    admin_tg_ids.append(hid)
+            for admin_tid in admin_tg_ids:
                 try:
                     await settings.bot.send_message(admin_tid, text, reply_markup=kb)
-                    results["tg"] = "sent"
+                    results["tg"] = f"sent to {admin_tid}"
                     break
                 except Exception as e:
                     logger.warning(f"TG notify failed for {admin_tid}: {e}")
-            # Если ADMIN_IDS пуст, пробуем по username
-            if results["tg"] is None and "darkt30" in (settings.ADMIN_USERNAMES or []):
-                # Найдём по username в базе
-                admin_user = await _fetch(
-                    "SELECT telegram_id FROM users WHERE username = 'darkt30' AND telegram_id IS NOT NULL LIMIT 1",
-                    one=True,
-                )
-                if admin_user:
-                    admin_tid = admin_user["telegram_id"] if not __import__("os").getenv("USE_SQLITE", "true").lower() == "true" else admin_user[0]
-                    await settings.bot.send_message(admin_tid, text, reply_markup=kb)
-                    results["tg"] = "sent"
     except Exception as e:
         logger.exception(f"TG notify exception: {e}")
         results["tg"] = f"error: {e}"
