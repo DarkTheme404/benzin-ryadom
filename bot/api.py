@@ -2431,6 +2431,7 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/referral/stats", handle_referral_stats)
     app.router.add_get("/api/referral/earnings", handle_referral_earnings)
     app.router.add_get("/api/referral/balance", handle_referral_balance)
+    app.router.add_get("/api/referral/leaderboard", handle_referral_leaderboard)
     app.router.add_post("/api/referral/withdraw", handle_referral_withdraw)
     app.router.add_get("/api/referral/withdrawals", handle_referral_withdrawals_list)
     app.router.add_post("/api/referral/withdrawals/process", handle_referral_withdrawals_process)
@@ -4000,6 +4001,12 @@ async def handle_referral_apply(request):
     if referral.get("referrer_user_id") == uid:
         return json_resp({"error": "cannot use your own referral code"}, status=400)
 
+    # Антифрод: проверка самоприглашения по VK ID
+    if body.get("vk_user_id"):
+        from db import check_self_referral
+        if await check_self_referral(int(tid), vk_id=str(body.get("vk_user_id")), code=code):
+            return json_resp({"error": "cannot refer yourself"}, status=400)
+
     try:
         success = await complete_referral(code, uid, int(tid))
         if success:
@@ -4057,6 +4064,29 @@ async def handle_referral_earnings(request):
             for e in earnings
         ],
     })
+
+
+async def handle_referral_leaderboard(request):
+    """GET /api/referral/leaderboard — топ рефереров по заработку."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    try:
+        from db import get_referral_leaderboard
+        top = await get_referral_leaderboard(limit=10)
+        return json_resp({
+            "ok": True,
+            "leaderboard": [
+                {
+                    "name": r.get("first_name") or "User",
+                    "total_earned": r.get("total_earned", 0),
+                    "referral_count": r.get("referral_count", 0),
+                }
+                for r in (top or [])
+            ],
+        })
+    except Exception as e:
+        logger.exception(f"referral_leaderboard error: {e}")
+        return json_resp({"ok": True, "leaderboard": []})
 
 
 async def handle_referral_balance(request):

@@ -275,3 +275,42 @@ async def _push_iteration(bot: Bot):
 
     if sent or blocked_marked:
         logger.info("Push: sent %d notifications, marked %d blocked", sent, blocked_marked)
+
+    # === Реферальные уведомления ===
+    await _process_referral_notifications(bot)
+
+
+async def _process_referral_notifications(bot: Bot) -> None:
+    """Обрабатывает очередь реферальных уведомлений."""
+    from db import get_unsent_notifications, mark_notification_sent
+    notifs = await get_unsent_notifications(limit=50)
+    if not notifs:
+        return
+
+    sent = 0
+    for n in notifs:
+        nid = n.get("id") if isinstance(n, dict) else n[0]
+        tg_id = n.get("telegram_id") if isinstance(n, dict) else n[1]
+        message = n.get("message") if isinstance(n, dict) else n[4]
+
+        if not tg_id:
+            await mark_notification_sent(nid)
+            continue
+
+        try:
+            await bot.send_message(
+                chat_id=tg_id,
+                text=message,
+                parse_mode="HTML",
+            )
+            await mark_notification_sent(nid)
+            sent += 1
+        except TelegramAPIError as e:
+            if "bot was blocked" in str(e).lower() or "chat not found" in str(e).lower():
+                await mark_notification_sent(nid)
+            logger.warning("Referral notification to %d failed: %s", tg_id, e)
+        except Exception as e:
+            logger.warning("Referral notification error: %s", e)
+
+    if sent:
+        logger.info("Referral notifications: sent %d", sent)

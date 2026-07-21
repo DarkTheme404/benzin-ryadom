@@ -1769,15 +1769,24 @@ async def cmd_referral(message: Message):
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
                 balance_data = await r.json()
+            async with session.get(
+                f"{backend}/api/premium/status",
+                params={"telegram_id": telegram_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                prem_data = await r.json()
     except Exception:
         data = {"code": "ERROR"}
         balance_data = {"balance": {"total_earned": 0, "balance": 0}, "stats": {"total": 0, "completed": 0}}
+        prem_data = {}
 
     code = data.get("code", "?")
     link = data.get("link", "")
     balance = balance_data.get("balance", {})
     stats = balance_data.get("stats", {})
     referred = balance_data.get("referred_users", [])
+
+    is_elite = prem_data.get("active") and prem_data.get("tier") in ("elite", "founder")
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Поделиться кодом", switch_inline_query=code)],
@@ -1790,9 +1799,18 @@ async def cmd_referral(message: Message):
     if len(referred) > 5:
         referred_text += f"  ... и ещё {len(referred) - 5}\n"
 
+    if is_elite:
+        commission_text = "Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!"
+    else:
+        commission_text = (
+            "Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!\n"
+            "⚠️ <i>Комиссия начисляется только для Elite и Founder. "
+            "Сейчас ты можешь приглашать, но заработок начнётся после покупки Elite.</i>"
+        )
+
     await message.answer(
         f"🎁 <b>Реферальная программа</b>\n\n"
-        f"Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!\n"
+        f"{commission_text}\n"
         f"Твой друг получит <b>15% скидку</b> на первую покупку.\n\n"
         f"<b>Твоя ссылка:</b>\n{link}\n\n"
         f"<b>💰 Баланс:</b> {balance.get('balance', 0)}₽\n"
@@ -1808,6 +1826,45 @@ async def cmd_referral(message: Message):
         f"3. Ты получаешь 50% от каждой его оплаты!\n\n"
         f"💡 Вывод средств — в Mini App",
         reply_markup=kb,
+    )
+
+
+async def cmd_leaderboard(message: Message):
+    """Топ рефереров по заработку."""
+    import aiohttp
+    backend = settings.BACKEND_URL
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/referral/leaderboard",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+    except Exception:
+        data = {"leaderboard": []}
+
+    top = data.get("leaderboard", [])
+    if not top:
+        await message.answer(
+            "🏆 <b>Топ рефереров</b>\n\n"
+            "Пока нет данных. Будь первым — пригласи друга!",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
+    lines = ["🏆 <b>Топ рефереров</b>\n"]
+    medals = ["🥇", "🥈", "🥉"]
+    for i, r in enumerate(top):
+        medal = medals[i] if i < 3 else f"  {i+1}."
+        lines.append(
+            f"{medal} {r.get('name', 'User')} — "
+            f"💰 {r.get('total_earned', 0)}₽ "
+            f"({r.get('referral_count', 0)} рефералов)"
+        )
+
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=main_menu_keyboard(),
     )
 
 
@@ -4198,6 +4255,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(cmd_link, Command("link"))
     dp.message.register(cmd_alarm, Command("alarm"))
     dp.message.register(cmd_referral, Command("referral"))
+    dp.message.register(cmd_leaderboard, Command("leaderboard"))
     dp.message.register(cmd_broadcast, Command("broadcast"))
     dp.message.register(cmd_freetrial, Command("freetrial"))
     dp.message.register(cmd_post, Command("post"))

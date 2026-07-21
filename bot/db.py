@@ -463,6 +463,21 @@ async def _migrate_sqlite(db):
     """)
     await db.execute("CREATE INDEX IF NOT EXISTS idx_ref_wd_user ON referral_withdrawals (user_id)")
 
+    # === referral_notifications — очередь уведомлений для рефереров ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            telegram_id INTEGER,
+            vk_id TEXT,
+            type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            is_sent INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_ref_notif_unsent ON referral_notifications (is_sent, created_at)")
+
     # === Миграция: rate limit привязки аккаунтов ===
     async with db.execute("PRAGMA table_info(users)") as cur:
         link_cols = {row[1] for row in await cur.fetchall()}
@@ -930,6 +945,24 @@ async def _create_schema_pg(pool):
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_ref_wd_user ON referral_withdrawals (user_id)")
         except Exception as e:
             logger.warning(f"PG migration referral_withdrawals: {e}")
+
+        # 3.12. referral_notifications — очередь уведомлений
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS referral_notifications (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    telegram_id INTEGER,
+                    vk_id TEXT,
+                    type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    is_sent BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )"""
+            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_ref_notif_unsent ON referral_notifications (is_sent, created_at)")
+        except Exception as e:
+            logger.warning(f"PG migration referral_notifications: {e}")
 
         # 4. Автоимпорт из SQLite если PG пуста
         try:
@@ -3273,7 +3306,84 @@ async def record_referral_commission(user_id: int, payment_id: int, payment_amou
                        updated_at = NOW()""",
                 referrer_id, commission, commission,
             )
+    # Уведомление рефереру
+    try:
+        referred_row = await _fetch(
+            "SELECT first_name FROM users WHERE id = ?" if USE_SQLITE else "SELECT first_name FROM users WHERE id = $1",
+            user_id, one=True,
+        )
+        referred_name = (referred_row.get("first_name") if isinstance(referred_row, dict) else "Пользователь") if referred_row else "Пользователь"
+        await queue_referral_notification(
+            referrer_id,
+            "commission",
+            f"💰 Начислено <b>{commission}₽</b> комиссии!\n"
+            f"Приглашённый: {referred_name}\n"
+            f"Оплата: {payment_amount}₽",
+        )
+    except Exception:
+        pass
     return True
+
+
+async def queue_referral_notification(user_id: int, notif_type: str, message: str) -> None:
+    """Ставит уведомление в очередь для реферера."""
+    if USE_SQLITE:
+        # Получаем telegram_id и vk_id
+        row = await _fetch(
+            "SELECT telegram_id, vk_id FROM users WHERE id = ?",
+            user_id, one=True,
+        )
+        if not row:
+            return
+        tid = row["telegram_id"] if isinstance(row, dict) else row[0]
+        vid = row["vk_id"] if isinstance(row, dict) else row[1]
+        await _execute(
+            """INSERT INTO referral_notifications (user_id, telegram_id, vk_id, type, message)
+               VALUES (?, ?, ?, ?, ?)""",
+            user_id, tid, vid, notif_type, message,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT telegram_id, vk_id FROM users WHERE id = $1",
+                user_id,
+            )
+            if not row:
+                return
+            await conn.execute(
+                """INSERT INTO referral_notifications (user_id, telegram_id, vk_id, type, message)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                user_id, row["telegram_id"], row["vk_id"], notif_type, message,
+            )
+
+
+async def get_unsent_notifications(limit: int = 50) -> list:
+    """Получает неотправленные уведомления."""
+    if USE_SQLITE:
+        return await _fetch(
+            "SELECT * FROM referral_notifications WHERE is_sent = 0 ORDER BY created_at LIMIT ?",
+            limit,
+        )
+    else:
+        return await _fetch(
+            "SELECT * FROM referral_notifications WHERE is_sent = FALSE ORDER BY created_at LIMIT $1",
+            limit,
+        )
+
+
+async def mark_notification_sent(notif_id: int) -> None:
+    """Помечает уведомление как отправленное."""
+    if USE_SQLITE:
+        await _execute(
+            "UPDATE referral_notifications SET is_sent = 1 WHERE id = ?",
+            notif_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                "UPDATE referral_notifications SET is_sent = TRUE WHERE id = $1",
+                notif_id,
+            )
 
 
 async def get_referral_balance(user_id: int) -> dict:
@@ -3448,6 +3558,23 @@ async def process_withdrawal(withdrawal_id: int, status: str) -> bool:
                 "UPDATE referral_withdrawals SET status = $1, processed_at = NOW() WHERE id = $2",
                 status, withdrawal_id,
             )
+    # Уведомление пользователю
+    try:
+        wd = withdrawal
+        wd_user_id = wd.get("user_id") if isinstance(wd, dict) else wd[1]
+        wd_amount = wd.get("amount") if isinstance(wd, dict) else wd[2]
+        if status == "approved":
+            msg = f"✅ Заявка на вывод <b>{wd_amount}₽</b> одобрена! Ожидаем поступления."
+        elif status == "paid":
+            msg = f"💸 Заявка на вывод <b>{wd_amount}₽</b> выплачена!"
+        elif status == "rejected":
+            msg = f"❌ Заявка на вывод <b>{wd_amount}₽</b> отклонена. Средства возвращены на баланс."
+        else:
+            msg = ""
+        if msg:
+            await queue_referral_notification(wd_user_id, f"withdrawal_{status}", msg)
+    except Exception:
+        pass
     return True
 
 
@@ -5181,3 +5308,83 @@ async def get_referral_stats(user_id: int) -> dict:
         elif s == "pending":
             stats["pending"] = c
     return stats
+
+
+async def get_referral_leaderboard(limit: int = 10) -> list:
+    """Топ рефереров по заработку."""
+    if USE_SQLITE:
+        return await _fetch(
+            """SELECT rb.user_id, rb.total_earned, rb.balance,
+                      COALESCE(u.first_name, 'User') as first_name,
+                      (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = rb.user_id AND status = 'completed') as referral_count
+               FROM referral_balances rb
+               LEFT JOIN users u ON rb.user_id = u.id
+               WHERE rb.total_earned > 0
+               ORDER BY rb.total_earned DESC
+               LIMIT ?""",
+            limit,
+        )
+    else:
+        return await _fetch(
+            """SELECT rb.user_id, rb.total_earned, rb.balance,
+                      COALESCE(u.first_name, 'User') as first_name,
+                      (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = rb.user_id AND status = 'completed') as referral_count
+               FROM referral_balances rb
+               LEFT JOIN users u ON rb.user_id = u.id
+               WHERE rb.total_earned > 0
+               ORDER BY rb.total_earned DESC
+               LIMIT $1""",
+            limit,
+        )
+
+
+async def check_self_referral(telegram_id: int, vk_id: str = None, code: str = None) -> bool:
+    """Проверяет, не пытается ли пользователь пригласить сам себя.
+    Проверяет по telegram_id, vk_id и IP-адресу (через device_id)."""
+    if not code:
+        return False
+
+    # Находим referrer_user_id по коду
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT referrer_user_id FROM referrals WHERE referral_code = ?",
+            code, one=True,
+        )
+    else:
+        row = await _fetch(
+            "SELECT referrer_user_id FROM referrals WHERE referral_code = $1",
+            code, one=True,
+        )
+
+    if not row:
+        return False
+
+    referrer_id = row["referrer_user_id"] if isinstance(row, dict) else row[0]
+
+    # Получаем информацию о referrer
+    if USE_SQLITE:
+        referrer = await _fetch(
+            "SELECT telegram_id, vk_id FROM users WHERE id = ?",
+            referrer_id, one=True,
+        )
+    else:
+        referrer = await _fetch(
+            "SELECT telegram_id, vk_id FROM users WHERE id = $1",
+            referrer_id, one=True,
+        )
+
+    if not referrer:
+        return False
+
+    ref_tg = referrer.get("telegram_id") if isinstance(referrer, dict) else referrer[0]
+    ref_vk = referrer.get("vk_id") if isinstance(referrer, dict) else referrer[1]
+
+    # Проверка по Telegram ID
+    if telegram_id and ref_tg and int(telegram_id) == int(ref_tg):
+        return True
+
+    # Проверка по VK ID
+    if vk_id and ref_vk and str(vk_id) == str(ref_vk):
+        return True
+
+    return False

@@ -797,12 +797,30 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
     balance = balance_data.get("balance", {})
     stats = balance_data.get("stats", {})
 
-    ref_link = f"https://t.me/benzyn_ryadom_bot?start=ref_{code}"
+    ref_link_tg = f"https://t.me/benzyn_ryadom_bot?start=ref_{code}"
+    ref_link_vk = f"https://vk.com/benzyn_ryadom?ref={code}"
+
+    from db import get_user_premium, has_feature
+    sub = await get_user_premium(uid) if uid else None
+    tier = sub.get("tier") if sub else None
+    is_elite = has_feature(tier, "anti_traffic")
+
+    if is_elite:
+        commission_text = "Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!"
+    else:
+        commission_text = (
+            "Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!\n"
+            "⚠️ <i>Комиссия начисляется только для Elite и Founder. "
+            "Сейчас ты можешь приглашать, но заработок начнётся после покупки Elite.</i>"
+        )
+
     await _vk_send(peer_id,
         f"🎁 <b>Реферальная программа</b>\n\n"
-        f"Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!\n"
+        f"{commission_text}\n"
         f"Твой друг получит <b>15% скидку</b> на первую покупку.\n\n"
-        f"<b>Твоя ссылка:</b>\n{ref_link}\n\n"
+        f"<b>Telegram:</b>\n{ref_link_tg}\n\n"
+        f"<b>VK:</b>\n{ref_link_vk}\n\n"
+        f"<b>Твой код:</b> <code>{code}</code>\n\n"
         f"<b>💰 Баланс:</b> {balance.get('balance', 0)}₽\n"
         f"<b>📊 Всего заработано:</b> {balance.get('total_earned', 0)}₽\n\n"
         f"<b>Статистика:</b>\n"
@@ -814,6 +832,41 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
         f"3. Ты получаешь 50% от каждой его оплаты!\n\n"
         f"💡 Вывод средств — в Mini App",
     )
+
+
+async def handle_leaderboard(peer_id: int) -> None:
+    """Топ рефереров по заработку."""
+    import aiohttp, os
+    backend = os.getenv("BACKEND_URL", "")
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{backend}/api/referral/leaderboard",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+    except Exception:
+        data = {"leaderboard": []}
+
+    top = data.get("leaderboard", [])
+    if not top:
+        await _vk_send(peer_id,
+            "🏆 <b>Топ рефереров</b>\n\n"
+            "Пока нет данных. Будь первым — пригласи друга!",
+            vk_main_menu())
+        return
+
+    lines = ["🏆 <b>Топ рефереров</b>\n"]
+    medals = ["🥇", "🥈", "🥉"]
+    for i, r in enumerate(top):
+        medal = medals[i] if i < 3 else f"  {i+1}."
+        lines.append(
+            f"{medal} {r.get('name', 'User')} — "
+            f"💰 {r.get('total_earned', 0)}₽ "
+            f"({r.get('referral_count', 0)} рефералов)"
+        )
+
+    await _vk_send(peer_id, "\n".join(lines), vk_main_menu())
 
 
 async def handle_premium(peer_id: int) -> None:
@@ -1576,6 +1629,8 @@ async def process_message_new(event: dict) -> None:
         await handle_alarm(peer_id)
     elif low.startswith("/referral") or low.startswith("referral"):
         await handle_referral(peer_id, text)
+    elif low in ("/leaderboard", "leaderboard", "топ", "лидерборд"):
+        await handle_leaderboard(peer_id)
     elif low.startswith("/link") or low.startswith("link "):
         await handle_link(peer_id, text)
     elif low in ("/anti-traffic", "anti-traffic", "анти-пробка", "🚗 анти-пробка"):
@@ -1802,6 +1857,9 @@ async def process_message_event(event: dict) -> None:
 
     elif action == "referral":
         await handle_referral(peer_id)
+
+    elif action == "leaderboard":
+        await handle_leaderboard(peer_id)
 
     elif action == "donate":
         await handle_donate(peer_id)
