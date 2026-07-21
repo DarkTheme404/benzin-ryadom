@@ -2408,14 +2408,12 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/premium/cancel", handle_premium_cancel)
     app.router.add_post("/api/premium/trial", handle_premium_trial)
     app.router.add_post("/api/premium/create-payment", handle_premium_create_payment)
-    app.router.add_get("/api/premium/payment-callback", handle_premium_payment_callback)
     app.router.add_get("/api/premium/payment-status", handle_premium_payment_status)
     app.router.add_get("/api/premium/pending", handle_premium_pending_payments)
     # Founder Pack
     app.router.add_get("/api/founder/status", handle_founder_status)
     app.router.add_post("/api/founder/purchase", handle_founder_purchase)
     app.router.add_get("/api/founder/list", handle_founder_list)
-    app.router.add_post("/api/founder/payment-callback", handle_founder_payment_callback)
     app.router.add_get("/api/referral/discount-status", handle_referral_discount_status)
     # Account linking (unified account: one user = one record)
     app.router.add_post("/api/account/link-by-profile", handle_account_link_by_profile)
@@ -4796,11 +4794,11 @@ async def handle_route_anti_traffic(request):
 # VK Pay — настройки в bot/vkpay.py
 
 async def handle_premium_create_payment(request):
-    """POST /api/premium/create-payment — создаёт платёж и возвращает ссылку VK Pay.
+    """POST /api/premium/create-payment — создаёт платёж через YooMoney и возвращает ссылку.
 
     Универсальный endpoint для TG, VK, Mini App.
-    Использует модуль bot.vkpay для генерации подписанной ссылки.
-    После успешной оплаты VK Pay вызывает callback на /api/premium/payment-callback.
+    Использует YooMoney Quickpay для генерации ссылки на оплату.
+    После оплаты YooMoney polling worker активирует подписку.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_POST):
         return json_resp({"error": "rate limit"}, status=429)
@@ -4942,7 +4940,8 @@ async def handle_premium_payment_callback(request):
 async def handle_premium_payment_status(request):
     """GET /api/premium/payment-status?token=... — проверка статуса оплаты.
 
-    Для Mini App: после возврата из VK Pay опрашиваем этот endpoint.
+    Для Mini App: после возврата из YooMoney опрашиваем этот endpoint.
+    Также polling worker может активировать подписку до этого запроса.
     """
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)

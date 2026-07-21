@@ -1493,7 +1493,7 @@ async def buy_tier_callback(callback: CallbackQuery):
 
 
 async def check_payment_callback(callback: CallbackQuery):
-    """Проверяет статус оплаты после возврата из VK Pay."""
+    """Проверяет статус оплаты после возврата из YooMoney."""
     await callback.answer()
     token = callback.data.replace("check_pay_", "")
     from db import get_payment_by_token, confirm_payment

@@ -3348,6 +3348,8 @@ async def record_referral_commission(user_id: int, payment_id: int, payment_amou
     # === 1-й уровень ===
     rate1 = get_commission_rate(ref_tier, is_top3=top3)
     commission1 = round(payment_amount * rate1 / 100)
+    commission2 = 0
+    commission3 = 0
     if commission1 > 0:
         await _record_earning(referrer_id, user_id, payment_id, payment_amount, rate1, commission1, level=1)
         await _update_balance(referrer_id, commission1)
@@ -3384,14 +3386,20 @@ async def record_referral_commission(user_id: int, payment_id: int, payment_amou
         )
         referred_name = (referred_row.get("first_name") if isinstance(referred_row, dict) else "Пользователь") if referred_row else "Пользователь"
         tier_name = REFERRAL_TIER_NAMES.get(ref_tier, "Базовый")
-        await queue_referral_notification(
-            referrer_id,
-            "commission",
-            f"💰 Начислено <b>{commission1}₽</b> комиссии ({rate1}%)!\n"
-            f"Приглашённый: {referred_name}\n"
-            f"Оплата: {payment_amount}₽\n"
-            f"Твой тир: {tier_name}",
-        )
+        total_commission = commission1
+        msg = f"💰 Начислено <b>{commission1}₽</b> комиссии ({rate1}%)!\n"
+        msg += f"Приглашённый: {referred_name}\n"
+        msg += f"Оплата: {payment_amount}₽\n"
+        if commission2 > 0:
+            total_commission += commission2
+            msg += f"2-й уровень: +{commission2}₽ ({REFERRAL_LEVEL2_PERCENT}%)\n"
+        if commission3 > 0:
+            total_commission += commission3
+            msg += f"3-й уровень: +{commission3}₽ ({REFERRAL_LEVEL3_PERCENT}%)\n"
+        if commission2 > 0 or commission3 > 0:
+            msg += f"<b>Итого: {total_commission}₽</b>\n"
+        msg += f"Твой тир: {tier_name}"
+        await queue_referral_notification(referrer_id, "commission", msg)
     except Exception:
         pass
     return True
@@ -3578,18 +3586,22 @@ async def get_referred_users_list(referrer_user_id: int) -> list[dict]:
 
 
 async def request_withdrawal(user_id: int, amount: int, method: str, details: str) -> dict:
-    """Creates a withdrawal request."""
-    balance = await get_referral_balance(user_id)
-    if balance["balance"] < amount:
-        return {"ok": False, "error": "insufficient_balance"}
+    """Creates a withdrawal request with atomic balance deduction."""
     if amount < 100:
         return {"ok": False, "error": "minimum_withdrawal_100"}
 
+    balance = await get_referral_balance(user_id)
+    if balance["balance"] < amount:
+        return {"ok": False, "error": "insufficient_balance"}
+
     if USE_SQLITE:
-        await _execute(
-            "UPDATE referral_balances SET balance = balance - ?, updated_at = datetime('now') WHERE user_id = ?",
-            amount, user_id,
-        )
+        async with _db.execute(
+            "UPDATE referral_balances SET balance = balance - ?, updated_at = datetime('now') WHERE user_id = ? AND balance >= ?",
+            (amount, user_id, amount),
+        ) as cur:
+            await _db.commit()
+            if cur.rowcount == 0:
+                return {"ok": False, "error": "insufficient_balance"}
         await _execute(
             """INSERT INTO referral_withdrawals (user_id, amount, method, details)
                VALUES (?, ?, ?, ?)""",
@@ -3597,10 +3609,12 @@ async def request_withdrawal(user_id: int, amount: int, method: str, details: st
         )
     else:
         async with _db.acquire() as conn:
-            await conn.execute(
-                "UPDATE referral_balances SET balance = balance - $1, updated_at = NOW() WHERE user_id = $2",
+            result = await conn.execute(
+                "UPDATE referral_balances SET balance = balance - $1, updated_at = NOW() WHERE user_id = $2 AND balance >= $1",
                 amount, user_id,
             )
+            if result == "UPDATE 0":
+                return {"ok": False, "error": "insufficient_balance"}
             await conn.execute(
                 """INSERT INTO referral_withdrawals (user_id, amount, method, details)
                    VALUES ($1, $2, $3, $4)""",
@@ -3645,9 +3659,13 @@ async def process_withdrawal(withdrawal_id: int, status: str) -> bool:
         withdrawal = dict(row) if isinstance(row, dict) else {"user_id": row[1], "amount": row[2]}
 
         if status == "rejected":
-            # Возвращаем деньги на баланс
             await _execute(
                 "UPDATE referral_balances SET balance = balance + ?, updated_at = datetime('now') WHERE user_id = ?",
+                withdrawal["amount"], withdrawal["user_id"],
+            )
+        elif status == "paid":
+            await _execute(
+                "UPDATE referral_balances SET total_withdrawn = total_withdrawn + ?, updated_at = datetime('now') WHERE user_id = ?",
                 withdrawal["amount"], withdrawal["user_id"],
             )
 
@@ -3668,6 +3686,11 @@ async def process_withdrawal(withdrawal_id: int, status: str) -> bool:
             if status == "rejected":
                 await conn.execute(
                     "UPDATE referral_balances SET balance = balance + $1, updated_at = NOW() WHERE user_id = $2",
+                    withdrawal["amount"], withdrawal["user_id"],
+                )
+            elif status == "paid":
+                await conn.execute(
+                    "UPDATE referral_balances SET total_withdrawn = total_withdrawn + $1, updated_at = NOW() WHERE user_id = $2",
                     withdrawal["amount"], withdrawal["user_id"],
                 )
 
@@ -4685,7 +4708,7 @@ async def confirm_founder_purchase(payment_token: str) -> bool:
     # Активируем пожизненный Elite
     await activate_premium(user_id, "founder", days=36500, payment_id=f"founder_{payment_token}", amount=1990)
 
-    # Record referral commission (50% to referrer)
+    # Record referral commission (multi-level: 50-70% 1st, 5% 2nd, 3% 3rd for top-3)
     try:
         await record_referral_commission(user_id, 0, 1990)
     except Exception as e:
@@ -4737,17 +4760,17 @@ async def get_founder_remaining() -> int:
     return max(0, FOUNDER_MAX - count)
 
 
-# === Запросы на оплату (для VK Pay) ===
+# === Запросы на оплату (YooMoney) ===
 
 import secrets as _secrets
 from datetime import timedelta as _timedelta
 
 
-async def create_payment_request(user_id: int, tier: str, payment_method: str = "vk_pay") -> str:
+async def create_payment_request(user_id: int, tier: str, payment_method: str = "yoomoney") -> str:
     """Создаёт pending-платёж, возвращает токен для оплаты.
 
-    Токен используется в VK Pay ссылке. После оплаты вызывается
-    confirm_payment() чтобы активировать подписку.
+    Токен используется в YooMoney ссылке. После оплаты polling worker
+    вызывает confirm_payment() чтобы активировать подписку.
     """
     plan = get_plan(tier)
     if not plan:
@@ -4793,8 +4816,8 @@ async def get_payment_by_token(token: str) -> dict | None:
 async def confirm_payment(token: str) -> dict | None:
     """Подтверждает оплату и активирует премиум.
 
-    Вызывается после успешной оплаты через VK Pay callback.
-    Также записывает комиссию 50% рефереру (если есть).
+    Вызывается YooMoney polling worker'ом после обнаружения входящего перевода.
+    Также записывает multi-level комиссию рефереру (50-70% 1-й уровень, 5% 2-й, 3% 3-й для топ-3).
     """
     payment = await get_payment_by_token(token)
     if not payment:
@@ -4824,7 +4847,7 @@ async def confirm_payment(token: str) -> dict | None:
         amount=payment["amount"],
     )
 
-    # Record referral commission (50% to referrer)
+    # Record referral commission (multi-level: 50-70% 1st, 5% 2nd, 3% 3rd for top-3)
     try:
         await record_referral_commission(payment["user_id"], payment.get("id", 0), payment["amount"])
     except Exception as e:

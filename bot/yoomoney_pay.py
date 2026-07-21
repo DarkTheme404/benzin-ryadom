@@ -72,7 +72,7 @@ def create_payment(
         "paymentType": "SB",  # SB = оплата из кошелька, AC = с карты
         "sum": amount,
         "label": label,
-        "successURL": success_url or "https://vk.com/benzyn_ryadom?pay=ok",
+        "successURL": success_url or "https://benzin-ryadom.onrender.com",
     }
     quickpay_url = "https://yoomoney.ru/quickpay/confirm.xml?" + urllib.parse.urlencode(params)
 
