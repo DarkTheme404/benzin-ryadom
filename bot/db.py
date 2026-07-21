@@ -463,6 +463,18 @@ async def _migrate_sqlite(db):
     """)
     await db.execute("CREATE INDEX IF NOT EXISTS idx_ref_wd_user ON referral_withdrawals (user_id)")
 
+    # === user_consents — лог согласий на юридические документы ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS user_consents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            documents TEXT NOT NULL,
+            version TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_user_consents_user ON user_consents (user_id)")
+
     # === referral_notifications — очередь уведомлений для рефереров ===
     await db.execute("""
         CREATE TABLE IF NOT EXISTS referral_notifications (
@@ -975,6 +987,21 @@ async def _create_schema_pg(pool):
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_ref_wd_user ON referral_withdrawals (user_id)")
         except Exception as e:
             logger.warning(f"PG migration referral_withdrawals: {e}")
+
+        # user_consents (PG)
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS user_consents (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    documents TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )"""
+            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_consents_user ON user_consents (user_id)")
+        except Exception as e:
+            logger.warning(f"PG migration user_consents: {e}")
 
         # 3.12. referral_notifications — очередь уведомлений
         try:

@@ -2342,6 +2342,9 @@
               showToast('Минимальная сумма вывода — 100₽', 'warning');
               return;
             }
+            // Сначала согласие на документы
+            const ok = await ensureConsent(['terms', 'privacy', 'referral']);
+            if (!ok) return;
             // Сумма (по умолчанию весь баланс)
             const amountStr = prompt(`Сумма вывода (доступно ${bal}₽):`, String(bal));
             if (!amountStr) return;
@@ -2408,6 +2411,9 @@
         const applyInput = document.getElementById('referral-input');
         if (applyBtn && applyInput) {
           applyBtn.addEventListener('click', async () => {
+            // Согласие на правила реферальной программы
+            const consentOk = await ensureConsent(['terms', 'referral']);
+            if (!consentOk) return;
             let raw = applyInput.value.trim();
             if (!raw) {
               showToast('Вставь ссылку или код друга', 'warning');
@@ -3654,6 +3660,10 @@
         showToast('Не удалось определить ID пользователя', 'error');
         return;
       }
+      // Проверяем/получаем согласие на юридические документы
+      const ok = await ensureConsent(['terms', 'privacy', 'consent', 'offer']);
+      if (!ok) return;
+
       const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
       const res = await api('/api/premium/create-payment', {
         method: 'POST',
@@ -3675,6 +3685,75 @@
       console.error('buyPremiumTier error:', e);
       showToast('Ошибка: ' + (e.message || 'соединения'), 'error');
     }
+  }
+
+  // === Модалка согласия с юридическими документами ===
+  async function ensureConsent(requiredDocs) {
+    const uid = getTgId();
+    if (!uid) return false;
+    const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+    // Проверяем есть ли уже согласие
+    try {
+      const check = await api(`/api/consent/check?${idParam}=${uid}&documents=${requiredDocs.join(',')}`);
+      if (check && check.has_consent) return true;
+    } catch (e) {
+      // Продолжаем — покажем модалку
+    }
+    // Показываем модалку
+    return new Promise((resolve) => {
+      const docNames = {
+        terms: 'Пользовательское соглашение',
+        privacy: 'Политика конфиденциальности',
+        consent: 'Согласие на обработку ПДн',
+        offer: 'Публичная оферта',
+        referral: 'Правила реферальной программы',
+      };
+      const docsHtml = requiredDocs.map(d =>
+        `<div style="margin:6px 0;font-size:13px">
+          <a href="/legal/${d}.html" target="_blank" style="color:#f59e0b;text-decoration:underline">${docNames[d] || d}</a>
+        </div>`
+      ).join('');
+      const overlay = document.createElement('div');
+      overlay.id = 'consent-modal-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
+      overlay.innerHTML = `
+        <div style="background:var(--bg-card,#1f2937);border-radius:14px;padding:24px;max-width:380px;width:100%;color:#fff">
+          <h3 style="margin:0 0 12px;font-size:17px">📄 Согласие с документами</h3>
+          <p style="font-size:13px;color:#aaa;margin:0 0 14px">Перед продолжением необходимо принять:</p>
+          <div style="margin-bottom:16px">${docsHtml}</div>
+          <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:14px;cursor:pointer">
+            <input type="checkbox" id="consent-cb" style="margin-top:3px">
+            <span>Я ознакомлен(-а) и согласен(-на) со всеми документами выше</span>
+          </label>
+          <div style="display:flex;gap:8px">
+            <button id="consent-cancel" style="flex:1;padding:10px;background:#374151;color:#fff;border:none;border-radius:8px;cursor:pointer">Отмена</button>
+            <button id="consent-ok" style="flex:1;padding:10px;background:#f59e0b;color:#fff;border:none;border-radius:8px;cursor:pointer" disabled>Принять</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      const cb = document.getElementById('consent-cb');
+      const ok = document.getElementById('consent-ok');
+      const cancel = document.getElementById('consent-cancel');
+      cb.addEventListener('change', () => { ok.disabled = !cb.checked; });
+      cancel.addEventListener('click', () => { overlay.remove(); resolve(false); });
+      ok.addEventListener('click', async () => {
+        try {
+          await api('/api/consent', {
+            method: 'POST',
+            body: JSON.stringify({
+              [idParam]: uid,
+              documents: requiredDocs,
+              version: '2026-07-21',
+            }),
+          });
+          overlay.remove();
+          resolve(true);
+        } catch (e) {
+          showToast('Ошибка записи согласия', 'error');
+        }
+      });
+    });
   }
 
   // ============= GLOBAL EXPORTS (for premium-ui.js and other scripts) =============

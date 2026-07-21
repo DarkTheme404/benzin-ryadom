@@ -2439,6 +2439,8 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/internal/notify-withdrawal", handle_notify_withdrawal)
     app.router.add_post("/api/internal/notify-withdrawal-done", handle_notify_withdrawal_done)
     app.router.add_get("/api/admin/balances-summary", handle_balances_summary)
+    app.router.add_post("/api/consent", handle_record_consent)
+    app.router.add_get("/api/consent/check", handle_check_consent)
     app.router.add_get("/api/account/info", handle_account_info)
     app.router.add_get("/api/user/stats", handle_user_stats)
     app.router.add_post("/api/user/ensure-vk", handle_user_ensure_vk)
@@ -2457,6 +2459,10 @@ def setup_app() -> web.Application:
             response.headers["Expires"] = "0"
             return response
         app.router.add_static("/app/", miniapp_dir, append_version=False)
+        # Юридические документы
+        legal_dir = Path(__file__).parent.parent / "legal"
+        if legal_dir.exists():
+            app.router.add_static("/legal/", legal_dir, append_version=False)
         for path in ("/miniapp", "/miniapp/", "/m", "/m/", "/v2", "/v2/"):
             app.router.add_get(path, serve_index)
 
@@ -5109,6 +5115,113 @@ async def handle_yoomoney_exchange(request):
                 })
     except Exception as e:
         return json_resp({"error": str(e)}, status=500)
+
+
+# === Согласие на юридические документы ===
+async def handle_record_consent(request):
+    """POST /api/consent — записывает факт согласия Пользователя с документами.
+
+    Body: {
+      "telegram_id": 123,
+      "vk_id": 456,
+      "documents": ["terms", "privacy", "consent"],
+      "version": "2026-07-21"
+    }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    tid = body.get("telegram_id")
+    vkid = body.get("vk_id")
+    documents = body.get("documents", [])
+    version = body.get("version", "2026-07-21")
+    if not documents:
+        return json_resp({"error": "documents list required"}, status=400)
+    if not (tid or vkid):
+        return json_resp({"error": "telegram_id or vk_id required"}, status=400)
+
+    from db import get_user_id_by_any, USE_SQLITE
+    uid = None
+    if tid:
+        uid = await get_user_id_by_any(int(tid))
+    if not uid and vkid:
+        uid = await get_user_id_by_any(int(vkid))
+
+    if not uid:
+        # Создаём юзера если его ещё нет (для согласия до регистрации)
+        from db import upsert_user, upsert_user_vk
+        if tid:
+            await upsert_user(int(tid), username=None, first_name="User")
+            uid = await get_user_id_by_any(int(tid))
+        elif vkid:
+            await upsert_user_vk(int(vkid))
+            uid = await get_user_id_by_any(int(vkid))
+
+    if not uid:
+        return json_resp({"error": "user creation failed"}, status=500)
+
+    docs_str = ",".join(sorted(documents))
+    if USE_SQLITE:
+        from db import _execute
+        await _execute(
+            """INSERT INTO user_consents (user_id, documents, version, created_at)
+               VALUES (?, ?, ?, datetime('now'))""",
+            uid, docs_str, version,
+        )
+    else:
+        async with __import__("db")._db.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO user_consents (user_id, documents, version, created_at)
+                   VALUES ($1, $2, $3, NOW())""",
+                uid, docs_str, version,
+            )
+
+    return json_resp({"ok": True, "user_id": uid, "documents": documents, "version": version})
+
+
+async def handle_check_consent(request):
+    """GET /api/consent/check?telegram_id=...&documents=terms,privacy
+    Проверяет, давал ли Пользователь согласие на указанные документы.
+    """
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    docs_param = request.query.get("documents", "terms,privacy,consent")
+    if not tid:
+        return json_resp({"error": "telegram_id required"}, status=400)
+
+    from db import get_user_id_by_any, USE_SQLITE
+    uid = await get_user_id_by_any(int(tid))
+    if not uid:
+        return json_resp({"has_consent": False, "user_id": None})
+
+    required_docs = set(docs_param.split(","))
+    if USE_SQLITE:
+        from db import _fetch
+        rows = await _fetch(
+            "SELECT documents, version FROM user_consents WHERE user_id = ? ORDER BY created_at DESC",
+            uid,
+        )
+    else:
+        async with __import__("db")._db.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT documents, version FROM user_consents WHERE user_id = $1 ORDER BY created_at DESC",
+                uid,
+            )
+    if not rows:
+        return json_resp({"has_consent": False, "user_id": uid})
+
+    # Проверяем, что есть согласие на ВСЕ требуемые документы
+    for r in rows:
+        d = dict(r) if not USE_SQLITE else r
+        given_docs = set((d.get("documents") or "").split(","))
+        if required_docs.issubset(given_docs):
+            return json_resp({
+                "has_consent": True,
+                "user_id": uid,
+                "version": d.get("version"),
+                "agreed_at": str(d.get("created_at", "")),
+            })
+    return json_resp({"has_consent": False, "user_id": uid})
 
 
 async def handle_premium_create_payment(request):
