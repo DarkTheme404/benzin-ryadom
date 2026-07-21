@@ -2513,6 +2513,11 @@ async def handle_premium_status(request):
             "payment_method": sub.get("payment_method"),
             "founder": founder,
             "founder_purchased_at": str(founder_info.get("created_at", "")) if founder_info else None,
+            # Совместимость с MiniApp
+            "is_premium": True,
+            "premium_tier": sub.get("tier"),
+            "premium_expires_at": str(sub.get("expires_at", "")),
+            "is_founder": founder,
         })
     except Exception as e:
         logger.warning(f"premium_status: {e}")
