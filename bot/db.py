@@ -5405,12 +5405,12 @@ async def get_referral_by_code(code: str) -> dict | None:
 async def grant_referral_discount(user_id: int, percent: int = 50, days: int = 30) -> bool:
     """Выдаёт скидку % на premium-подписку. Действует days дней."""
     from datetime import datetime, timedelta
-    expires = (datetime.utcnow() + timedelta(days=days)).isoformat()
+    expires = datetime.utcnow() + timedelta(days=days)
     if USE_SQLITE:
         await _execute(
             """INSERT INTO referral_discounts (user_id, discount_percent, expires_at, used)
                VALUES (?, ?, ?, 0)""",
-            user_id, percent, expires,
+            user_id, percent, expires.isoformat(),
         )
     else:
         async with _db.acquire() as conn:
