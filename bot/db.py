@@ -3586,14 +3586,61 @@ async def get_referred_users_list(referrer_user_id: int) -> list[dict]:
 
 
 async def request_withdrawal(user_id: int, amount: int, method: str, details: str) -> dict:
-    """Creates a withdrawal request with atomic balance deduction."""
+    """Создаёт заявку на вывод и сразу делает автовывод через YooMoney на карту.
+
+    Только метод 'card' (по номеру карты 16 цифр).
+    При успешном переводе заявка сразу становится 'paid'.
+    При ошибке перевода — баланс возвращается, статус 'failed'.
+    """
+    from yoomoney_pay import payout_to_card, confirm_payout, is_configured as ym_configured
+
+    if method != "card":
+        return {"ok": False, "error": "only_card_method_supported"}
+
     if amount < 100:
         return {"ok": False, "error": "minimum_withdrawal_100"}
+
+    # Валидация номера карты
+    card_clean = details.replace(" ", "").replace("-", "")
+    if not card_clean.isdigit() or len(card_clean) < 13 or len(card_clean) > 19:
+        return {"ok": False, "error": "invalid_card_number"}
 
     balance = await get_referral_balance(user_id)
     if balance["balance"] < amount:
         return {"ok": False, "error": "insufficient_balance"}
 
+    # YooMoney не настроен — fallback на старую логику (заявка pending)
+    if not ym_configured():
+        if USE_SQLITE:
+            async with _db.execute(
+                "UPDATE referral_balances SET balance = balance - ?, updated_at = datetime('now') WHERE user_id = ? AND balance >= ?",
+                (amount, user_id, amount),
+            ) as cur:
+                await _db.commit()
+                if cur.rowcount == 0:
+                    return {"ok": False, "error": "insufficient_balance"}
+            await _execute(
+                """INSERT INTO referral_withdrawals (user_id, amount, method, details)
+                   VALUES (?, ?, ?, ?)""",
+                user_id, amount, method, details,
+            )
+        else:
+            async with _db.acquire() as conn:
+                result = await conn.execute(
+                    "UPDATE referral_balances SET balance = balance - $1, updated_at = NOW() WHERE user_id = $2 AND balance >= $1",
+                    amount, user_id,
+                )
+                if result == "UPDATE 0":
+                    return {"ok": False, "error": "insufficient_balance"}
+                await conn.execute(
+                    """INSERT INTO referral_withdrawals (user_id, amount, method, details)
+                       VALUES ($1, $2, $3, $4)""",
+                    user_id, amount, method, details,
+                )
+        return {"ok": True, "message": "Заявка создана (YooMoney не настроен, обработает админ)"}
+
+    # === Автовывод через YooMoney ===
+    # 1. Списываем баланс атомарно
     if USE_SQLITE:
         async with _db.execute(
             "UPDATE referral_balances SET balance = balance - ?, updated_at = datetime('now') WHERE user_id = ? AND balance >= ?",
@@ -3602,11 +3649,6 @@ async def request_withdrawal(user_id: int, amount: int, method: str, details: st
             await _db.commit()
             if cur.rowcount == 0:
                 return {"ok": False, "error": "insufficient_balance"}
-        await _execute(
-            """INSERT INTO referral_withdrawals (user_id, amount, method, details)
-               VALUES (?, ?, ?, ?)""",
-            user_id, amount, method, details,
-        )
     else:
         async with _db.acquire() as conn:
             result = await conn.execute(
@@ -3615,12 +3657,129 @@ async def request_withdrawal(user_id: int, amount: int, method: str, details: st
             )
             if result == "UPDATE 0":
                 return {"ok": False, "error": "insufficient_balance"}
-            await conn.execute(
-                """INSERT INTO referral_withdrawals (user_id, amount, method, details)
-                   VALUES ($1, $2, $3, $4)""",
+
+    # 2. Создаём заявку (pending) — чтобы было видно в истории
+    if USE_SQLITE:
+        cur = await _db.execute(
+            """INSERT INTO referral_withdrawals (user_id, amount, method, details, status)
+               VALUES (?, ?, ?, ?, 'pending')""",
+            (user_id, amount, method, details),
+        )
+        await _db.commit()
+        withdrawal_id = cur.lastrowid
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO referral_withdrawals (user_id, amount, method, details, status)
+                   VALUES ($1, $2, $3, $4, 'pending') RETURNING id""",
                 user_id, amount, method, details,
             )
-    return {"ok": True, "message": "Заявка на вывод создана"}
+            withdrawal_id = row["id"]
+
+    # 3. Создаём платёж через YooMoney
+    payout_result = await payout_to_card(
+        card_number=card_clean,
+        amount=amount,
+        comment=f"Withdrawal #{withdrawal_id}",
+    )
+
+    if not payout_result.get("ok"):
+        # Ошибка — возвращаем баланс и помечаем failed
+        if USE_SQLITE:
+            await _execute(
+                """UPDATE referral_withdrawals SET status = 'failed', processed_at = datetime('now')
+                   WHERE id = ?""",
+                withdrawal_id,
+            )
+            await _execute(
+                """UPDATE referral_balances SET balance = balance + ?, updated_at = datetime('now')
+                   WHERE user_id = ?""",
+                amount, user_id,
+            )
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    """UPDATE referral_withdrawals SET status = 'failed', processed_at = NOW()
+                       WHERE id = $1""",
+                    withdrawal_id,
+                )
+                await conn.execute(
+                    """UPDATE referral_balances SET balance = balance + $1, updated_at = NOW()
+                       WHERE user_id = $2""",
+                    amount, user_id,
+                )
+        return {
+            "ok": False,
+            "error": f"Ошибка выплаты: {payout_result.get('error', 'unknown')}. Баланс возвращён.",
+            "withdrawal_id": withdrawal_id,
+        }
+
+    # 4. Подтверждаем платёж (process-payment)
+    request_id = payout_result.get("request_id")
+    confirm_result = await confirm_payout(request_id)
+
+    if not confirm_result.get("ok"):
+        if USE_SQLITE:
+            await _execute(
+                """UPDATE referral_withdrawals SET status = 'failed', processed_at = datetime('now')
+                   WHERE id = ?""",
+                withdrawal_id,
+            )
+            await _execute(
+                """UPDATE referral_balances SET balance = balance + ?, updated_at = datetime('now')
+                   WHERE user_id = ?""",
+                amount, user_id,
+            )
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    """UPDATE referral_withdrawals SET status = 'failed', processed_at = NOW()
+                       WHERE id = $1""",
+                    withdrawal_id,
+                )
+                await conn.execute(
+                    """UPDATE referral_balances SET balance = balance + $1, updated_at = NOW()
+                       WHERE user_id = $2""",
+                    amount, user_id,
+                )
+        return {
+            "ok": False,
+            "error": f"Не удалось подтвердить перевод: {confirm_result.get('error')}. Баланс возвращён.",
+            "withdrawal_id": withdrawal_id,
+        }
+
+    # 5. Успех! Помечаем paid и увеличиваем total_withdrawn
+    if USE_SQLITE:
+        await _execute(
+            """UPDATE referral_withdrawals SET status = 'paid', processed_at = datetime('now')
+               WHERE id = ?""",
+            withdrawal_id,
+        )
+        await _execute(
+            """UPDATE referral_balances SET total_withdrawn = total_withdrawn + ?
+               WHERE user_id = ?""",
+            amount, user_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                """UPDATE referral_withdrawals SET status = 'paid', processed_at = NOW()
+                   WHERE id = $1""",
+                withdrawal_id,
+            )
+            await conn.execute(
+                """UPDATE referral_balances SET total_withdrawn = total_withdrawn + $1
+                   WHERE user_id = $2""",
+                amount, user_id,
+            )
+
+    return {
+        "ok": True,
+        "message": f"✅ Выплата {amount}₽ на карту *{card_clean[-4:]} успешно отправлена!",
+        "withdrawal_id": withdrawal_id,
+        "amount": amount,
+        "card_last4": card_clean[-4:],
+    }
 
 
 async def get_pending_withdrawals() -> list[dict]:

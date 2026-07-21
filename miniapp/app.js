@@ -2342,24 +2342,43 @@
               showToast('Минимальная сумма вывода — 100₽', 'warning');
               return;
             }
-            // Show withdraw modal
-            const method = prompt('Способ вывода (card/yoomoney/sbp):', 'card') || 'card';
-            const details = prompt('Реквизиты (номер карты/кошелька):', '');
-            if (!details) return;
+            // Сумма (по умолчанию весь баланс)
+            const amountStr = prompt(`Сумма вывода (доступно ${bal}₽):`, String(bal));
+            if (!amountStr) return;
+            const amount = parseInt(amountStr, 10);
+            if (!amount || amount < 100) {
+              showToast('Минимальная сумма — 100₽', 'warning');
+              return;
+            }
+            if (amount > bal) {
+              showToast(`Недостаточно средств (доступно ${bal}₽)`, 'error');
+              return;
+            }
+            // Номер карты
+            const cardNumber = prompt('💳 Введите номер карты (16 цифр):\n\nПеревод придёт в течение 1-2 минут.', '');
+            if (!cardNumber) return;
+            const cardClean = cardNumber.replace(/\s|-/g, '');
+            if (!/^\d{13,19}$/.test(cardClean)) {
+              showToast('Неверный номер карты', 'error');
+              return;
+            }
             try {
               const idParam = platform.vk ? 'vk_user_id' : 'telegram_id';
+              showLoading();
               const resp = await api('/api/referral/withdraw', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({[idParam]: tgId, amount: bal, method, details}),
+                body: JSON.stringify({[idParam]: tgId, amount, method: 'card', details: cardClean}),
               });
+              hideLoading();
               if (resp.ok) {
-                showToast('Заявка на вывод создана!', 'success');
+                showToast(resp.message || '✅ Выплата отправлена!', 'success');
                 loadProfile();
               } else {
-                showToast(resp.error || 'Ошибка', 'error');
+                showToast(resp.error || 'Ошибка выплаты', 'error');
               }
             } catch (e) {
+              hideLoading();
               showToast('Ошибка: ' + e.message, 'error');
             }
           });
