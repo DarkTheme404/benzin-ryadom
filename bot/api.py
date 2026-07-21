@@ -2436,6 +2436,9 @@ def setup_app() -> web.Application:
     app.router.add_post("/api/referral/withdraw", handle_referral_withdraw)
     app.router.add_get("/api/referral/withdrawals", handle_referral_withdrawals_list)
     app.router.add_post("/api/referral/withdrawals/process", handle_referral_withdrawals_process)
+    app.router.add_post("/api/internal/notify-withdrawal", handle_notify_withdrawal)
+    app.router.add_post("/api/internal/notify-withdrawal-done", handle_notify_withdrawal_done)
+    app.router.add_get("/api/admin/balances-summary", handle_balances_summary)
     app.router.add_get("/api/account/info", handle_account_info)
     app.router.add_get("/api/user/stats", handle_user_stats)
     app.router.add_post("/api/user/ensure-vk", handle_user_ensure_vk)
@@ -4338,6 +4341,210 @@ async def handle_referral_withdrawals_process(request):
     if result:
         return json_resp({"ok": True, "message": f"Withdrawal {status}"})
     return json_resp({"error": "withdrawal not found or already processed"}, status=404)
+
+
+# === Уведомления админу о заявках на вывод ===
+async def handle_notify_withdrawal(request):
+    """POST /api/internal/notify-withdrawal — уведомляет админа в TG и VK о новой заявке.
+
+    Body: {"withdrawal_id": 123, "user_id": 1, "amount": 100, "card": "..."}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    withdrawal_id = body.get("withdrawal_id")
+    user_id = body.get("user_id")
+    amount = body.get("amount")
+    card_last4 = body.get("card", "")[-4:] if body.get("card") else "????"
+    if not all([withdrawal_id, user_id, amount]):
+        return json_resp({"error": "withdrawal_id, user_id, amount required"}, status=400)
+
+    # Получаем инфо о юзере
+    from db import _fetch
+    user = await _fetch(
+        "SELECT telegram_id, vk_id, username, first_name FROM users WHERE id = $1" if not __import__("os").getenv("USE_SQLITE", "true").lower() == "true" else "SELECT telegram_id, vk_id, username, first_name FROM users WHERE id = ?",
+        user_id, one=True,
+    )
+    user_info = dict(user) if user and not __import__("os").getenv("USE_SQLITE", "true").lower() == "true" else (user if user else {})
+    fname = user_info.get("first_name") or "?"
+    uname = user_info.get("username") or "—"
+    tid = user_info.get("telegram_id")
+    vkid = user_info.get("vk_id")
+
+    text = (
+        f"💸 <b>Новая заявка на вывод #{withdrawal_id}</b>\n\n"
+        f"👤 {fname} (@{uname})\n"
+        f"🆔 TG: {tid} | VK: {vkid}\n"
+        f"💰 Сумма: <b>{amount}₽</b>\n"
+        f"💳 Карта: *{card_last4}\n\n"
+        f"Перейди в /withdrawals чтобы обработать"
+    )
+
+    # Кнопки для быстрой обработки
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"✅ #{withdrawal_id} отправил", callback_data=f"wd_paid:{withdrawal_id}"),
+            InlineKeyboardButton(text=f"❌ #{withdrawal_id} отклонить", callback_data=f"wd_reject:{withdrawal_id}"),
+        ],
+    ])
+
+    results = {"tg": None, "vk": None}
+
+    # 1. Отправляем в TG админу
+    try:
+        from config import settings
+        if settings.bot:
+            for admin_tid in settings.ADMIN_IDS:
+                try:
+                    await settings.bot.send_message(admin_tid, text, reply_markup=kb)
+                    results["tg"] = "sent"
+                    break
+                except Exception as e:
+                    logger.warning(f"TG notify failed for {admin_tid}: {e}")
+            # Если ADMIN_IDS пуст, пробуем по username
+            if results["tg"] is None and "darkt30" in (settings.ADMIN_USERNAMES or []):
+                # Найдём по username в базе
+                admin_user = await _fetch(
+                    "SELECT telegram_id FROM users WHERE username = 'darkt30' AND telegram_id IS NOT NULL LIMIT 1",
+                    one=True,
+                )
+                if admin_user:
+                    admin_tid = admin_user["telegram_id"] if not __import__("os").getenv("USE_SQLITE", "true").lower() == "true" else admin_user[0]
+                    await settings.bot.send_message(admin_tid, text, reply_markup=kb)
+                    results["tg"] = "sent"
+    except Exception as e:
+        logger.exception(f"TG notify exception: {e}")
+        results["tg"] = f"error: {e}"
+
+    # 2. Отправляем в VK админу (используем существующую инфраструктуру)
+    try:
+        import aiohttp
+        vk_group_token = __import__("os").getenv("VK_GROUP_TOKEN", "")
+        if vk_group_token and vkid:
+            # Используем VK API чтобы отправить ЛС админу
+            async with aiohttp.ClientSession() as s:
+                vk_text = (
+                    f"💸 Новая заявка на вывод #{withdrawal_id}\n\n"
+                    f"👤 {fname} (@{uname})\n"
+                    f"🆔 VK: {vkid}\n"
+                    f"💰 Сумма: {amount}₽\n"
+                    f"💳 Карта: *{card_last4}\n\n"
+                    f"Обработай в /withdrawals в TG-боте"
+                )
+                # VK keyboard (простой текст, без кнопок — кнопки в TG)
+                async with s.post("https://api.vk.com/method/messages.send", params={
+                    "user_id": vkid,
+                    "message": vk_text,
+                    "access_token": vk_group_token,
+                    "v": "5.199",
+                    "random_id": 0,
+                }) as r:
+                    resp = await r.json()
+                    results["vk"] = resp
+    except Exception as e:
+        logger.exception(f"VK notify exception: {e}")
+        results["vk"] = f"error: {e}"
+
+    return json_resp({"ok": True, "results": results})
+
+
+async def handle_notify_withdrawal_done(request):
+    """POST /api/internal/notify-withdrawal-done — уведомляет юзера что выплата отправлена.
+
+    Body: {"telegram_id": 123, "vk_id": 456, "amount": 100, "card_last4": "3280"}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    tid = body.get("telegram_id")
+    vkid = body.get("vk_id")
+    amount = body.get("amount")
+    card_last4 = body.get("card_last4", "????")
+    if not amount:
+        return json_resp({"error": "amount required"}, status=400)
+
+    text = (
+        f"✅ <b>Выплата отправлена!</b>\n\n"
+        f"💰 {amount}₽ на карту *{card_last4}\n"
+        f"Деньги должны поступить в течение нескольких минут.\n\n"
+        f"Спасибо что с нами! 🎉"
+    )
+
+    results = {"tg": None, "vk": None}
+
+    # 1. TG
+    if tid:
+        try:
+            from config import settings
+            if settings.bot:
+                await settings.bot.send_message(tid, text)
+                results["tg"] = "sent"
+        except Exception as e:
+            logger.warning(f"TG done notify failed: {e}")
+            results["tg"] = f"error: {e}"
+
+    # 2. VK
+    if vkid:
+        try:
+            import aiohttp
+            vk_group_token = __import__("os").getenv("VK_GROUP_TOKEN", "")
+            if vk_group_token:
+                async with aiohttp.ClientSession() as s:
+                    async with s.post("https://api.vk.com/method/messages.send", params={
+                        "user_id": vkid,
+                        "message": text.replace("<b>", "").replace("</b>", ""),
+                        "access_token": vk_group_token,
+                        "v": "5.199",
+                        "random_id": 0,
+                    }) as r:
+                        resp = await r.json()
+                        results["vk"] = resp
+        except Exception as e:
+            logger.warning(f"VK done notify failed: {e}")
+            results["vk"] = f"error: {e}"
+
+    return json_resp({"ok": True, "results": results})
+
+
+async def handle_balances_summary(request):
+    """GET /api/admin/balances-summary — сводка по балансам всех рефереров (admin only)."""
+    admin_token = request.headers.get("X-Admin-Token", "")
+    if admin_token != os.environ.get("ADMIN_TOKEN", ""):
+        return json_resp({"error": "forbidden"}, status=403)
+    from db import _fetch
+    if not __import__("os").getenv("USE_SQLITE", "true").lower() == "true":
+        async with __import__("db")._db.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT u.id, u.telegram_id, u.vk_id, u.username, u.first_name,
+                       rb.balance, rb.total_earned, rb.total_withdrawn,
+                       (SELECT COUNT(*) FROM referral_relationships WHERE referrer_user_id = u.id) AS ref_count
+                FROM referral_balances rb
+                LEFT JOIN users u ON u.id = rb.user_id
+                WHERE rb.balance > 0
+                ORDER BY rb.balance DESC
+            """)
+            total = await conn.fetchval("SELECT COALESCE(SUM(balance), 0) FROM referral_balances")
+        users = [dict(r) for r in rows]
+    else:
+        users = await _fetch("""
+            SELECT u.id, u.telegram_id, u.vk_id, u.username, u.first_name,
+                   rb.balance, rb.total_earned, rb.total_withdrawn,
+                   (SELECT COUNT(*) FROM referral_relationships WHERE referrer_user_id = u.id) AS ref_count
+            FROM referral_balances rb
+            LEFT JOIN users u ON u.id = rb.user_id
+            WHERE rb.balance > 0
+            ORDER BY rb.balance DESC
+        """)
+        total_row = await _fetch("SELECT COALESCE(SUM(balance), 0) AS total FROM referral_balances", one=True)
+        total = total_row["total"] if total_row else 0
+    return json_resp({
+        "total_balance": int(total or 0),
+        "users_count": len(users),
+        "users": users,
+    })
 
 
 async def handle_fuel_alarm_list(request):

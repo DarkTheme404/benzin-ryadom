@@ -3586,21 +3586,15 @@ async def get_referred_users_list(referrer_user_id: int) -> list[dict]:
 
 
 async def request_withdrawal(user_id: int, amount: int, method: str, details: str) -> dict:
-    """Создаёт заявку на вывод и сразу делает автовывод через YooMoney на карту.
-
-    Только метод 'card' (по номеру карты 16 цифр).
-    При успешном переводе заявка сразу становится 'paid'.
-    При ошибке перевода — баланс возвращается, статус 'failed'.
+    """Создаёт заявку на вывод: сначала пробует автовывод через YooMoney API,
+    при ошибке — fallback на полуавтомат (pending + уведомление админу).
     """
-    from yoomoney_pay import payout_to_card, confirm_payout, is_configured as ym_configured
+    from yoomoney_pay import is_configured as ym_configured, payout_to_card, confirm_payout
 
     if method != "card":
         return {"ok": False, "error": "only_card_method_supported"}
-
     if amount < 100:
         return {"ok": False, "error": "minimum_withdrawal_100"}
-
-    # Валидация номера карты
     card_clean = details.replace(" ", "").replace("-", "")
     if not card_clean.isdigit() or len(card_clean) < 13 or len(card_clean) > 19:
         return {"ok": False, "error": "invalid_card_number"}
@@ -3609,35 +3603,150 @@ async def request_withdrawal(user_id: int, amount: int, method: str, details: st
     if balance["balance"] < amount:
         return {"ok": False, "error": "insufficient_balance"}
 
-    # YooMoney не настроен — fallback на старую логику (заявка pending)
+    # Если YooMoney не настроен — сразу manual
     if not ym_configured():
+        return await request_withdrawal_manual(user_id, amount, method, card_clean)
+
+    # Пробуем автовывод
+    if USE_SQLITE:
+        async with _db.execute(
+            "UPDATE referral_balances SET balance = balance - ?, updated_at = datetime('now') WHERE user_id = ? AND balance >= ?",
+            (amount, user_id, amount),
+        ) as cur:
+            await _db.commit()
+            if cur.rowcount == 0:
+                return {"ok": False, "error": "insufficient_balance"}
+    else:
+        async with _db.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE referral_balances SET balance = balance - $1, updated_at = NOW() WHERE user_id = $2 AND balance >= $1",
+                amount, user_id,
+            )
+            if result == "UPDATE 0":
+                return {"ok": False, "error": "insufficient_balance"}
+
+    # Создаём pending заявку
+    if USE_SQLITE:
+        cur = await _db.execute(
+            """INSERT INTO referral_withdrawals (user_id, amount, method, details, status)
+               VALUES (?, ?, ?, ?, 'pending')""",
+            (user_id, amount, method, card_clean),
+        )
+        await _db.commit()
+        withdrawal_id = cur.lastrowid
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO referral_withdrawals (user_id, amount, method, details, status)
+                   VALUES ($1, $2, $3, $4, 'pending') RETURNING id""",
+                user_id, amount, method, card_clean,
+            )
+            withdrawal_id = row["id"]
+
+    # Пробуем автовывод
+    payout_result = await payout_to_card(
+        card_number=card_clean,
+        amount=amount,
+        comment=f"Withdrawal #{withdrawal_id}",
+    )
+
+    if not payout_result.get("ok"):
+        # Автовывод не сработал — откатываем, fallback на manual
         if USE_SQLITE:
-            async with _db.execute(
-                "UPDATE referral_balances SET balance = balance - ?, updated_at = datetime('now') WHERE user_id = ? AND balance >= ?",
-                (amount, user_id, amount),
-            ) as cur:
-                await _db.commit()
-                if cur.rowcount == 0:
-                    return {"ok": False, "error": "insufficient_balance"}
             await _execute(
-                """INSERT INTO referral_withdrawals (user_id, amount, method, details)
-                   VALUES (?, ?, ?, ?)""",
-                user_id, amount, method, details,
+                """UPDATE referral_withdrawals SET status = 'failed', processed_at = datetime('now')
+                   WHERE id = ?""",
+                withdrawal_id,
+            )
+            await _execute(
+                """UPDATE referral_balances SET balance = balance + ?, updated_at = datetime('now')
+                   WHERE user_id = ?""",
+                amount, user_id,
             )
         else:
             async with _db.acquire() as conn:
-                result = await conn.execute(
-                    "UPDATE referral_balances SET balance = balance - $1, updated_at = NOW() WHERE user_id = $2 AND balance >= $1",
+                await conn.execute(
+                    """UPDATE referral_withdrawals SET status = 'failed', processed_at = NOW()
+                       WHERE id = $1""",
+                    withdrawal_id,
+                )
+                await conn.execute(
+                    """UPDATE referral_balances SET balance = balance + $1, updated_at = NOW()
+                       WHERE user_id = $2""",
                     amount, user_id,
                 )
-                if result == "UPDATE 0":
-                    return {"ok": False, "error": "insufficient_balance"}
+        # Создаём новую заявку в manual режиме
+        manual = await request_withdrawal_manual(user_id, amount, method, card_clean)
+        if manual.get("ok"):
+            manual["auto_payout_error"] = payout_result.get("error")
+        return manual
+
+    # Подтверждаем платёж
+    request_id = payout_result.get("request_id")
+    confirm_result = await confirm_payout(request_id)
+
+    if not confirm_result.get("ok"):
+        if USE_SQLITE:
+            await _execute(
+                """UPDATE referral_withdrawals SET status = 'failed', processed_at = datetime('now')
+                   WHERE id = ?""",
+                withdrawal_id,
+            )
+            await _execute(
+                """UPDATE referral_balances SET balance = balance + ?, updated_at = datetime('now')
+                   WHERE user_id = ?""",
+                amount, user_id,
+            )
+        else:
+            async with _db.acquire() as conn:
                 await conn.execute(
-                    """INSERT INTO referral_withdrawals (user_id, amount, method, details)
-                       VALUES ($1, $2, $3, $4)""",
-                    user_id, amount, method, details,
+                    """UPDATE referral_withdrawals SET status = 'failed', processed_at = NOW()
+                       WHERE id = $1""",
+                    withdrawal_id,
                 )
-        return {"ok": True, "message": "Заявка создана (YooMoney не настроен, обработает админ)"}
+                await conn.execute(
+                    """UPDATE referral_balances SET balance = balance + $1, updated_at = NOW()
+                       WHERE user_id = $2""",
+                    amount, user_id,
+                )
+        manual = await request_withdrawal_manual(user_id, amount, method, card_clean)
+        if manual.get("ok"):
+            manual["auto_payout_error"] = confirm_result.get("error")
+        return manual
+
+    # Успех! paid + total_withdrawn
+    if USE_SQLITE:
+        await _execute(
+            """UPDATE referral_withdrawals SET status = 'paid', processed_at = datetime('now')
+               WHERE id = ?""",
+            withdrawal_id,
+        )
+        await _execute(
+            """UPDATE referral_balances SET total_withdrawn = total_withdrawn + ?
+               WHERE user_id = ?""",
+            amount, user_id,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                """UPDATE referral_withdrawals SET status = 'paid', processed_at = NOW()
+                   WHERE id = $1""",
+                withdrawal_id,
+            )
+            await conn.execute(
+                """UPDATE referral_balances SET total_withdrawn = total_withdrawn + $1
+                   WHERE user_id = $2""",
+                amount, user_id,
+            )
+
+    return {
+        "ok": True,
+        "message": f"✅ Выплата {amount}₽ на карту *{card_clean[-4:]} успешно отправлена!",
+        "withdrawal_id": withdrawal_id,
+        "amount": amount,
+        "card_last4": card_clean[-4:],
+        "auto": True,
+    }
 
     # === Автовывод через YooMoney ===
     # 1. Списываем баланс атомарно
@@ -3780,6 +3889,120 @@ async def request_withdrawal(user_id: int, amount: int, method: str, details: st
         "amount": amount,
         "card_last4": card_clean[-4:],
     }
+
+
+async def request_withdrawal_manual(user_id: int, amount: int, method: str, details: str) -> dict:
+    """Полуавтоматический вывод: списывает баланс, создаёт pending заявку,
+    и возвращает withdrawal_id. Админу отправляется уведомление через API.
+    Юзеру — отдельное уведомление "в обработке".
+
+    Используется когда YooMoney API не настроен (нет прав payment-p2p).
+    """
+    if method != "card":
+        return {"ok": False, "error": "only_card_method_supported"}
+
+    if amount < 100:
+        return {"ok": False, "error": "minimum_withdrawal_100"}
+
+    card_clean = details.replace(" ", "").replace("-", "")
+    if not card_clean.isdigit() or len(card_clean) < 13 or len(card_clean) > 19:
+        return {"ok": False, "error": "invalid_card_number"}
+
+    balance = await get_referral_balance(user_id)
+    if balance["balance"] < amount:
+        return {"ok": False, "error": "insufficient_balance"}
+
+    # Атомарно списываем баланс
+    if USE_SQLITE:
+        async with _db.execute(
+            "UPDATE referral_balances SET balance = balance - ?, updated_at = datetime('now') WHERE user_id = ? AND balance >= ?",
+            (amount, user_id, amount),
+        ) as cur:
+            await _db.commit()
+            if cur.rowcount == 0:
+                return {"ok": False, "error": "insufficient_balance"}
+        cur = await _db.execute(
+            """INSERT INTO referral_withdrawals (user_id, amount, method, details, status)
+               VALUES (?, ?, ?, ?, 'pending')""",
+            (user_id, amount, method, card_clean),
+        )
+        await _db.commit()
+        withdrawal_id = cur.lastrowid
+    else:
+        async with _db.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE referral_balances SET balance = balance - $1, updated_at = NOW() WHERE user_id = $2 AND balance >= $1",
+                amount, user_id,
+            )
+            if result == "UPDATE 0":
+                return {"ok": False, "error": "insufficient_balance"}
+            row = await conn.fetchrow(
+                """INSERT INTO referral_withdrawals (user_id, amount, method, details, status)
+                   VALUES ($1, $2, $3, $4, 'pending') RETURNING id""",
+                user_id, amount, method, card_clean,
+            )
+            withdrawal_id = row["id"]
+
+    # Уведомляем админа (не блокируем основной поток)
+    try:
+        await notify_admin_new_withdrawal(withdrawal_id, user_id, amount, card_clean[-4:])
+    except Exception as e:
+        logger.warning(f"admin notify failed: {e}")
+
+    return {
+        "ok": True,
+        "message": f"✅ Заявка #{withdrawal_id} принята! Выплата в течение 24 часов на карту *{card_clean[-4:]}",
+        "withdrawal_id": withdrawal_id,
+        "amount": amount,
+        "card_last4": card_clean[-4:],
+        "user_id": user_id,
+    }
+
+
+async def notify_admin_new_withdrawal(withdrawal_id: int, user_id: int, amount: int, card_last4: str) -> None:
+    """Шлёт уведомление админу в TG и VK о новой заявке на вывод.
+    Вызывается после request_withdrawal_manual.
+    """
+    import os
+    import aiohttp
+    backend = os.environ.get("BACKEND_URL", "https://benzin-ryadom.onrender.com")
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{backend}/api/internal/notify-withdrawal",
+                json={
+                    "withdrawal_id": withdrawal_id,
+                    "user_id": user_id,
+                    "amount": amount,
+                    "card": card_last4,
+                },
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                await r.read()
+    except Exception as e:
+        logger.warning(f"notify_admin_new_withdrawal failed: {e}")
+
+
+async def notify_user_withdrawal_done(telegram_id: int = None, vk_id: int = None, amount: int = 0, card_last4: str = "????") -> None:
+    """Шлёт юзеру уведомление что выплата отправлена."""
+    import os
+    import aiohttp
+    backend = os.environ.get("BACKEND_URL", "https://benzin-ryadom.onrender.com")
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{backend}/api/internal/notify-withdrawal-done",
+                json={
+                    "telegram_id": telegram_id,
+                    "vk_id": vk_id,
+                    "amount": amount,
+                    "card_last4": card_last4,
+                },
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                await r.read()
+    except Exception as e:
+        logger.warning(f"notify_user_withdrawal_done failed: {e}")
 
 
 async def get_pending_withdrawals() -> list[dict]:

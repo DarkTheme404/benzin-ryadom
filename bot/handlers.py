@@ -4349,7 +4349,7 @@ async def cmd_withdrawals(message: Message):
 
 
 async def wd_process_callback(callback: CallbackQuery):
-    """Обработка кнопок ✅/❌ для заявки на вывод."""
+    """Обработка кнопок ✅/❌ для заявки на вывод. Уведомляет юзера после paid."""
     if not settings.is_admin(user_id=callback.from_user.id, username=callback.from_user.username):
         await callback.answer("⛔ Только для админа", show_alert=True)
         return
@@ -4363,24 +4363,90 @@ async def wd_process_callback(callback: CallbackQuery):
     except ValueError:
         await callback.answer("Некорректный ID")
         return
+
+    # Получаем заявку ДО обработки чтобы узнать юзера
+    from db import _fetch
+    w = await _fetch(
+        "SELECT rw.*, u.telegram_id, u.vk_id FROM referral_withdrawals rw LEFT JOIN users u ON u.id = rw.user_id WHERE rw.id = $1"
+        if not (os.environ.get("USE_SQLITE", "true").lower() == "true")
+        else "SELECT rw.*, u.telegram_id, u.vk_id FROM referral_withdrawals rw LEFT JOIN users u ON u.id = rw.user_id WHERE rw.id = ?",
+        wid, one=True,
+    )
+    if not w:
+        await callback.answer("❌ Заявка не найдена", show_alert=True)
+        return
+    w_info = dict(w) if not (os.environ.get("USE_SQLITE", "true").lower() == "true") else w
+
     from db import process_withdrawal
     if action == "wd_paid":
         result = await process_withdrawal(wid, "paid")
         if result:
-            await callback.answer("✅ Заявка отмечена как оплаченная", show_alert=True)
+            await callback.answer(f"✅ #{wid} отмечена как оплаченная. Юзер уведомлён.", show_alert=True)
+            # Уведомляем юзера
+            try:
+                from db import notify_user_withdrawal_done
+                await notify_user_withdrawal_done(
+                    telegram_id=w_info.get("telegram_id"),
+                    vk_id=w_info.get("vk_id"),
+                    amount=w_info.get("amount", 0),
+                    card_last4=(w_info.get("details", "") or "")[-4:],
+                )
+            except Exception as e:
+                logger.warning(f"notify user failed: {e}")
         else:
             await callback.answer("❌ Не удалось обновить заявку", show_alert=True)
     elif action == "wd_reject":
         result = await process_withdrawal(wid, "rejected")
         if result:
-            await callback.answer("❌ Заявка отклонена (баланс возвращён)", show_alert=True)
+            await callback.answer(f"❌ #{wid} отклонена. Баланс возвращён юзеру.", show_alert=True)
         else:
             await callback.answer("❌ Не удалось обновить заявку", show_alert=True)
-    # Обновим сообщение (убираем кнопки)
+    # Убираем кнопки
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
+
+
+# === Admin: сводка по балансам ===
+async def cmd_admin_money(message: Message):
+    """Показывает сколько денег на балансах всех юзеров для вывода."""
+    if not settings.is_admin(user_id=message.from_user.id, username=message.from_user.username):
+        await message.answer("⛔ Только для администраторов.")
+        return
+    import aiohttp
+    backend = settings.BACKEND_URL
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/admin/balances-summary",
+                headers={"X-Admin-Token": admin_token},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+    except Exception as e:
+        await message.answer(f"❌ Ошибка запроса: {e}")
+        return
+
+    total = data.get("total_balance", 0)
+    users = data.get("users", [])
+    count = data.get("users_count", 0)
+
+    text = f"💰 <b>Сводка по балансам</b>\n\n"
+    text += f"👥 Юзеров с балансом: <b>{count}</b>\n"
+    text += f"💸 Всего к выплате: <b>{total}₽</b>\n\n"
+    if users:
+        text += "<b>Топ юзеров:</b>\n"
+        for u in users[:15]:
+            tid = u.get("telegram_id") or "—"
+            vkid = u.get("vk_id") or "—"
+            uname = u.get("username") or "—"
+            fname = u.get("first_name") or "?"
+            bal = u.get("balance", 0)
+            ref_c = u.get("ref_count", 0)
+            text += f"  • {fname} (@{uname}) TG:{tid} VK:{vkid} — <b>{bal}₽</b> ({ref_c} реф)\n"
+    await message.answer(text, reply_markup=main_menu_keyboard())
 
 
 # === Баг-репорт ===
@@ -4428,6 +4494,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.message.register(cmd_my_id, Command("my_id"))
     dp.message.register(cmd_find_raw, Command("find_raw"))
     dp.message.register(cmd_withdrawals, Command("withdrawals"))
+    dp.message.register(cmd_admin_money, Command("admin_money"))
 
     # FSM: подписки
     dp.message.register(handle_location, F.location, StateFilter(SubscribeStates.waiting_geo))
