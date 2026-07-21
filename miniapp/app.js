@@ -1311,7 +1311,7 @@
         }),
       });
       if (resp.error === 'elite_required') {
-        showUpsell('sos_elite');
+        showUpsell({feature:'sos_elite'});
         return;
       }
       if (resp.ok) {
@@ -2229,7 +2229,9 @@
         ]);
         if (codeRes && codeRes.code) {
           const codeEl = document.getElementById('referral-code');
-          const refLink = `https://t.me/benzyn_ryadom_bot?start=ref_${codeRes.code}`;
+          const refLink = platform.vk
+            ? `https://vk.com/benzyn_ryadom?start=ref_${codeRes.code}`
+            : `https://t.me/benzyn_ryadom_bot?start=ref_${codeRes.code}`;
           if (codeEl) codeEl.textContent = refLink;
         }
 
@@ -2289,15 +2291,22 @@
             if (textsEl) {
               let html = '<div style="font-weight:700;font-size:14px;margin-bottom:8px;">📝 Продающие тексты:</div>';
               textsRes.texts.forEach(t => {
+                const safeText = escape(t.text).replace(/'/g, '&#39;');
                 html += `<div style="background:var(--bg-card);border-radius:10px;padding:10px;margin-bottom:8px;">
-                  <div style="font-weight:600;font-size:12px;margin-bottom:4px;">${t.platform}</div>
-                  <div style="font-size:12px;color:var(--text-secondary);white-space:pre-wrap;">${t.text}</div>
-                  <button class="btn btn-secondary" style="margin-top:6px;padding:6px 12px;font-size:11px;border-radius:8px;"
-                    onclick="navigator.clipboard.writeText(\`${t.text.replace(/`/g,"'")}\`).then(()=>showToast('Скопировано!','success'))">Копировать</button>
+                  <div style="font-weight:600;font-size:12px;margin-bottom:4px;">${escape(t.platform)}</div>
+                  <div style="font-size:12px;color:var(--text-secondary);white-space:pre-wrap;">${escape(t.text)}</div>
+                  <button class="btn btn-secondary ref-copy-btn" style="margin-top:6px;padding:6px 12px;font-size:11px;border-radius:8px;"
+                    data-copy="${safeText}">Копировать</button>
                 </div>`;
               });
               textsEl.innerHTML = html;
               textsEl.style.display = 'block';
+              textsEl.querySelectorAll('.ref-copy-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                  const txt = btn.getAttribute('data-copy').replace(/&#39;/g, "'");
+                  navigator.clipboard.writeText(txt).then(() => showToast('Скопировано!', 'success')).catch(() => {});
+                });
+              });
             }
           }
 
@@ -2310,7 +2319,7 @@
               list.innerHTML = referred.map(r => `
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg-card);border-radius:10px;margin-bottom:6px;">
                   <div>
-                    <div style="font-size:13px;font-weight:600;">${r.name || 'Пользователь'}</div>
+                    <div style="font-size:13px;font-weight:600;">${escape(r.name || 'Пользователь')}</div>
                     <div style="font-size:11px;color:var(--text-secondary);">${r.payment_count || 0} оплат</div>
                   </div>
                   <div style="font-size:14px;font-weight:700;color:#f59e0b;">${r.total_commission || 0}₽</div>
@@ -2319,6 +2328,10 @@
             }
           }
         }
+
+        // Bind referral event listeners only once
+        if (!window._referralListenersBound) {
+          window._referralListenersBound = true;
 
         // Withdraw button
         const withdrawBtn = document.getElementById('btn-withdraw');
@@ -2357,7 +2370,9 @@
         if (shareBtn) {
           shareBtn.addEventListener('click', () => {
             const code = codeRes?.code || '';
-            const refLink = `https://t.me/benzyn_ryadom_bot?start=ref_${code}`;
+            const refLink = platform.vk
+              ? `https://vk.com/benzyn_ryadom?start=ref_${code}`
+              : `https://t.me/benzyn_ryadom_bot?start=ref_${code}`;
             const text = `🎁 Перейди по ссылке — получи 15% скидку на Premium!\n${refLink}`;
             if (navigator.share) {
               navigator.share({ text }).catch(() => {});
@@ -2407,7 +2422,8 @@
             }
           });
         }
-      }
+        } // end if (!_referralListenersBound)
+      } // end if (tgId)
     } catch (e) {
       console.error('loadReferral error:', e);
     }
@@ -3625,7 +3641,13 @@
         body: JSON.stringify({ [idParam]: uid, tier: tier }),
       });
       if (res.ok && res.payment_url) {
-        window.open(res.payment_url, '_blank');
+        if (platform.vk && window.vkBridge) {
+          vkBridge.send('VKWebAppOpenLink', { url: res.payment_url });
+        } else if (window.Telegram && Telegram.WebApp) {
+          Telegram.WebApp.openLink(res.payment_url);
+        } else {
+          window.open(res.payment_url, '_blank');
+        }
         showToast('Перейдите по ссылке для оплаты', 'info');
       } else {
         showToast('Ошибка: ' + (res.error || 'YooMoney не настроен'), 'error');
