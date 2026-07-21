@@ -1788,29 +1788,77 @@ async def cmd_referral(message: Message):
 
     is_elite = prem_data.get("active") and prem_data.get("tier") in ("elite", "founder")
 
+    # Получаем данные о тире
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/referral/tier",
+                params={"telegram_id": telegram_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                tier_data = await r.json()
+    except Exception:
+        tier_data = {"tier": "basic", "active_referrals": 0, "commission": 50, "is_top3": False}
+
+    tier = tier_data.get("tier", "basic")
+    active_refs = tier_data.get("active_referrals", 0)
+    commission = tier_data.get("commission", 50)
+    is_top3 = tier_data.get("is_top3", False)
+    next_tier = tier_data.get("next_tier")
+
+    tier_names = {
+        "basic": "Базовый", "ambassador": "Посол",
+        "top_ref": "Топ-реферер", "legend": "Легенда",
+    }
+
+    tier_text = f"🎯 <b>Тир:</b> {tier_names.get(tier, tier)}"
+    if is_top3:
+        tier_text += " 🏆 + топ-3!"
+
+    if next_tier:
+        tier_text += f"\n📈 До «{next_tier['name']}» осталось {next_tier['need']} активных рефералов"
+
+    if is_elite:
+        commission_text = (
+            f"💰 Комиссия: <b>{commission}%</b> с каждой оплаты реферала\n"
+            f"(50/55/60/65% в зависимости от тира, 70% для топ-3)\n"
+            f"5% со второго уровня (рефералы твоих рефералов)\n"
+            f"3% с третьего уровня (только для топ-3)"
+        )
+    else:
+        commission_text = (
+            "⚠️ <i>Комиссия начисляется только для Elite и Founder. "
+            "Сейчас ты можешь приглашать, но заработок начнётся после покупки Elite.</i>"
+        )
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📤 Поделиться кодом", switch_inline_query=code)],
-        [InlineKeyboardButton(text="🌐 Mini App", web_app=WebAppInfo(url=settings.BACKEND_URL))],
+        [InlineKeyboardButton(text="📋 Продающие тексты", callback_data="ref_selling_texts")],
+        [InlineKeyboardButton(text="📚 Как заработать", callback_data="ref_training")],
+        [InlineKeyboardButton(text="🏆 Топ рефереров", callback_data="leaderboard")],
     ])
 
+    # Список приглашённых
     referred_text = ""
     for r in referred[:5]:
         referred_text += f"  • {r.get('name', '?')} — {r.get('total_commission', 0)}₽ ({r.get('payment_count', 0)} оплат)\n"
     if len(referred) > 5:
         referred_text += f"  ... и ещё {len(referred) - 5}\n"
 
-    if is_elite:
-        commission_text = "Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!"
-    else:
-        commission_text = (
-            "Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!\n"
-            "⚠️ <i>Комиссия начисляется только для Elite и Founder. "
-            "Сейчас ты можешь приглашать, но заработок начнётся после покупки Elite.</i>"
-        )
+    # Калькулятор (упрощённый)
+    calc_lines = ""
+    if not is_elite:
+        examples = [(5, 50), (20, 50), (50, 55), (100, 60), (200, 65)]
+        calc_lines = "\n<b>📊 Калькулятор дохода:</b>\n"
+        for n_refs, rate in examples:
+            monthly = int(n_refs * 250 * rate / 100)
+            calc_lines += f"  {n_refs} рефералов × {rate}% = ~{monthly}₽/мес\n"
+        calc_lines += "\n💡 <i>Приглашай друзей — Elite быстро окупается!</i>"
 
     await message.answer(
         f"🎁 <b>Реферальная программа</b>\n\n"
-        f"{commission_text}\n"
+        f"{commission_text}\n\n"
+        f"{tier_text}\n\n"
         f"Твой друг получит <b>15% скидку</b> на первую покупку.\n\n"
         f"<b>Твоя ссылка:</b>\n{link}\n\n"
         f"<b>💰 Баланс:</b> {balance.get('balance', 0)}₽\n"
@@ -1819,14 +1867,106 @@ async def cmd_referral(message: Message):
         f"<b>Статистика:</b>\n"
         f"👥 Приглашено: {stats.get('total', 0)}\n"
         f"✅ Активировали: {stats.get('completed', 0)}\n\n"
-        f"<b>Твои приглашённые:</b>\n{referred_text if referred_text else '  Пока никого не пригласил\n'}\n\n"
-        f"<b>Как это работает:</b>\n"
-        f"1. Отправь ссылку другу\n"
-        f"2. Друг переходит по ссылке\n"
-        f"3. Ты получаешь 50% от каждой его оплаты!\n\n"
-        f"💡 Вывод средств — в Mini App",
+        f"<b>Твои приглашённые:</b>\n{referred_text if referred_text else '  Пока никого не пригласил\n'}\n"
+        f"{calc_lines}",
         reply_markup=kb,
     )
+
+
+async def ref_selling_texts_callback(callback: CallbackQuery):
+    """Продающие тексты для копирования."""
+    telegram_id = _tg_id(callback.message)
+    import aiohttp
+    backend = settings.BACKEND_URL
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/referral/selling-texts",
+                params={"telegram_id": telegram_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+    except Exception:
+        data = {"texts": []}
+
+    texts = data.get("texts", [])
+    if not texts:
+        await callback.answer("Нет текстов", show_alert=True)
+        return
+
+    lines = ["📝 <b>Продающие тексты</b> (нажми и скопируй):\n"]
+    for t in texts:
+        lines.append(f"<b>{t['platform']}:</b>\n<i>{t['text']}</i>\n")
+    lines.append("💡 Отправляй друзьям в мессенджерах, группах, соцсетях!")
+
+    await callback.message.answer("\n".join(lines), parse_mode="HTML")
+    await callback.answer()
+
+
+async def ref_training_callback(callback: CallbackQuery):
+    """Обучающий блок — как заработать на рефералах."""
+    text = (
+        "📚 <b>Как заработать на реферальной программе</b>\n\n"
+        "<b>Шаг 1: Кого приглашать</b>\n"
+        "• Водителей в своём городе\n"
+        "• Друзей, которые жалуются на цены на бензин\n"
+        "• В чатах/группах про авто\n\n"
+        "<b>Шаг 2: Где делиться ссылкой</b>\n"
+        "• WhatsApp/Telegram группы\n"
+        "• VK группы про авто\n"
+        "• Личные сообщения\n"
+        "• В комментариях к постам о бензине\n\n"
+        "<b>Шаг 3: Что писать</b>\n"
+        "• Скажи про экономию (~500₽/мес)\n"
+        "• Покажи сколько АЗС рядом\n"
+        "• Скинь ссылку\n\n"
+        "<b>Шаг 4: Когда делиться</b>\n"
+        "• Утром (люди едут на работу)\n"
+        "• Когда бензин дорожает (новости)\n"
+        "• Выходные (планируют поездки)\n\n"
+        "<b>💰 Сколько зарабатываешь:</b>\n"
+        "• 50% от каждой оплаты реферала (базовый тир)\n"
+        "• 55% при 50 активных рефералах\n"
+        "• 60% при 100\n"
+        "• 65% при 200+\n"
+        "• 70% если вошёл в топ-3 месяца!\n\n"
+        "💡 <i>Приглашай 5-10 друзей — уже 1250-2500₽/мес!</i>"
+    )
+    await callback.message.answer(text, parse_mode="HTML")
+    await callback.answer()
+
+
+async def leaderboard_callback(callback: CallbackQuery):
+    """Топ рефереров (callback)."""
+    import aiohttp
+    backend = settings.BACKEND_URL
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/referral/leaderboard",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+    except Exception:
+        data = {"leaderboard": []}
+
+    top = data.get("leaderboard", [])
+    if not top:
+        await callback.answer("Пока нет данных. Будь первым!", show_alert=True)
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines = ["🏆 <b>Топ рефереров</b>\n"]
+    for i, r in enumerate(top):
+        medal = medals[i] if i < 3 else f"  {i+1}."
+        lines.append(
+            f"{medal} {r.get('name', 'User')} — "
+            f"💰 {r.get('total_earned', 0)}₽ "
+            f"({r.get('referral_count', 0)} рефералов)"
+        )
+
+    await callback.message.answer("\n".join(lines), parse_mode="HTML")
+    await callback.answer()
 
 
 async def cmd_leaderboard(message: Message):
@@ -4265,6 +4405,11 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(link_confirm_callback, F.data.startswith("link_confirm:"))
     dp.callback_query.register(link_reject_callback, F.data.startswith("link_reject:"))
     dp.message.register(link_url_input_handler, StateFilter(LinkStates.waiting_vk_url))
+
+    # Реферальные callbacks
+    dp.callback_query.register(ref_selling_texts_callback, F.data == "ref_selling_texts")
+    dp.callback_query.register(ref_training_callback, F.data == "ref_training")
+    dp.callback_query.register(leaderboard_callback, F.data == "leaderboard")
 
     # IMPORTANT: handle_main_button должен быть ПОСЛЕДНИМ —
     # он перехватывает все текстовые сообщения.

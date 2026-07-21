@@ -2216,14 +2216,16 @@
       console.error('loadSavings error:', e);
     }
 
-    // Load referral data (balance + earnings)
+    // Load referral data (balance + earnings + tier + selling texts)
     try {
       const tgId = getTgId();
       if (tgId) {
         const idParam = platform.vk ? `vk_user_id=${tgId}` : `telegram_id=${tgId}`;
-        const [codeRes, balanceRes] = await Promise.all([
+        const [codeRes, balanceRes, tierRes, textsRes] = await Promise.all([
           api(`/api/referral/code?${idParam}`).catch(() => null),
           api(`/api/referral/balance?${idParam}`).catch(() => null),
+          api(`/api/referral/tier?${idParam}`).catch(() => null),
+          api(`/api/referral/selling-texts?${idParam}`).catch(() => null),
         ]);
         if (codeRes && codeRes.code) {
           const codeEl = document.getElementById('referral-code');
@@ -2254,6 +2256,50 @@
           if (totalEl) totalEl.textContent = stats.total || 0;
           if (completedEl) completedEl.textContent = stats.completed || 0;
           if (earningsEl) earningsEl.textContent = (bal.total_earned || 0) + '₽';
+
+          // Tier display
+          if (tierRes && tierRes.ok) {
+            const tierEl = document.getElementById('ref-tier-info');
+            const tierNames = {basic: 'Базовый', ambassador: 'Посол', top_ref: 'Топ-реферер', legend: 'Легенда'};
+            if (tierEl) {
+              let tierHtml = `<div style="font-weight:700;font-size:15px;margin-bottom:6px;">🎯 Тир: ${tierNames[tierRes.tier] || 'Базовый'}</div>`;
+              tierHtml += `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:4px;">Комиссия: ${tierRes.commission}%</div>`;
+              if (tierRes.is_top3) tierHtml += `<div style="font-size:13px;color:#f59e0b;">🏆 Топ-3 за месяц!</div>`;
+              if (tierRes.next_tier) tierHtml += `<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">До «${tierRes.next_tier.name}»: ${tierRes.next_tier.need} рефералов</div>`;
+              tierEl.innerHTML = tierHtml;
+              tierEl.style.display = 'block';
+            }
+
+            // Calculator (for non-elite)
+            const calcEl = document.getElementById('ref-calc');
+            if (calcEl) {
+              const examples = [[5,50],[20,50],[50,55],[100,60],[200,65]];
+              let calcHtml = '<div style="font-weight:700;font-size:14px;margin-bottom:6px;">📊 Калькулятор дохода:</div>';
+              examples.forEach(([n, rate]) => {
+                calcHtml += `<div style="font-size:12px;color:var(--text-secondary);">${n} рефералов × ${rate}% = ~${Math.floor(n*250*rate/100)}₽/мес</div>`;
+              });
+              calcEl.innerHTML = calcHtml;
+              calcEl.style.display = 'block';
+            }
+          }
+
+          // Selling texts
+          if (textsRes && textsRes.ok && textsRes.texts) {
+            const textsEl = document.getElementById('ref-selling-texts');
+            if (textsEl) {
+              let html = '<div style="font-weight:700;font-size:14px;margin-bottom:8px;">📝 Продающие тексты:</div>';
+              textsRes.texts.forEach(t => {
+                html += `<div style="background:var(--bg-card);border-radius:10px;padding:10px;margin-bottom:8px;">
+                  <div style="font-weight:600;font-size:12px;margin-bottom:4px;">${t.platform}</div>
+                  <div style="font-size:12px;color:var(--text-secondary);white-space:pre-wrap;">${t.text}</div>
+                  <button class="btn btn-secondary" style="margin-top:6px;padding:6px 12px;font-size:11px;border-radius:8px;"
+                    onclick="navigator.clipboard.writeText(\`${t.text.replace(/`/g,"'")}\`).then(()=>showToast('Скопировано!','success'))">Копировать</button>
+                </div>`;
+              });
+              textsEl.innerHTML = html;
+              textsEl.style.display = 'block';
+            }
+          }
 
           // Referred users list
           if (referred.length > 0) {

@@ -526,6 +526,36 @@ async def _migrate_sqlite(db):
     """)
     await db.execute("CREATE INDEX IF NOT EXISTS idx_founder_purchases_user ON founder_purchases (user_id)")
 
+    # === referral_tiers — тиры рефереров ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_tiers (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            tier TEXT DEFAULT 'basic',
+            active_referrals INTEGER DEFAULT 0,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # === referral_top3 — топ-3 рефереров за месяц ===
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_top3 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month TEXT NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            rank INTEGER NOT NULL,
+            referral_count INTEGER NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(month, user_id)
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_ref_top3_month ON referral_top3 (month)")
+
+    # === referral_earnings: колонка level для отслеживания уровня ===
+    async with db.execute("PRAGMA table_info(referral_earnings)") as cur:
+        earn_cols = {row[1] for row in await cur.fetchall()}
+    if "level" not in earn_cols:
+        await db.execute("ALTER TABLE referral_earnings ADD COLUMN level INTEGER DEFAULT 1")
+
 
 async def _create_indexes_sqlite(db):
     """Создаёт индексы (можно безопасно вызывать повторно)."""
@@ -963,6 +993,42 @@ async def _create_schema_pg(pool):
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_ref_notif_unsent ON referral_notifications (is_sent, created_at)")
         except Exception as e:
             logger.warning(f"PG migration referral_notifications: {e}")
+
+        # 3.13. referral_tiers — тиры рефереров
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS referral_tiers (
+                    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                    tier TEXT DEFAULT 'basic',
+                    active_referrals INTEGER DEFAULT 0,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )"""
+            )
+        except Exception as e:
+            logger.warning(f"PG migration referral_tiers: {e}")
+
+        # 3.14. referral_top3 — топ-3 за месяц
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS referral_top3 (
+                    id SERIAL PRIMARY KEY,
+                    month TEXT NOT NULL,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    rank INTEGER NOT NULL,
+                    referral_count INTEGER NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(month, user_id)
+                )"""
+            )
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_ref_top3_month ON referral_top3 (month)")
+        except Exception as e:
+            logger.warning(f"PG migration referral_top3: {e}")
+
+        # 3.15. referral_earnings: колонка level
+        try:
+            await conn.execute("ALTER TABLE referral_earnings ADD COLUMN IF NOT EXISTS level INTEGER DEFAULT 1")
+        except Exception as e:
+            logger.warning(f"PG migration referral_earnings.level: {e}")
 
         # 4. Автоимпорт из SQLite если PG пуста
         try:
@@ -3259,28 +3325,101 @@ async def get_referrer_for_user(user_id: int) -> int | None:
 
 
 async def record_referral_commission(user_id: int, payment_id: int, payment_amount: int) -> bool:
-    """Records 50% commission for the referrer of this user. Only Elite/Founder referrers earn commission. Returns True if commission was recorded."""
+    """Многоуровневая комиссия: 1-й уровень (50-70%), 2-й (5%), 3-й (3% для топ-3).
+    Только Elite/Founder рефереры зарабатывают."""
+    from datetime import datetime
+
     referrer_id = await get_referrer_for_user(user_id)
     if not referrer_id:
         return False
 
-    # Only Elite/Founder referrers earn commission
+    # Только Elite/Founder
     referrer_sub = await get_user_premium(referrer_id)
-    referrer_tier = (referrer_sub.get("tier") or "").lower() if referrer_sub else ""
-    is_founder = await is_founder(referrer_id)
-    if referrer_tier not in ("elite",) and not is_founder:
+    referrer_tier_name = (referrer_sub.get("tier") or "").lower() if referrer_sub else ""
+    is_found = await is_founder(referrer_id)
+    if referrer_tier_name not in ("elite",) and not is_found:
         return False
 
-    commission = round(payment_amount * 0.50)
-    if commission <= 0:
-        return False
+    # Пересчитываем тир реферера
+    ref_tier_data = await get_user_referral_tier(referrer_id)
+    ref_tier = ref_tier_data.get("tier", "basic")
+    top3 = await is_top3_referrer(referrer_id)
 
+    # === 1-й уровень ===
+    rate1 = get_commission_rate(ref_tier, is_top3=top3)
+    commission1 = round(payment_amount * rate1 / 100)
+    if commission1 > 0:
+        await _record_earning(referrer_id, user_id, payment_id, payment_amount, rate1, commission1, level=1)
+        await _update_balance(referrer_id, commission1)
+
+    # === 2-й уровень (5% для всех Elite/Founder) ===
+    level2_earner = await get_referrer_for_user(referrer_id)
+    if level2_earner:
+        l2_sub = await get_user_premium(level2_earner)
+        l2_tier_name = (l2_sub.get("tier") or "").lower() if l2_sub else ""
+        l2_founder = await is_founder(level2_earner)
+        if l2_tier_name in ("elite",) or l2_founder:
+            commission2 = round(payment_amount * REFERRAL_LEVEL2_PERCENT / 100)
+            if commission2 > 0:
+                await _record_earning(level2_earner, user_id, payment_id, payment_amount, REFERRAL_LEVEL2_PERCENT, commission2, level=2)
+                await _update_balance(level2_earner, commission2)
+
+        # === 3-й уровень (3% только для топ-3) ===
+        if top3:
+            level3_earner = await get_referrer_for_user(level2_earner) if level2_earner else None
+            if level3_earner:
+                commission3 = round(payment_amount * REFERRAL_LEVEL3_PERCENT / 100)
+                if commission3 > 0:
+                    await _record_earning(level3_earner, user_id, payment_id, payment_amount, REFERRAL_LEVEL3_PERCENT, commission3, level=3)
+                    await _update_balance(level3_earner, commission3)
+
+    # Пересчитать тир реферера после начисления
+    await calculate_user_tier(referrer_id)
+
+    # Уведомление
+    try:
+        referred_row = await _fetch(
+            "SELECT first_name FROM users WHERE id = ?" if USE_SQLITE else "SELECT first_name FROM users WHERE id = $1",
+            user_id, one=True,
+        )
+        referred_name = (referred_row.get("first_name") if isinstance(referred_row, dict) else "Пользователь") if referred_row else "Пользователь"
+        tier_name = REFERRAL_TIER_NAMES.get(ref_tier, "Базовый")
+        await queue_referral_notification(
+            referrer_id,
+            "commission",
+            f"💰 Начислено <b>{commission1}₽</b> комиссии ({rate1}%)!\n"
+            f"Приглашённый: {referred_name}\n"
+            f"Оплата: {payment_amount}₽\n"
+            f"Твой тир: {tier_name}",
+        )
+    except Exception:
+        pass
+    return True
+
+
+async def _record_earning(referrer_id: int, referred_id: int, payment_id: int,
+                          payment_amount: int, percent: int, amount: int, level: int = 1) -> None:
+    """Записывает одну транзакцию комиссии."""
     if USE_SQLITE:
         await _execute(
-            """INSERT INTO referral_earnings (referrer_user_id, referred_user_id, payment_id, payment_amount, commission_percent, commission_amount)
-               VALUES (?, ?, ?, ?, 50, ?)""",
-            referrer_id, user_id, payment_id, payment_amount, commission,
+            """INSERT INTO referral_earnings (referrer_user_id, referred_user_id, payment_id,
+               payment_amount, commission_percent, commission_amount, level)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            referrer_id, referred_id, payment_id, payment_amount, percent, amount, level,
         )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO referral_earnings (referrer_user_id, referred_user_id, payment_id,
+                   payment_amount, commission_percent, commission_amount, level)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                referrer_id, referred_id, payment_id, payment_amount, percent, amount, level,
+            )
+
+
+async def _update_balance(user_id: int, amount: int) -> None:
+    """Обновляет баланс реферера."""
+    if USE_SQLITE:
         await _execute(
             """INSERT INTO referral_balances (user_id, total_earned, balance, updated_at)
                VALUES (?, ?, ?, datetime('now'))
@@ -3288,15 +3427,10 @@ async def record_referral_commission(user_id: int, payment_id: int, payment_amou
                    total_earned = total_earned + excluded.total_earned,
                    balance = balance + excluded.balance,
                    updated_at = datetime('now')""",
-            referrer_id, commission, commission,
+            user_id, amount, amount,
         )
     else:
         async with _db.acquire() as conn:
-            await conn.execute(
-                """INSERT INTO referral_earnings (referrer_user_id, referred_user_id, payment_id, payment_amount, commission_percent, commission_amount)
-                   VALUES ($1, $2, $3, $4, 50, $5)""",
-                referrer_id, user_id, payment_id, payment_amount, commission,
-            )
             await conn.execute(
                 """INSERT INTO referral_balances (user_id, total_earned, balance, updated_at)
                    VALUES ($1, $2, $3, NOW())
@@ -3304,25 +3438,8 @@ async def record_referral_commission(user_id: int, payment_id: int, payment_amou
                        total_earned = referral_balances.total_earned + EXCLUDED.total_earned,
                        balance = referral_balances.balance + EXCLUDED.balance,
                        updated_at = NOW()""",
-                referrer_id, commission, commission,
+                user_id, amount, amount,
             )
-    # Уведомление рефереру
-    try:
-        referred_row = await _fetch(
-            "SELECT first_name FROM users WHERE id = ?" if USE_SQLITE else "SELECT first_name FROM users WHERE id = $1",
-            user_id, one=True,
-        )
-        referred_name = (referred_row.get("first_name") if isinstance(referred_row, dict) else "Пользователь") if referred_row else "Пользователь"
-        await queue_referral_notification(
-            referrer_id,
-            "commission",
-            f"💰 Начислено <b>{commission}₽</b> комиссии!\n"
-            f"Приглашённый: {referred_name}\n"
-            f"Оплата: {payment_amount}₽",
-        )
-    except Exception:
-        pass
-    return True
 
 
 async def queue_referral_notification(user_id: int, notif_type: str, message: str) -> None:
@@ -4235,6 +4352,41 @@ FEATURE_TIER = {
 }
 
 TIER_RANK = {"economy": 1, "standard": 2, "elite": 3, "founder": 4}
+
+# === Реферальные тиры ===
+REFERRAL_TIERS = {
+    "basic":     {"min_referrals": 0,   "commission": 50, "name": "Базовый"},
+    "ambassador": {"min_referrals": 50,  "commission": 55, "name": "Амбассадор"},
+    "top_ref":   {"min_referrals": 100, "commission": 60, "name": "Топ-реферер"},
+    "legend":    {"min_referrals": 200, "commission": 65, "name": "Легенда"},
+}
+REFERRAL_TOP3_COMMISSION = 70
+REFERRAL_LEVEL2_PERCENT = 5
+REFERRAL_LEVEL3_PERCENT = 3
+REFERRAL_TIER_NAMES = {
+    "basic": "Базовый",
+    "ambassador": "Амбассадор",
+    "top_ref": "Топ-реферер",
+    "legend": "Легенда",
+}
+
+
+def get_referral_tier(active_referrals: int) -> str:
+    """Возвращает тир по количеству активных рефералов."""
+    if active_referrals >= 200:
+        return "legend"
+    elif active_referrals >= 100:
+        return "top_ref"
+    elif active_referrals >= 50:
+        return "ambassador"
+    return "basic"
+
+
+def get_commission_rate(tier: str, is_top3: bool = False) -> int:
+    """Возвращает ставку комиссии по тиру. Топ-3 получает 70%."""
+    if is_top3:
+        return REFERRAL_TOP3_COMMISSION
+    return REFERRAL_TIERS.get(tier, REFERRAL_TIERS["basic"])["commission"]
 
 
 def get_plan(tier: str) -> dict | None:
@@ -5388,3 +5540,174 @@ async def check_self_referral(telegram_id: int, vk_id: str = None, code: str = N
         return True
 
     return False
+
+
+# === Реферальные тиры: расчёт ===
+
+async def count_active_referrals(user_id: int) -> int:
+    """Считает количество активных рефералов (купивших Premium)."""
+    if USE_SQLITE:
+        row = await _fetch(
+            """SELECT COUNT(*) as cnt FROM referrals r
+               JOIN users u ON r.referred_user_id = u.id
+               WHERE r.referrer_user_id = ?
+                 AND r.status = 'completed'
+                 AND EXISTS (SELECT 1 FROM premium_users WHERE user_id = r.referred_user_id AND is_active = 1)""",
+            user_id, one=True,
+        )
+    else:
+        row = await _fetch(
+            """SELECT COUNT(*) as cnt FROM referrals r
+               JOIN users u ON r.referred_user_id = u.id
+               WHERE r.referrer_user_id = $1
+                 AND r.status = 'completed'
+                 AND EXISTS (SELECT 1 FROM premium_users WHERE user_id = r.referred_user_id AND is_active = TRUE)""",
+            user_id, one=True,
+        )
+    return (row["cnt"] if isinstance(row, dict) else row[0]) if row else 0
+
+
+async def calculate_user_tier(user_id: int) -> str:
+    """Рассчитывает и обновляет тир реферера. Возвращает тир."""
+    active = await count_active_referrals(user_id)
+    tier = get_referral_tier(active)
+
+    if USE_SQLITE:
+        await _execute(
+            """INSERT INTO referral_tiers (user_id, tier, active_referrals, updated_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                   tier = excluded.tier,
+                   active_referrals = excluded.active_referrals,
+                   updated_at = datetime('now')""",
+            user_id, tier, active,
+        )
+    else:
+        async with _db.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO referral_tiers (user_id, tier, active_referrals, updated_at)
+                   VALUES ($1, $2, $3, NOW())
+                   ON CONFLICT(user_id) DO UPDATE SET
+                       tier = EXCLUDED.tier,
+                       active_referrals = EXCLUDED.active_referrals,
+                       updated_at = NOW()""",
+                user_id, tier, active,
+            )
+    return tier
+
+
+async def get_user_referral_tier(user_id: int) -> dict:
+    """Возвращает текущий тир реферера."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT tier, active_referrals FROM referral_tiers WHERE user_id = ?",
+            user_id, one=True,
+        )
+    else:
+        row = await _fetch(
+            "SELECT tier, active_referrals FROM referral_tiers WHERE user_id = $1",
+            user_id, one=True,
+        )
+    if not row:
+        return {"tier": "basic", "active_referrals": 0}
+    return dict(row) if isinstance(row, dict) else {"tier": row[0], "active_referrals": row[1]}
+
+
+async def update_all_tiers() -> int:
+    """Массовый пересчёт тиров для всех рефереров. Возвращает количество обновлённых."""
+    count = 0
+    if USE_SQLITE:
+        rows = await _fetch(
+            "SELECT DISTINCT referrer_user_id FROM referrals WHERE status = 'completed'"
+        )
+    else:
+        rows = await _fetch(
+            "SELECT DISTINCT referrer_user_id FROM referrals WHERE status = 'completed'"
+        )
+    for r in (rows or []):
+        uid = r["referrer_user_id"] if isinstance(r, dict) else r[0]
+        await calculate_user_tier(uid)
+        count += 1
+    return count
+
+
+async def is_top3_referrer(user_id: int, month: str = None) -> bool:
+    """Проверяет, входит ли пользователь в топ-3 за месяц."""
+    if not month:
+        from datetime import datetime
+        month = datetime.now().strftime("%Y-%m")
+
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT id FROM referral_top3 WHERE month = ? AND user_id = ? AND rank <= 3",
+            month, user_id, one=True,
+        )
+    else:
+        row = await _fetch(
+            "SELECT id FROM referral_top3 WHERE month = $1 AND user_id = $2 AND rank <= 3",
+            month, user_id, one=True,
+        )
+    return bool(row)
+
+
+async def calculate_top3(month: str = None) -> list:
+    """Рассчитывает топ-3 рефереров за месяц. Возвращает список."""
+    if not month:
+        from datetime import datetime
+        month = datetime.now().strftime("%Y-%m")
+
+    # Считаем активных рефералов за месяц
+    if USE_SQLITE:
+        rows = await _fetch(
+            """SELECT r.referrer_user_id, COUNT(*) as cnt
+               FROM referrals r
+               JOIN premium_users pu ON r.referred_user_id = pu.user_id AND pu.is_active = 1
+               WHERE r.status = 'completed'
+                 AND r.completed_at >= ? || '-01'
+                 AND r.completed_at < ? || '-32'
+               GROUP BY r.referrer_user_id
+               ORDER BY cnt DESC
+               LIMIT 3""",
+            month, month,
+        )
+    else:
+        rows = await _fetch(
+            """SELECT r.referrer_user_id, COUNT(*) as cnt
+               FROM referrals r
+               JOIN premium_users pu ON r.referred_user_id = pu.user_id AND pu.is_active = TRUE
+               WHERE r.status = 'completed'
+                 AND r.completed_at >= ($1 || '-01')::date
+                 AND r.completed_at < ($1 || '-32')::date
+               GROUP BY r.referrer_user_id
+               ORDER BY cnt DESC
+               LIMIT 3""",
+            month,
+        )
+
+    # Сохраняем топ-3
+    for i, r in enumerate(rows or []):
+        uid = r["referrer_user_id"] if isinstance(r, dict) else r[0]
+        cnt = r["cnt"] if isinstance(r, dict) else r[1]
+        rank = i + 1
+
+        if USE_SQLITE:
+            await _execute(
+                """INSERT INTO referral_top3 (month, user_id, rank, referral_count)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(month, user_id) DO UPDATE SET
+                       rank = excluded.rank,
+                       referral_count = excluded.referral_count""",
+                month, uid, rank, cnt,
+            )
+        else:
+            async with _db.acquire() as conn:
+                await conn.execute(
+                    """INSERT INTO referral_top3 (month, user_id, rank, referral_count)
+                       VALUES ($1, $2, $3, $4)
+                       ON CONFLICT(month, user_id) DO UPDATE SET
+                           rank = EXCLUDED.rank,
+                           referral_count = EXCLUDED.referral_count""",
+                    month, uid, rank, cnt,
+                )
+
+    return rows or []

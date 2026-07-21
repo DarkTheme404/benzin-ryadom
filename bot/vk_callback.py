@@ -805,18 +805,61 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
     tier = sub.get("tier") if sub else None
     is_elite = has_feature(tier, "anti_traffic")
 
+    # Получаем данные о тире
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{settings.BACKEND_URL}/api/referral/tier",
+                params={"vk_user_id": peer_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                tier_data = await r.json()
+    except Exception:
+        tier_data = {"tier": "basic", "active_referrals": 0, "commission": 50, "is_top3": False}
+
+    ref_tier = tier_data.get("tier", "basic")
+    active_refs = tier_data.get("active_referrals", 0)
+    commission = tier_data.get("commission", 50)
+    is_top3 = tier_data.get("is_top3", False)
+    next_tier = tier_data.get("next_tier")
+
+    tier_names = {
+        "basic": "Базовый", "ambassador": "Посол",
+        "top_ref": "Топ-реферер", "legend": "Легенда",
+    }
+
+    tier_text = f"🎯 Тир: {tier_names.get(ref_tier, ref_tier)}"
+    if is_top3:
+        tier_text += " 🏆 + топ-3!"
+    if next_tier:
+        tier_text += f"\n📈 До «{next_tier['name']}» осталось {next_tier['need']} активных рефералов"
+
     if is_elite:
-        commission_text = "Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!"
+        commission_text = (
+            f"💰 Комиссия: {commission}% с каждой оплаты реферала\n"
+            f"(50/55/60/65% в зависимости от тира, 70% для топ-3)\n"
+            f"5% со второго уровня\n"
+            f"3% с третьего уровня (только для топ-3)"
+        )
     else:
         commission_text = (
-            "Пригласи друга — получи <b>50% комиссии</b> с каждой его оплаты!\n"
             "⚠️ <i>Комиссия начисляется только для Elite и Founder. "
             "Сейчас ты можешь приглашать, но заработок начнётся после покупки Elite.</i>"
         )
 
+    calc_lines = ""
+    if not is_elite:
+        examples = [(5, 50), (20, 50), (50, 55), (100, 60), (200, 65)]
+        calc_lines = "\n📊 <b>Калькулятор дохода:</b>\n"
+        for n_refs, rate in examples:
+            monthly = int(n_refs * 250 * rate / 100)
+            calc_lines += f"  {n_refs} рефералов × {rate}% = ~{monthly}₽/мес\n"
+        calc_lines += "\n💡 <i>Приглашай друзей — Elite быстро окупается!</i>"
+
     await _vk_send(peer_id,
         f"🎁 <b>Реферальная программа</b>\n\n"
-        f"{commission_text}\n"
+        f"{commission_text}\n\n"
+        f"{tier_text}\n\n"
         f"Твой друг получит <b>15% скидку</b> на первую покупку.\n\n"
         f"<b>Telegram:</b>\n{ref_link_tg}\n\n"
         f"<b>VK:</b>\n{ref_link_vk}\n\n"
@@ -826,11 +869,7 @@ async def handle_referral(peer_id: int, text: str = "") -> None:
         f"<b>Статистика:</b>\n"
         f"👥 Приглашено: {stats.get('total', 0)}\n"
         f"✅ Активировали: {stats.get('completed', 0)}\n\n"
-        f"<b>Как это работает:</b>\n"
-        f"1. Отправь ссылку другу\n"
-        f"2. Друг переходит по ссылке\n"
-        f"3. Ты получаешь 50% от каждой его оплаты!\n\n"
-        f"💡 Вывод средств — в Mini App",
+        f"{calc_lines}",
     )
 
 
@@ -867,6 +906,65 @@ async def handle_leaderboard(peer_id: int) -> None:
         )
 
     await _vk_send(peer_id, "\n".join(lines), vk_main_menu())
+
+
+async def handle_selling_texts(peer_id: int) -> None:
+    """Продающие тексты для копирования."""
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{settings.BACKEND_URL}/api/referral/selling-texts",
+                params={"vk_user_id": peer_id},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+    except Exception:
+        data = {"texts": []}
+
+    texts = data.get("texts", [])
+    if not texts:
+        await _vk_send(peer_id, "Нет текстов для копирования.")
+        return
+
+    lines = ["📝 <b>Продающие тексты</b> (копируй и отправляй):\n"]
+    for t in texts:
+        lines.append(f"<b>{t['platform']}:</b>\n<i>{t['text']}</i>\n")
+    lines.append("💡 Отправляй друзьям в мессенджерах, группах, соцсетях!")
+
+    await _vk_send(peer_id, "\n".join(lines))
+
+
+async def handle_training(peer_id: int) -> None:
+    """Обучающий блок — как заработать на рефералах."""
+    text = (
+        "📚 <b>Как заработать на реферальной программе</b>\n\n"
+        "<b>Шаг 1: Кого приглашать</b>\n"
+        "• Водителей в своём городе\n"
+        "• Друзей, которые жалуются на цены на бензин\n"
+        "• В чатах/группах про авто\n\n"
+        "<b>Шаг 2: Где делиться ссылкой</b>\n"
+        "• WhatsApp/Telegram группы\n"
+        "• VK группы про авто\n"
+        "• Личные сообщения\n"
+        "• В комментариях к постам о бензине\n\n"
+        "<b>Шаг 3: Что писать</b>\n"
+        "• Скажи про экономию (~500₽/мес)\n"
+        "• Покажи сколько АЗС рядом\n"
+        "• Скинь ссылку\n\n"
+        "<b>Шаг 4: Когда делиться</b>\n"
+        "• Утром (люди едут на работу)\n"
+        "• Когда бензин дорожает (новости)\n"
+        "• Выходные (планируют поездки)\n\n"
+        "<b>💰 Сколько зарабатываешь:</b>\n"
+        "• 50% от каждой оплаты реферала (базовый тир)\n"
+        "• 55% при 50 активных рефералах\n"
+        "• 60% при 100\n"
+        "• 65% при 200+\n"
+        "• 70% если вошёл в топ-3 месяца!\n\n"
+        "💡 <i>Приглашай 5-10 друзей — уже 1250-2500₽/мес!</i>"
+    )
+    await _vk_send(peer_id, text)
 
 
 async def handle_premium(peer_id: int) -> None:
@@ -1631,6 +1729,10 @@ async def process_message_new(event: dict) -> None:
         await handle_referral(peer_id, text)
     elif low in ("/leaderboard", "leaderboard", "топ", "лидерборд"):
         await handle_leaderboard(peer_id)
+    elif low in ("/selling", "selling", "продающие", "тексты"):
+        await handle_selling_texts(peer_id)
+    elif low in ("/training", "training", "как заработать", "обучение"):
+        await handle_training(peer_id)
     elif low.startswith("/link") or low.startswith("link "):
         await handle_link(peer_id, text)
     elif low in ("/anti-traffic", "anti-traffic", "анти-пробка", "🚗 анти-пробка"):

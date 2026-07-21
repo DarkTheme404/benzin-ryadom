@@ -93,11 +93,23 @@ def _format_push(report: dict, distance_km: float) -> str:
 
 
 async def push_loop(bot: Bot):
-    """Главный цикл: раз в PUSH_INTERVAL_SEC сканирует и шлёт push'и."""
+    """Главный цикл: раз в PUSH_INTERVAL_SEC сканирует и шлёт push'и + ежемесячный cron."""
     logger.info("Push worker started")
+    last_monthly_run = None
     while True:
         try:
             await _push_iteration(bot)
+
+            # Ежемесячный cron: 1-го числа каждого месяца
+            today = datetime.now().date()
+            if today.day == 1 and last_monthly_run != today.month:
+                try:
+                    await run_monthly_referral_cron(bot)
+                    last_monthly_run = today.month
+                    logger.info("Monthly referral cron completed for month %d", today.month)
+                except Exception as e:
+                    logger.exception("Monthly referral cron failed: %s", e)
+
         except Exception as e:
             logger.exception("Push iteration failed: %s", e)
         await asyncio.sleep(PUSH_INTERVAL_SEC)
@@ -314,3 +326,54 @@ async def _process_referral_notifications(bot: Bot) -> None:
 
     if sent:
         logger.info("Referral notifications: sent %d", sent)
+
+
+async def run_monthly_referral_cron(bot: Bot) -> None:
+    """Ежемесячный cron: расчёт топ-3, уведомления, пересчёт тиров."""
+    from db import (
+        calculate_top3, update_all_tiers, queue_referral_notification,
+        get_user_referral_tier, REFERRAL_TIER_NAMES, get_commission_rate,
+        _fetch as _db_fetch, USE_SQLITE as _db_sqlite,
+    )
+
+    prev_month = (datetime.now().replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    logger.info("Monthly referral cron: month=%s", prev_month)
+
+    # 1. Пересчитать все тиры
+    updated = await update_all_tiers()
+    logger.info("Tiers recalculated: %d users", updated)
+
+    # 2. Рассчитать топ-3 за прошлый месяц
+    top3 = await calculate_top3(prev_month)
+    logger.info("Top3 calculated: %d users", len(top3))
+
+    # 3. Уведомить топ-3
+    for i, r in enumerate(top3 or []):
+        uid = r["referrer_user_id"] if isinstance(r, dict) else r[0]
+        cnt = r["cnt"] if isinstance(r, dict) else r[1]
+        rank = i + 1
+
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        medal = medals.get(rank, "🏆")
+
+        await queue_referral_notification(
+            uid,
+            "top3",
+            f"{medal} <b>Ты в топ-3 за {prev_month}!</b>\n\n"
+            f"Приглашённых: {cnt}\n"
+            f"Твоя комиссия: 70% в следующем месяце!\n\n"
+            f"Продолжай приглашать — удержи лидерство!",
+        )
+
+    # 4. Уведомить всех кто на неbasic тире
+    rows = await _db_fetch("SELECT user_id, tier FROM referral_tiers")
+    for r in (rows or []):
+        uid = r["user_id"] if isinstance(r, dict) else r[0]
+        tier = r["tier"] if isinstance(r, dict) else r[1]
+        if tier and tier != "basic":
+            await queue_referral_notification(
+                uid,
+                "tier_change",
+                f"🎯 Ты на тире <b>{REFERRAL_TIER_NAMES.get(tier, tier)}</b>!\n"
+                f"Твоя комиссия: {get_commission_rate(tier)}%",
+            )

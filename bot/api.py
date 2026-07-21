@@ -2432,6 +2432,9 @@ def setup_app() -> web.Application:
     app.router.add_get("/api/referral/earnings", handle_referral_earnings)
     app.router.add_get("/api/referral/balance", handle_referral_balance)
     app.router.add_get("/api/referral/leaderboard", handle_referral_leaderboard)
+    app.router.add_get("/api/referral/tier", handle_referral_tier)
+    app.router.add_get("/api/referral/commission-rates", handle_referral_commission_rates)
+    app.router.add_get("/api/referral/selling-texts", handle_referral_selling_texts)
     app.router.add_post("/api/referral/withdraw", handle_referral_withdraw)
     app.router.add_get("/api/referral/withdrawals", handle_referral_withdrawals_list)
     app.router.add_post("/api/referral/withdrawals/process", handle_referral_withdrawals_process)
@@ -4087,6 +4090,126 @@ async def handle_referral_leaderboard(request):
     except Exception as e:
         logger.exception(f"referral_leaderboard error: {e}")
         return json_resp({"ok": True, "leaderboard": []})
+
+
+async def handle_referral_tier(request):
+    """GET /api/referral/tier?telegram_id=... — текущий тир реферера + прогресс."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    if not tid:
+        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
+    try:
+        from db import get_user_id_by_any, get_user_referral_tier, is_top3_referrer, REFERRAL_TIERS, REFERRAL_TIER_NAMES, get_commission_rate
+        uid = await get_user_id_by_any(int(tid))
+        if not uid:
+            return json_resp({"ok": True, "tier": "basic", "active_referrals": 0, "commission": 50})
+        tier_data = await get_user_referral_tier(uid)
+        tier = tier_data.get("tier", "basic")
+        active = tier_data.get("active_referrals", 0)
+        top3 = await is_top3_referrer(uid)
+        commission = get_commission_rate(tier, is_top3=top3)
+
+        tiers_info = {}
+        for k, v in REFERRAL_TIERS.items():
+            tiers_info[k] = {
+                "name": REFERRAL_TIER_NAMES[k],
+                "min_referrals": v["min_referrals"],
+                "commission": v["commission"],
+            }
+
+        next_tier = None
+        for k in ["basic", "ambassador", "top_ref", "legend"]:
+            if active < REFERRAL_TIERS[k]["min_referrals"]:
+                next_tier = {
+                    "name": REFERRAL_TIER_NAMES[k],
+                    "min_referrals": REFERRAL_TIERS[k]["min_referrals"],
+                    "need": REFERRAL_TIERS[k]["min_referrals"] - active,
+                }
+                break
+
+        return json_resp({
+            "ok": True,
+            "tier": tier,
+            "tier_name": REFERRAL_TIER_NAMES.get(tier, "Базовый"),
+            "active_referrals": active,
+            "commission": commission,
+            "is_top3": top3,
+            "tiers": tiers_info,
+            "next_tier": next_tier,
+        })
+    except Exception as e:
+        logger.exception(f"referral_tier error: {e}")
+        return json_resp({"error": "internal error"}, status=500)
+
+
+async def handle_referral_commission_rates(request):
+    """GET /api/referral/commission-rates — все ставки комиссий."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    from db import REFERRAL_TIERS, REFERRAL_TIER_NAMES, REFERRAL_TOP3_COMMISSION, REFERRAL_LEVEL2_PERCENT, REFERRAL_LEVEL3_PERCENT
+    tiers = {}
+    for k, v in REFERRAL_TIERS.items():
+        tiers[k] = {
+            "name": REFERRAL_TIER_NAMES[k],
+            "min_referrals": v["min_referrals"],
+            "commission": v["commission"],
+        }
+    return json_resp({
+        "ok": True,
+        "tiers": tiers,
+        "top3_commission": REFERRAL_TOP3_COMMISSION,
+        "level2_percent": REFERRAL_LEVEL2_PERCENT,
+        "level3_percent": REFERRAL_LEVEL3_PERCENT,
+    })
+
+
+async def handle_referral_selling_texts(request):
+    """GET /api/referral/selling-texts — продающие тексты для копирования."""
+    if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
+        return json_resp({"error": "rate limit"}, status=429)
+    tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
+    code = request.query.get("code", "")
+
+    texts = [
+        {
+            "platform": "Telegram",
+            "text": (
+                f"🚗 Знаешь, сколько стоит бензин рядом?\n\n"
+                f"Приложение показывает АЗС с ценами и наличием в реальном времени. "
+                f"Удобно и быстро — экономлю ~500₽ в месяц.\n\n"
+                f"Попробуй бесплатно 👇\n"
+                f"https://t.me/benzyn_ryadom_bot?start=ref_{code}"
+            ),
+        },
+        {
+            "platform": "VK",
+            "text": (
+                f"🚗 Нашёл приложение для водителей — «Бензин рядом»\n\n"
+                f"Показывает АЗС с ценами, можно.compare и выбрать дешевле. "
+                f"Работает в моём городе, рекомендую!\n\n"
+                f"Ссылка: https://vk.com/benzyn_ryadom?ref={code}"
+            ),
+        },
+        {
+            "platform": "WhatsApp",
+            "text": (
+                f"🚗 Классное приложение для водителей!\n"
+                f"Показывает ближайшие АЗС с ценами на бензин. "
+                f"Можно.compare и сэкономить. Попробуй 👇\n"
+                f"https://t.me/benzyn_ryadom_bot?start=ref_{code}"
+            ),
+        },
+        {
+            "platform": "Друзьям",
+            "text": (
+                f"Привет! Вот приложение для бензина — показывает где дешевле. "
+                f"Мне помогает экономить. Попробуй, ссылка:\n"
+                f"https://t.me/benzyn_ryadom_bot?start=ref_{code}"
+            ),
+        },
+    ]
+    return json_resp({"ok": True, "texts": texts})
 
 
 async def handle_referral_balance(request):
