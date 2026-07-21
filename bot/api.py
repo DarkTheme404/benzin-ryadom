@@ -2578,16 +2578,17 @@ async def handle_premium_pending_payments(request):
 # === Founder Pack ===
 
 async def handle_founder_status(request):
-    """GET /api/founder/status?telegram_id=X или vk_user_id=X — статус Founder."""
+    """GET /api/founder/status?telegram_id=X или vk_user_id=X — статус Founder + оставшиеся места."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_GET):
         return json_resp({"error": "rate limit"}, status=429)
+    from db import get_user_id_by_any, is_founder, get_founder_info, get_founder_remaining, FOUNDER_MAX
+    remaining = await get_founder_remaining()
     tid = request.query.get("telegram_id") or request.query.get("vk_user_id")
     if not tid:
-        return json_resp({"error": "telegram_id or vk_user_id required"}, status=400)
-    from db import get_user_id_by_any, is_founder, get_founder_info
+        return json_resp({"ok": True, "founder": False, "remaining": remaining, "max": FOUNDER_MAX})
     uid = await get_user_id_by_any(int(tid))
     if not uid:
-        return json_resp({"ok": True, "founder": False})
+        return json_resp({"ok": True, "founder": False, "remaining": remaining, "max": FOUNDER_MAX})
     founder = await is_founder(uid)
     if founder:
         info = await get_founder_info(uid)
@@ -2595,8 +2596,10 @@ async def handle_founder_status(request):
             "ok": True,
             "founder": True,
             "purchased_at": str(info.get("created_at", "")) if info else None,
+            "remaining": remaining,
+            "max": FOUNDER_MAX,
         })
-    return json_resp({"ok": True, "founder": False})
+    return json_resp({"ok": True, "founder": False, "remaining": remaining, "max": FOUNDER_MAX})
 
 
 async def handle_founder_purchase(request):
@@ -2626,6 +2629,12 @@ async def handle_founder_purchase(request):
     # Уже Founder?
     if await is_founder(uid):
         return json_resp({"error": "Вы уже являетесь Founder"}, status=400)
+
+    # Проверяем оставшиеся места
+    from db import get_founder_remaining
+    remaining = await get_founder_remaining()
+    if remaining <= 0:
+        return json_resp({"error": "Founder Pack закончился (все 200 мест проданы)"}, status=400)
 
     import secrets as _secrets
     token = f"founder-{_secrets.token_urlsafe(24)}"

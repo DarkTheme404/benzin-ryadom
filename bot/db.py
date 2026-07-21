@@ -4353,6 +4353,8 @@ FEATURE_TIER = {
 
 TIER_RANK = {"economy": 1, "standard": 2, "elite": 3, "founder": 4}
 
+FOUNDER_MAX = 200
+
 # === Реферальные тиры ===
 REFERRAL_TIERS = {
     "basic":     {"min_referrals": 0,   "commission": 50, "name": "Базовый"},
@@ -4712,6 +4714,27 @@ async def get_founders_list() -> list[dict]:
                    ORDER BY fp.created_at ASC"""
             )
     return [dict(r) for r in rows]
+
+
+async def get_founder_count() -> int:
+    """Возвращает количество купленных Founder Pack."""
+    if USE_SQLITE:
+        row = await _fetch(
+            "SELECT COUNT(*) as cnt FROM founder_purchases WHERE status = 'paid'",
+            one=True,
+        )
+    else:
+        async with _db.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT COUNT(*) as cnt FROM founder_purchases WHERE status = 'paid'"
+            )
+    return row["cnt"] if isinstance(row, dict) else (row[0] if row else 0)
+
+
+async def get_founder_remaining() -> int:
+    """Возвращает количество оставшихся Founder Pack (из 200)."""
+    count = await get_founder_count()
+    return max(0, FOUNDER_MAX - count)
 
 
 # === Запросы на оплату (для VK Pay) ===

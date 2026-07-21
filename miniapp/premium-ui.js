@@ -21,8 +21,33 @@
     }
     try {
       const idParam = (typeof platform !== 'undefined' && platform.vk) ? 'vk_user_id=' + tgId : 'telegram_id=' + tgId;
-      const res = await api('/api/premium/status?' + idParam);
-      userPremiumStatus = res || { active: false, tier: null };
+      const [premRes, founderRes] = await Promise.all([
+        api('/api/premium/status?' + idParam),
+        api('/api/founder/status?' + idParam).catch(() => null),
+      ]);
+      userPremiumStatus = premRes || { active: false, tier: null };
+
+      // Обновляем счётчик Founder Pack
+      if (founderRes && founderRes.ok) {
+        const el = document.getElementById('founder-remaining');
+        if (el) {
+          const remaining = founderRes.remaining;
+          const max = founderRes.max || 200;
+          if (remaining <= 0) {
+            el.textContent = '❌ Продано';
+            el.style.color = '#ef4444';
+            // Блокируем кнопку
+            const btn = document.querySelector('[data-tier="founder"]');
+            if (btn) { btn.disabled = true; btn.textContent = 'Продано'; }
+          } else if (remaining <= 20) {
+            el.textContent = `🔥 Осталось ${remaining} из ${max} мест!`;
+            el.style.color = '#ef4444';
+          } else {
+            el.textContent = `Осталось ${remaining} из ${max} мест`;
+            el.style.color = '#f59e0b';
+          }
+        }
+      }
     } catch (e) {
       userPremiumStatus = { active: false, tier: null };
     }

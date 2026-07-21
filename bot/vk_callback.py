@@ -969,8 +969,10 @@ async def handle_training(peer_id: int) -> None:
 
 async def handle_premium(peer_id: int) -> None:
     """Показать 3 тарифа Premium — красивый формат."""
-    from db import PREMIUM_PLANS, is_premium, get_premium_info, get_user_id_by_vk_id
+    from db import PREMIUM_PLANS, is_premium, get_premium_info, get_user_id_by_vk_id, get_founder_remaining, FOUNDER_MAX
     from datetime import datetime
+
+    founder_remaining = await get_founder_remaining()
 
     uid = await get_user_id_by_vk_id(peer_id)
     if uid and await is_premium(uid):
@@ -1021,7 +1023,7 @@ async def handle_premium(peer_id: int) -> None:
         "🏆 <b>Founder Pack</b> — <b>1990₽ навсегда</b>\n"
         "├ Пожизненный Элит\n"
         "├ 🏆 Founder-бейдж\n"
-        "└ 📋 Имя в списке основателей\n\n"
+        f"└ 📋 Осталось мест: <b>{founder_remaining} из {FOUNDER_MAX}</b>\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🧮 <b>Калькулятор:</b>\n"
         "40л/мес × 2 заправки × 3₽/л = <b>240₽/мес</b> экономии\n"

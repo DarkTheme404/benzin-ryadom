@@ -1326,6 +1326,11 @@ async def _cmd_premium_impl(message: Message):
         logger.exception(f"cmd_premium: get_or_create_user failed: {e}")
     telegram_id = _tg_id(message)
     logger.info(f"cmd_premium: telegram_id={telegram_id}")
+
+    # Получаем оставшиеся места Founder Pack
+    from db import get_founder_remaining, FOUNDER_MAX
+    founder_remaining = await get_founder_remaining()
+
     try:
         uid = await get_user_id_by_telegram_id(telegram_id)
         logger.info(f"cmd_premium: uid={uid}")
@@ -1389,7 +1394,7 @@ async def _cmd_premium_impl(message: Message):
         "🏆 <b>Founder Pack</b> — <b>1990₽ навсегда</b>\n"
         "├ Пожизненный Элит\n"
         "├ 🏆 Founder-бейдж\n"
-        "└ 📋 Имя в списке основателей\n\n"
+        f"└ 📋 Осталось мест: <b>{founder_remaining} из {FOUNDER_MAX}</b>\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🧮 <b>Калькулятор:</b>\n"
         "Если заправляешь 40л/мес × 2 раза,\n"
