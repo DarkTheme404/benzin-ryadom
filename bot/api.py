@@ -2456,6 +2456,12 @@ def setup_app() -> web.Application:
         app.router.add_static("/app/", miniapp_dir, append_version=False)
         for path in ("/miniapp", "/miniapp/", "/m", "/m/", "/v2", "/v2/"):
             app.router.add_get(path, serve_index)
+
+    # YooMoney OAuth callback (для получения токена с правами payment-p2p)
+    app.router.add_get("/api/yoomoney/callback", handle_yoomoney_callback)
+    app.router.add_get("/api/yoomoney/oauth-url", handle_yoomoney_oauth_url)
+    app.router.add_post("/api/yoomoney/exchange", handle_yoomoney_exchange)
+
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
     return app
@@ -4792,6 +4798,114 @@ async def handle_route_anti_traffic(request):
 
 
 # VK Pay — настройки в bot/vkpay.py
+
+# === YooMoney OAuth (для получения токена с правами payment-p2p) ===
+async def handle_yoomoney_oauth_url(request):
+    """GET /api/yoomoney/oauth-url — генерирует URL для OAuth авторизации.
+
+    Параметры (query): ?client_id=XXX
+    Возвращает URL на который нужно перейти пользователю для выдачи прав.
+    """
+    client_id = request.query.get("client_id")
+    if not client_id:
+        return json_resp({"error": "client_id required"}, status=400)
+    backend = os.environ.get("BACKEND_URL", "https://benzin-ryadom.onrender.com")
+    redirect = f"{backend}/api/yoomoney/callback"
+    scope = "account-info operation-history operation-details payment-p2p payment-shop"
+    import urllib.parse
+    auth_url = (
+        "https://yoomoney.ru/oauth/authorize?"
+        + urllib.parse.urlencode({
+            "client_id": client_id,
+            "response_type": "code",
+            "redirect_uri": redirect,
+            "scope": scope,
+        })
+    )
+    return json_resp({"auth_url": auth_url, "redirect_uri": redirect})
+
+
+async def handle_yoomoney_callback(request):
+    """GET /api/yoomoney/callback — редирект после OAuth авторизации.
+
+    YooMoney редиректит сюда с ?code=XXX
+    Возвращает HTML-страницу с инструкциями (code нужно обменять через /api/yoomoney/exchange).
+    """
+    code = request.query.get("code")
+    error = request.query.get("error")
+    if error:
+        return web.Response(
+            text=f"<h1>❌ Ошибка авторизации</h1><p>{error}</p>",
+            content_type="text/html",
+        )
+    if not code:
+        return web.Response(
+            text="<h1>Нет кода авторизации</h1>",
+            content_type="text/html",
+        )
+    # Показываем инструкцию — нужно обменять code на токен
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>YooMoney OAuth</title></head>
+<body style="font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px">
+<h1>✅ Авторизация получена</h1>
+<p>Code: <code>{code[:30]}...</code></p>
+<h2>Следующий шаг — обменять code на токен:</h2>
+<pre style="background:#f0f0f0;padding:15px;border-radius:8px">
+curl -X POST https://benzin-ryadom.onrender.com/api/yoomoney/exchange \\
+  -H "Content-Type: application/json" \\
+  -d '{{"code": "{code}", "client_id": "ТВОЙ_CLIENT_ID", "client_secret": "ТВОЙ_CLIENT_SECRET"}}'
+</pre>
+<p>В ответе получишь <b>access_token</b> — его нужно вставить в Render Dashboard → Environment → YOOMONEY_TOKEN</p>
+</body></html>"""
+    return web.Response(text=html, content_type="text/html")
+
+
+async def handle_yoomoney_exchange(request):
+    """POST /api/yoomoney/exchange — обменивает code на access_token.
+
+    Body: {"code": "...", "client_id": "...", "client_secret": "..."}
+    Возвращает {"access_token": "..."}
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return json_resp({"error": "invalid json"}, status=400)
+    code = body.get("code")
+    client_id = body.get("client_id")
+    client_secret = body.get("client_secret")
+    if not all([code, client_id, client_secret]):
+        return json_resp({"error": "code, client_id, client_secret required"}, status=400)
+    import aiohttp
+    backend = os.environ.get("BACKEND_URL", "https://benzin-ryadom.onrender.com")
+    redirect = f"{backend}/api/yoomoney/callback"
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post("https://yoomoney.ru/oauth/token",
+                data={
+                    "code": code,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri": redirect,
+                    "grant_type": "authorization_code",
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as r:
+                text = await r.text()
+                if r.status != 200:
+                    return json_resp({"error": "yoomoney_error", "status": r.status, "response": text}, status=400)
+                import json as _json
+                data = _json.loads(text)
+                access_token = data.get("access_token")
+                if not access_token:
+                    return json_resp({"error": "no_access_token", "response": data}, status=400)
+                return json_resp({
+                    "ok": True,
+                    "access_token": access_token,
+                    "instruction": "Скопируй access_token и вставь в Render Dashboard → Environment → YOOMONEY_TOKEN, затем перезапусти сервис",
+                })
+    except Exception as e:
+        return json_resp({"error": str(e)}, status=500)
+
 
 async def handle_premium_create_payment(request):
     """POST /api/premium/create-payment — создаёт платёж через YooMoney и возвращает ссылку.
