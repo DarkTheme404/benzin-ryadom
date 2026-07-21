@@ -4811,7 +4811,7 @@ async def handle_yoomoney_oauth_url(request):
         return json_resp({"error": "client_id required"}, status=400)
     backend = os.environ.get("BACKEND_URL", "https://benzin-ryadom.onrender.com")
     redirect = f"{backend}/api/yoomoney/callback"
-    scope = "account-info operation-history operation-details payment-p2p payment-shop"
+    scope = 'account-info operation-history payment.to-pattern("p2p-incoming").limit(,75000) money-source("wallet")'
     import urllib.parse
     auth_url = (
         "https://yoomoney.ru/oauth/authorize?"
