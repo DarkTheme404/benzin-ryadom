@@ -3897,22 +3897,20 @@ async def handle_sos_broadcast(request):
         )
     else:
         nearby = await _fetch(
-            """SELECT u.id, u.telegram_id, u.vk_id,
-                      (6371 * acos(
+            """SELECT * FROM (
+                SELECT u.id, u.telegram_id, u.vk_id,
+                    (6371 * acos(
                         cos(radians($1)) * cos(radians(s.center_lat)) *
                         cos(radians(s.center_lon) - radians($2)) +
                         sin(radians($1)) * sin(radians(s.center_lat))
-                      )) AS distance_km
-               FROM users u
-               JOIN subscriptions s ON s.user_id = u.id
-               WHERE s.center_lat IS NOT NULL
-                 AND u.id != $4
-               HAVING (6371 * acos(
-                        cos(radians($1)) * cos(radians(s.center_lat)) *
-                        cos(radians(s.center_lon) - radians($2)) +
-                        sin(radians($1)) * sin(radians(s.center_lat))
-                      )) < $3
-               ORDER BY distance_km""",
+                    )) AS distance_km
+                FROM users u
+                JOIN subscriptions s ON s.user_id = u.id
+                WHERE s.center_lat IS NOT NULL
+                    AND u.id != $4
+            ) sub
+            WHERE sub.distance_km < $3
+            ORDER BY sub.distance_km""",
             float(lat), float(lon), RADIUS_KM, uid,
         )
 
