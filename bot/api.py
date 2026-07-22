@@ -3926,8 +3926,8 @@ async def handle_sos_broadcast(request):
     # Отправляем SOS через бота — всем пользователям в радиусе (TG + VK)
     sent = 0
     try:
-        from config import settings as _settings
-        bot = _settings.bot
+        from config import settings as _cfg
+        tg_token = _cfg.BOT_TOKEN
         for row in nearby:
             tg_id = row.get("telegram_id") if isinstance(row, dict) else row[1]
             vk_id = row.get("vk_id") if isinstance(row, dict) else row[2]
@@ -3940,14 +3940,15 @@ async def handle_sos_broadcast(request):
                 f"💬 Сообщение: {msg}\n\n"
                 f"Если можешь помоги — свяжись через @darkt30"
             )
-            # Отправляем в TG
-            if tg_id and int(tg_id) > 0:
+            # Отправляем в TG через HTTP API (bot может быть None на API сервере)
+            if tg_id and int(tg_id) > 0 and tg_token:
                 try:
-                    await bot.send_message(
-                        chat_id=tg_id,
-                        text=sos_text,
-                        parse_mode="HTML",
-                    )
+                    async with aiohttp.ClientSession() as session:
+                        await session.post(
+                            f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                            json={"chat_id": tg_id, "text": sos_text, "parse_mode": "HTML"},
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        )
                     sent += 1
                 except Exception:
                     pass
@@ -4426,32 +4427,39 @@ async def handle_notify_withdrawal(request):
         f"Перейди в /withdrawals чтобы обработать"
     )
 
-    # Кнопки для быстрой обработки
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text=f"✅ #{withdrawal_id} отправил", callback_data=f"wd_paid:{withdrawal_id}"),
-            InlineKeyboardButton(text=f"❌ #{withdrawal_id} отклонить", callback_data=f"wd_reject:{withdrawal_id}"),
-        ],
-    ])
+    # Кнопки для быстрой обработки (JSON для Telegram HTTP API)
+    kb = {
+        "inline_keyboard": [[
+            {"text": f"✅ #{withdrawal_id} отправил", "callback_data": f"wd_paid:{withdrawal_id}"},
+            {"text": f"❌ #{withdrawal_id} отклонить", "callback_data": f"wd_reject:{withdrawal_id}"},
+        ]],
+    }
 
     results = {"tg": None, "vk": None}
 
     # 1. Отправляем в TG админу
     try:
         from config import settings
-        if settings.bot:
+        import aiohttp as _aiohttp
+        tg_token = settings.BOT_TOKEN
+        if tg_token:
             # Хардкод — ТВОЙ TG ID
             admin_tg_ids = list(settings.ADMIN_IDS) if settings.ADMIN_IDS else []
-            # Добавляем твой личный ID (исправлено: раньше искали по username darkt30,
-            # но в базе username=null — поэтому уведомления не доходили)
-            HARDCODED_ADMIN_IDS = [516695556, 772577887]  # darkt30 (оба аккаунта)
+            HARDCODED_ADMIN_IDS = [516695556, 772577887]
             for hid in HARDCODED_ADMIN_IDS:
                 if hid not in admin_tg_ids:
                     admin_tg_ids.append(hid)
             for admin_tid in admin_tg_ids:
                 try:
-                    await settings.bot.send_message(admin_tid, text, reply_markup=kb)
+                    async with _aiohttp.ClientSession() as _s:
+                        payload = {"chat_id": admin_tid, "text": text, "parse_mode": "HTML"}
+                        if kb:
+                            payload["reply_markup"] = kb
+                        await _s.post(
+                            f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                            json=payload,
+                            timeout=_aiohttp.ClientTimeout(total=10),
+                        )
                     results["tg"] = f"sent to {admin_tid}"
                     break
                 except Exception as e:
@@ -4521,8 +4529,15 @@ async def handle_notify_withdrawal_done(request):
     if tid:
         try:
             from config import settings
-            if settings.bot:
-                await settings.bot.send_message(tid, text)
+            tg_token = settings.BOT_TOKEN
+            if tg_token:
+                import aiohttp as _aiohttp2
+                async with _aiohttp2.ClientSession() as _s2:
+                    await _s2.post(
+                        f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                        json={"chat_id": tid, "text": text, "parse_mode": "HTML"},
+                        timeout=_aiohttp2.ClientTimeout(total=10),
+                    )
                 results["tg"] = "sent"
         except Exception as e:
             logger.warning(f"TG done notify failed: {e}")
@@ -4723,7 +4738,8 @@ async def handle_export_csv(request):
         csv_text = output.getvalue()
         return web.Response(
             text=csv_text,
-            content_type="text/csv; charset=utf-8",
+            content_type="text/csv",
+            charset="utf-8",
             headers={
                 "Content-Disposition": f'attachment; filename="{csv_type}_{days}d.csv"',
             },
