@@ -794,7 +794,7 @@ def _to_iso(dt):
 
 
 async def handle_search(request):
-    """GET /api/search?q=... — поиск АЗС по городу/имени."""
+    """GET /api/search?q=... — поиск АЗС, трасс и городов по запросу."""
     if not _check_rate(request.remote or "?", RATE_LIMIT_PER_MIN):
         return json_resp({"error": "rate limit exceeded"}, status=429)
 
@@ -802,13 +802,29 @@ async def handle_search(request):
     if len(q) < 2:
         return json_resp({"results": [], "query": q})
 
-    from db import search_routes as _search_routes
+    from db import search_routes as _search_routes, search_cities as _search_cities
     routes = await _search_routes(q, limit=10)
+    cities = await _search_cities(q, limit=5)
+
+    results = []
+    for r in routes:
+        r["type"] = "route"
+        results.append(r)
+    for c in cities:
+        results.append({
+            "id": f"city_{c['name']}",
+            "name": c["name"],
+            "lat": c.get("lat"),
+            "lon": c.get("lon"),
+            "type": "city",
+            "region": c.get("region", ""),
+            "stations_count": c.get("stations_count", 0),
+        })
 
     return json_resp({
-        "results": routes,
+        "results": results,
         "query": q,
-        "count": len(routes),
+        "count": len(results),
     })
 
 
