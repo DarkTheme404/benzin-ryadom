@@ -190,9 +190,10 @@ async def find_station(lat: float, lon: float, name: str) -> int | None:
 async def create_station(name: str, lat: float, lon: float, city: str) -> int | None:
     """Create a new station in DB."""
     try:
+        now_sql = "datetime('now')" if db.USE_SQLITE else "NOW()"
         sid = await db._execute(
-            """INSERT INTO stations (name, brand, network, city, lat, lon, is_active, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, TRUE, datetime('now'), datetime('now'))""",
+            f"""INSERT INTO stations (name, brand, network, city, lat, lon, is_active, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, TRUE, {now_sql}, {now_sql})""",
             name, name, name, city, lat, lon,
             returning=True,
         )
@@ -205,18 +206,16 @@ async def create_station(name: str, lat: float, lon: float, city: str) -> int | 
 async def save_reports(station_id: int, prices: dict, city: str, name: str) -> int:
     """Save price reports for a station. Returns count of saved reports."""
     saved = 0
-    now_iso = datetime.now(timezone.utc).isoformat()
-    expires_iso = datetime.now(timezone.utc).replace(
-        hour=datetime.now(timezone.utc).hour + 24
-    ).isoformat()
+    now_sql = "datetime('now')" if db.USE_SQLITE else "NOW()"
+    expires_sql = "datetime('now', '+24 hours')" if db.USE_SQLITE else "NOW() + INTERVAL '24 hours'"
 
     for fuel_type, price in prices.items():
         try:
             await db._execute(
-                """INSERT INTO reports
+                f"""INSERT INTO reports
                    (station_id, fuel_type, price, available, source, created_at, expires_at, comment)
-                   VALUES (?, ?, ?, TRUE, ?, datetime('now'),
-                           datetime('now', '+24 hours'), ?)""",
+                   VALUES (?, ?, ?, TRUE, ?, {now_sql},
+                           {expires_sql}, ?)""",
                 station_id, fuel_type, price, SOURCE,
                 f"[fuelmap.ru] {city}: {name} {fuel_type}={price}₽",
             )
@@ -270,7 +269,11 @@ async def process_city(
 
 async def load_city_slugs(limit: int = 0) -> list[str]:
     """Load city slugs from file or generate from DB."""
-    slugs_file = "/tmp/fuelmap_city_slugs.txt"
+    # Check scripts dir first, then /tmp
+    scripts_dir = os.path.dirname(__file__)
+    slugs_file = os.path.join(scripts_dir, "fuelmap_city_slugs.txt")
+    if not os.path.exists(slugs_file):
+        slugs_file = "/tmp/fuelmap_city_slugs.txt"
     if os.path.exists(slugs_file):
         with open(slugs_file, "r") as f:
             slugs = [line.strip() for line in f if line.strip()]
