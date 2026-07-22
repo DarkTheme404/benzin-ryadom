@@ -16,6 +16,7 @@ from aiohttp import web
 
 from db import (
     USE_SQLITE,
+    _fetch,
     add_report,
     add_review,
     find_nearest_stations,
@@ -3925,7 +3926,8 @@ async def handle_sos_broadcast(request):
     # Отправляем SOS через бота — всем пользователям в радиусе (TG + VK)
     sent = 0
     try:
-        from bot_instance import bot
+        from config import settings as _settings
+        bot = _settings.bot
         for row in nearby:
             tg_id = row.get("telegram_id") if isinstance(row, dict) else row[1]
             vk_id = row.get("vk_id") if isinstance(row, dict) else row[2]

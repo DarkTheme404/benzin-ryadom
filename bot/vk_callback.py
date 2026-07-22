@@ -275,6 +275,40 @@ async def handle_start(peer_id: int) -> None:
     uid = await _ensure_user(peer_id)
     if uid:
         await log_event(uid, "vk_start")
+
+    # === Принятие юридических документов (обязательно) ===
+    try:
+        import aiohttp
+        backend = settings.BACKEND_URL
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/user/legal-status",
+                params={"vk_id": peer_id},
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as r:
+                status = await r.json()
+        if not status.get("legal_accepted"):
+            legal_kb = vk_keyboard([
+                [_link_button("📄 Пользовательское соглашение", f"{backend}/legal/terms.html"),
+                 _link_button("🔒 Политика конфиденциальности", f"{backend}/legal/privacy.html")],
+                [_link_button("✅ Согласие на обработку ПДн", f"{backend}/legal/consent.html"),
+                 _link_button("⚠️ Дисклеймер", f"{backend}/legal/disclaimer.html")],
+                [_callback_button("✅ Принять все документы", {"a": "accept_legal"}, color="positive")],
+            ])
+            await _vk_send(peer_id,
+                "👋 <b>Привет!</b>\n\n"
+                "Перед использованием бота необходимо принять юридические документы:\n\n"
+                "📄 Пользовательское соглашение\n"
+                "🔒 Политика конфиденциальности\n"
+                "✅ Согласие на обработку ПДн (152-ФЗ)\n"
+                "⚠️ Дисклеймер\n\n"
+                "Открой каждый документ (это важно) и нажми «Принять все».\n"
+                "Без согласия с документами бот не работает.",
+                legal_kb)
+            return
+    except Exception as e:
+        logger.warning("VK legal check failed: %s", e)
+
     text = (
         "👋 Привет! Я — Бензин рядом.\n\n"
         "Помогу найти бензин за 5 секунд. 26 000+ АЗС в России.\n\n"
@@ -1919,6 +1953,28 @@ async def process_message_event(event: dict) -> None:
     if action == "home":
         _clear_state(peer_id)
         await _vk_send(peer_id, "Главное меню:", vk_main_menu())
+
+    elif action == "accept_legal":
+        # Принятие юридических документов
+        try:
+            import aiohttp
+            backend = settings.BACKEND_URL
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{backend}/api/user/accept-legal",
+                    json={"vk_id": peer_id, "version": "2026-07-21"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    resp = await r.json()
+            if resp and resp.get("ok"):
+                await _vk_send(peer_id,
+                    "🎉 <b>Документы приняты!</b>\n\n"
+                    "Добро пожаловать в «Бензин рядом»! Можешь пользоваться ботом 👇",
+                    vk_main_menu())
+            else:
+                await _vk_send(peer_id, f"❌ Ошибка: {resp.get('error', 'неизвестно')}", vk_main_menu())
+        except Exception as e:
+            await _vk_send(peer_id, f"❌ Ошибка соединения: {e}", vk_main_menu())
 
     elif action == "find":
         logger.info("[vk-cb-router] calling handle_find for peer=%d", peer_id)

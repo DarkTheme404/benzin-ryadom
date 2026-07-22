@@ -334,6 +334,46 @@ async def cmd_start(message: Message):
     first_name = message.from_user.first_name or "друг"
     telegram_id = _tg_id(message)
 
+    # === Принятие юридических документов (обязательно) ===
+    try:
+        import aiohttp
+        backend = settings.BACKEND_URL
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{backend}/api/user/legal-status",
+                params={"telegram_id": telegram_id},
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as r:
+                status = await r.json()
+        if not status.get("legal_accepted"):
+            docs_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="📄 Пользовательское соглашение", url=f"{backend}/legal/terms.html"),
+                    InlineKeyboardButton(text="🔒 Политика конфиденциальности", url=f"{backend}/legal/privacy.html"),
+                ],
+                [
+                    InlineKeyboardButton(text="✅ Согласие на обработку ПДн", url=f"{backend}/legal/consent.html"),
+                    InlineKeyboardButton(text="⚠️ Дисклеймер", url=f"{backend}/legal/disclaimer.html"),
+                ],
+                [
+                    InlineKeyboardButton(text="✅ Принять все документы", callback_data="accept_legal"),
+                ],
+            ])
+            await message.answer(
+                f"👋 <b>Привет, {first_name}!</b>\n\n"
+                f"Перед использованием бота необходимо принять юридические документы:\n\n"
+                f"📄 Пользовательское соглашение\n"
+                f"🔒 Политика конфиденциальности\n"
+                f"✅ Согласие на обработку ПДн (152-ФЗ)\n"
+                f"⚠️ Дисклеймер\n\n"
+                f"Открой каждый документ (это важно) и нажми кнопку «Принять все».\n"
+                f"Без согласия с документами бот не работает.",
+                reply_markup=docs_kb,
+            )
+            return
+    except Exception as e:
+        logger.warning(f"legal check failed: {e}")
+
     # Проверяем реферальный код в /start ref_XXXX
     text = (message.text or "").strip()
     if "ref_" in text:
@@ -4348,6 +4388,37 @@ async def cmd_withdrawals(message: Message):
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
 
 
+async def accept_legal_callback(callback: CallbackQuery):
+    """Принятие юридических документов через кнопку в TG боте."""
+    import aiohttp
+    telegram_id = callback.from_user.id
+    backend = settings.BACKEND_URL
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{backend}/api/user/accept-legal",
+                json={"telegram_id": telegram_id, "version": "2026-07-21"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                resp = await r.json()
+        if resp and resp.get("ok"):
+            await callback.answer("✅ Документы приняты! Добро пожаловать.", show_alert=True)
+            # Покажем главное меню
+            await callback.message.answer(
+                "🎉 <b>Документы приняты!</b>\n\nМожешь пользоваться ботом 👇",
+                reply_markup=main_menu_keyboard(),
+            )
+            # Удалим старое сообщение с кнопками
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+        else:
+            await callback.answer("❌ Ошибка: " + str(resp.get("error", "неизвестно")), show_alert=True)
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка соединения: {e}", show_alert=True)
+
+
 async def wd_process_callback(callback: CallbackQuery):
     """Обработка кнопок ✅/❌ для заявки на вывод. Уведомляет юзера после paid."""
     if not settings.is_admin(user_id=callback.from_user.id, username=callback.from_user.username):
@@ -4605,6 +4676,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.callback_query.register(ref_withdraw_callback, F.data == "ref_withdraw")
     dp.callback_query.register(wd_process_callback, F.data.startswith("wd_paid:"))
     dp.callback_query.register(wd_process_callback, F.data.startswith("wd_reject:"))
+    dp.callback_query.register(accept_legal_callback, F.data == "accept_legal")
 
     # IMPORTANT: handle_main_button должен быть ПОСЛЕДНИМ —
     # он перехватывает все текстовые сообщения.
