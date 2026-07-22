@@ -2674,6 +2674,27 @@ async def show_city_results(msg, city: str, fuel: str = None, max_price: float =
         title = f"⛽ <b>{city}</b> — найдено {len(stations_with_status)} АЗС"
         if filter_desc:
             title += f"\n<i>Фильтры: {', '.join(filter_desc)}</i>"
+
+        # Проверяем свежесть данных
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        max_age_days = 0
+        for s in stations_with_status:
+            for st in s.get("statuses", []):
+                updated = st.get("updated_at") or st.get("created_at")
+                if updated:
+                    if isinstance(updated, str):
+                        try:
+                            updated = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                        except Exception:
+                            continue
+                    if updated.tzinfo is None:
+                        updated = updated.replace(tzinfo=timezone.utc)
+                    age = (now - updated).days
+                    if age > max_age_days:
+                        max_age_days = age
+        if max_age_days > 3:
+            title += f"\n\n⚠️ <i>Данные устарели ({max_age_days} дн). Помоги — сообщи актуальные цены!</i>"
         title += "\n"
 
         buttons = []
