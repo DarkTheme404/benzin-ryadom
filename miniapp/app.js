@@ -547,6 +547,10 @@
     } else if (tab === 'route-fuel') {
       if (mainEl) mainEl.hidden = false;
       showScreen('route-fuel');
+    } else if (tab === 'anti-traffic') {
+      if (mainEl) mainEl.hidden = true;
+      const el = document.getElementById('tab-anti-traffic');
+      if (el) el.hidden = false;
     } else {
       if (mainEl) mainEl.hidden = false;
       if (tab === 'home') showScreen('home');
