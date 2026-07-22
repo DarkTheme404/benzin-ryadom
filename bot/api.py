@@ -1962,6 +1962,19 @@ async def handle_parse(request):
             except Exception as e:
                 results["benzinmap"] = str(e)
 
+            # fuelmap.ru — цены на АЗС по всей России (1914 городов)
+            try:
+                import parse_fuelmap
+                await asyncio.wait_for(
+                    parse_fuelmap.main(),
+                    timeout=600.0,
+                )
+                results["fuelmap"] = "ok"
+            except asyncio.TimeoutError:
+                results["fuelmap"] = "timeout (600s)"
+            except Exception as e:
+                results["fuelmap"] = str(e)
+
             # === Долгие парсеры — в ПАРАЛЛЕЛЬ с таймаутом ===
             async def _run_gdebenz():
                 try:

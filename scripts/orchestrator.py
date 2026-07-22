@@ -71,6 +71,7 @@ parse_benzin_price = _safe_import("parse_benzin_price")
 parse_yandex_fuel = _safe_import("parse_yandex_fuel")
 parse_benzinmap = _safe_import("parse_benzinmap")
 parse_azslive = _safe_import("parse_azslive")
+parse_fuelmap = _safe_import("parse_fuelmap")
 
 
 # Топ городов России по населению (включая Крым, ЛНР, ДНР)
@@ -558,6 +559,22 @@ async def parse_azslive_runner():
     return {}
 
 
+async def parse_fuelmap_runner():
+    """Запускает fuelmap.ru парсер (1914 городов, цены на АЗС)."""
+    if not parse_fuelmap:
+        print("  ⏭ parse_fuelmap не импортирован")
+        return {}
+    print(f"\n[fuelmap.ru] 1914 городов, цены на АЗС")
+    try:
+        sys.argv = ["parse_fuelmap.py"]
+        await parse_fuelmap.main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"  ⚠ fuelmap: {e}")
+    return {}
+
+
 SOURCES = {
     "gdebenz": {
         "name": "gdebenz.ru (2700+ городов, краудсорсинг наличия)",
@@ -683,6 +700,12 @@ SOURCES = {
         "name": "azslive.ru (26K АЗС, наличие топлива)",
         "function": parse_azslive_runner,
         "interval_hours": 2,
+        "enabled": True,
+    },
+    "fuelmap": {
+        "name": "fuelmap.ru (1914 городов, цены на АЗС)",
+        "function": parse_fuelmap_runner,
+        "interval_hours": 6,
         "enabled": True,
     },
 }
