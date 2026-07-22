@@ -604,47 +604,34 @@
   }
 
   async function renderCities(query = '') {
-    if (state.cities.length === 0) {
-      try {
-        const data = await api('/api/search?q=');
-        state.cities = (data.stations || []).slice(0, 20);
-      } catch (e) {}
-    }
-    // For now show top cities - we don't have a /cities endpoint
-    // Will use Moscow, SPb, etc as defaults if no data
-    const popular = ['Москва', 'Санкт-Петербург', 'Новосибирск', 'Екатеринбург',
-      'Казань', 'Нижний Новгород', 'Челябинск', 'Самара', 'Омск', 'Ростов-на-Дону',
-      'Уфа', 'Красноярск', 'Воронеж', 'Пермь', 'Волгоград', 'Краснодар',
-      'Саратов', 'Тюмень', 'Тольятти', 'Ижевск', 'Барнаул', 'Иркутск',
-      'Ульяновск', 'Хабаровск', 'Владивосток', 'Ярославль', 'Махачкала',
-      'Томск', 'Оренбург', 'Кемерово', 'Новокузнецк', 'Рязань', 'Астрахань',
-      'Пенза', 'Липецк', 'Тула', 'Киров', 'Чебоксары', 'Калининград',
-      'Брянск', 'Курск', 'Иваново', 'Магнитогорск', 'Улан-Удэ', 'Тверь',
-      'Ставрополь', 'Белгород', 'Архангельск', 'Владимир', 'Сочи', 'Калуга',
-      'Сургут', 'Смоленск', 'Вологда', 'Чита', 'Каменск-Уральский'];
-    const q = query.trim().toLowerCase();
-    const filtered = q ? popular.filter(c => c.toLowerCase().includes(q)) : popular;
-
-    dom.citiesList.innerHTML = '';
-    if (filtered.length === 0) {
-      dom.citiesList.innerHTML = '<div class="empty-mini">Ничего не найдено</div>';
-      return;
-    }
-    filtered.forEach(city => {
-      const item = document.createElement('div');
-      item.className = 'city-item';
-      item.innerHTML = `
-        <div class="city-item-icon">📍</div>
-        <div class="city-item-name">${city}</div>
-        <div class="city-item-count">›</div>
-      `;
-      item.addEventListener('click', () => {
-        haptic('light');
-        setCity(city);
-        showScreen('home');
+    const q = query.trim();
+    try {
+      const data = await api(`/api/cities?q=${encodeURIComponent(q)}&limit=100`);
+      const cities = data.cities || [];
+      dom.citiesList.innerHTML = '';
+      if (cities.length === 0) {
+        dom.citiesList.innerHTML = '<div class="empty-mini">Ничего не найдено</div>';
+        return;
+      }
+      cities.forEach(c => {
+        const item = document.createElement('div');
+        item.className = 'city-item';
+        const count = c.stations_count || 0;
+        item.innerHTML = `
+          <div class="city-item-icon">📍</div>
+          <div class="city-item-name">${escape(c.name)}${c.region ? ' <span style="opacity:0.5;font-size:0.8em">' + escape(c.region) + '</span>' : ''}</div>
+          <div class="city-item-count">${count} АЗС ›</div>
+        `;
+        item.addEventListener('click', () => {
+          haptic('light');
+          setCity(c.name);
+          showScreen('home');
+        });
+        dom.citiesList.appendChild(item);
       });
-      dom.citiesList.appendChild(item);
-    });
+    } catch (e) {
+      dom.citiesList.innerHTML = '<div class="empty-mini">Ошибка загрузки</div>';
+    }
   }
 
   // ============= STATIONS =============
