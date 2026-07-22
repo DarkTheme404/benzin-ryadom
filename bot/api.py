@@ -3962,6 +3962,7 @@ async def handle_sos_broadcast(request):
                     pass
     except Exception as e:
         logger.exception(f"SOS broadcast error: {e}")
+        return json_resp({"error": str(e)}, status=500)
 
     return json_resp({
         "ok": True,
