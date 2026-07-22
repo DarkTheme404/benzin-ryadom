@@ -392,8 +392,10 @@ async def fetch_stations(area: dict, session: aiohttp.ClientSession) -> list:
         return []
 
 
+_station_cache = {}  # (name, lat, lon) -> station_id
+
 async def find_or_create_station(station_data: dict, area_name: str) -> Optional[int]:
-    """Находит или создаёт станцию по данным gdebenz.ru."""
+    """Находит или создаёт станцию по данным gdebenz.ru. Кеширует в памяти."""
     osm_id = station_data.get("osm_id", "")
     name = station_data.get("name", "АЗС")
     brand = station_data.get("brand", "")
@@ -403,12 +405,18 @@ async def find_or_create_station(station_data: dict, area_name: str) -> Optional
     if not lat or not lon:
         return None
 
+    # Проверяем кеш (с округлением координат до 0.01)
+    cache_key = (name, round(lat, 2), round(lon, 2))
+    if cache_key in _station_cache:
+        return _station_cache[cache_key]
+
     # Ищем по названию + координатам
     existing = await db._fetch(
         """SELECT id FROM stations WHERE name LIKE ? AND ABS(lat - ?) < 0.01 AND ABS(lon - ?) < 0.01 LIMIT 1""",
         f"%{name}%", lat, lon
     )
     if existing:
+        _station_cache[cache_key] = existing[0]["id"]
         return existing[0]["id"]
 
     # Создаём новую станцию
@@ -426,12 +434,16 @@ async def find_or_create_station(station_data: dict, area_name: str) -> Optional
 
     cursor = await db._execute(
         f"""INSERT INTO stations (name, operator, brand, city, lat, lon, address, fuel_types, is_active, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, {1 if db.USE_SQLITE else True}, {'datetime(\"now\")' if db.USE_SQLITE else 'NOW()'})""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, {1 if db.USE_SQLITE else True}, {'datetime("now")' if db.USE_SQLITE else 'NOW()'})""",
         name, brand, brand, city, lat, lon, station_data.get("addr", ""), default_fuel,
         returning=True
     )
+    if cursor:
+        _station_cache[cache_key] = cursor
     return cursor
 
+
+_report_cache = set()  # (station_id, fuel_type) — уже обработаны в этом запуске
 
 async def save_reports(stations_data: list, area_name: str):
     """Сохраняет отчёты о наличии топлива."""
@@ -467,39 +479,28 @@ async def save_reports(stations_data: list, area_name: str):
 
         if not fuel_types:
             # Сохраняем общий статус станции без конкретного типа топлива
+            cache_key = (station_id, "all")
+            if cache_key in _report_cache:
+                continue
+            _report_cache.add(cache_key)
+
             message = f"[gdebenz.ru] {area_name}: status={status}"
             if conflict:
                 message += f" | конфликт данных"
 
-            # Проверяем дубликаты
             if db.USE_SQLITE:
-                existing = await db._fetch(
-                    """SELECT id FROM reports
-                       WHERE station_id=? AND source='gdebenz'
-                       AND created_at > datetime('now', '-1 hour') LIMIT 1""",
-                    station_id
+                await db._execute(
+                    """INSERT INTO reports (station_id, fuel_type, available, source, created_at, expires_at, comment)
+                       VALUES (?, ?, ?, ?, datetime('now'), datetime('now', '+2 hours'), ?)""",
+                    station_id, "all", available, "gdebenz", message[:500],
                 )
             else:
-                existing = await db._fetch(
-                    """SELECT id FROM reports
-                       WHERE station_id=$1 AND source='gdebenz'
-                       AND created_at > NOW() - INTERVAL '1 hour' LIMIT 1""",
-                    station_id
+                await db._execute(
+                    """INSERT INTO reports (station_id, fuel_type, available, source, created_at, expires_at, comment)
+                       VALUES (?, ?, ?, ?, NOW(), NOW() + INTERVAL '2 hours', ?)""",
+                    station_id, "all", available, "gdebenz", message[:500],
                 )
-            if not existing:
-                if db.USE_SQLITE:
-                    await db._execute(
-                        """INSERT INTO reports (station_id, fuel_type, available, source, created_at, expires_at, comment)
-                           VALUES (?, ?, ?, ?, datetime('now'), datetime('now', '+2 hours'), ?)""",
-                        station_id, "all", available, "gdebenz", message[:500],
-                    )
-                else:
-                    await db._execute(
-                        """INSERT INTO reports (station_id, fuel_type, available, source, created_at, expires_at, comment)
-                           VALUES (?, ?, ?, ?, NOW(), NOW() + INTERVAL '2 hours', ?)""",
-                        station_id, "all", available, "gdebenz", message[:500],
-                    )
-                saved += 1
+            saved += 1
             continue
 
         for fuel_type in fuel_types:
@@ -512,23 +513,11 @@ async def save_reports(stations_data: list, area_name: str):
             }
             normalized_fuel = fuel_map.get(fuel_type, fuel_type)
 
-            # Проверяем дубликаты
-            if db.USE_SQLITE:
-                existing = await db._fetch(
-                    """SELECT id FROM reports
-                       WHERE station_id=? AND fuel_type=? AND source='gdebenz'
-                       AND created_at > datetime('now', '-2 hours') LIMIT 1""",
-                    station_id, normalized_fuel
-                )
-            else:
-                existing = await db._fetch(
-                    """SELECT id FROM reports
-                       WHERE station_id=$1 AND fuel_type=$2 AND source='gdebenz'
-                       AND created_at > NOW() - INTERVAL '2 hours' LIMIT 1""",
-                    station_id, normalized_fuel
-                )
-            if existing:
+            # Проверяем кеш (вместо DB query)
+            cache_key = (station_id, normalized_fuel)
+            if cache_key in _report_cache:
                 continue
+            _report_cache.add(cache_key)
 
             message = f"[gdebenz.ru] {area_name}: {status}"
             if fuels_now:
@@ -566,29 +555,77 @@ async def main():
         await db.init_db()
     await db.stale_old_reports("gdebenz")
 
+    # Сброс кешей
+    _station_cache.clear()
+    _report_cache.clear()
+
     total_saved = 0
     total_stations = 0
     areas_with_data = 0
     areas_no_data = 0
 
+    # Загружаем список "мёртвых" областей (которые вернули 0 станций)
+    dead_areas_file = os.path.join(os.path.dirname(__file__), ".gdebenz_dead_areas.json")
+    dead_areas = set()
+    try:
+        with open(dead_areas_file) as f:
+            dead_areas = set(json.load(f))
+    except Exception:
+        pass
+
+    # Фильтруем: пропускаем мёртвые области (кроме Москвы/СПб/Казани — их всегда парсим)
+    always_parse = {"Москва", "Москва (восток)", "Москва (запад)", "СПб", "СПб (центр)",
+                    "Казань", "Екатеринбург", "Новосибирск", "Нижний Новгород"}
+    areas_to_parse = [a for a in SEARCH_AREAS
+                      if a["name"] in always_parse or a["name"] not in dead_areas]
+
+    logger.info(f"Parsing {len(areas_to_parse)}/{len(SEARCH_AREAS)} areas "
+                f"(skipped {len(SEARCH_AREAS) - len(areas_to_parse)} dead)")
+
+    semaphore = asyncio.Semaphore(15)  # 15 параллельных запросов
+    new_dead = set()
+
+    async def _fetch_one(area, sess):
+        async with semaphore:
+            stations = await fetch_stations(area, sess)
+            await asyncio.sleep(0.15)  # мини-пауза чтобы не задdosить
+            return area, stations
+
+    async def _process_area(area, stations, sess):
+        nonlocal total_saved, total_stations, areas_with_data, areas_no_data
+        if stations:
+            count = await save_reports(stations, area["name"])
+            total_saved += count
+            total_stations += len(stations)
+            areas_with_data += 1
+            logger.info(f"✓ {area['name']}: {len(stations)} stations, {count} reports")
+        else:
+            areas_no_data += 1
+            new_dead.add(area["name"])
+            logger.debug(f"✗ {area['name']}: no data")
+
     async with aiohttp.ClientSession() as session:
-        for i, area in enumerate(SEARCH_AREAS):
-            stations = await fetch_stations(area, session)
-            if stations:
-                count = await save_reports(stations, area["name"])
-                total_saved += count
-                total_stations += len(stations)
-                areas_with_data += 1
-                logger.info(f"[{i+1}/{len(SEARCH_AREAS)}] {area['name']}: {len(stations)} stations, {count} reports")
-            else:
-                areas_no_data += 1
-                logger.debug(f"[{i+1}/{len(SEARCH_AREAS)}] {area['name']}: no data")
-            # Задержка чтобы не получить 502 от rate limiter
-            if i < len(SEARCH_AREAS) - 1:
-                await asyncio.sleep(0.5)
+        # Запускаем все запросы параллельно
+        tasks = [_fetch_one(area, session) for area in areas_to_parse]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Сохраняем результаты последовательно (DB writes не должны быть параллельными)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"Fetch error: {result}")
+                continue
+            area, stations = result
+            await _process_area(area, stations, session)
+
+    # Сохраняем список мёртвых областей
+    try:
+        with open(dead_areas_file, "w") as f:
+            json.dump(list(new_dead), f)
+    except Exception:
+        pass
 
     logger.info(f"\n=== GDEBENZ ИТОГО ===")
-    logger.info(f"  Областей: {len(SEARCH_AREAS)} (с данными: {areas_with_data}, без: {areas_no_data})")
+    logger.info(f"  Областей: {len(areas_to_parse)} (с данными: {areas_with_data}, без: {areas_no_data})")
     logger.info(f"  Станций: {total_stations}")
     logger.info(f"  Отчётов сохранено: {total_saved}")
 
