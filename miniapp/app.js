@@ -285,8 +285,21 @@
     const h = Math.floor(m / 60);
     if (h < 24) return `${h} ч назад`;
     const d = Math.floor(h / 24);
-    if (d < 7) return `${d} дн назад`;
+    if (d < 30) return `${d} дн назад`;
     return t.toLocaleDateString('ru-RU');
+  }
+
+  function getDataAgeDays(iso) {
+    if (!iso) return 999;
+    const t = typeof iso === 'string' ? new Date(iso) : iso;
+    return Math.floor((Date.now() - t.getTime()) / 86400000);
+  }
+
+  function dataAgeWarning(ageDays) {
+    if (ageDays <= 1) return '';
+    if (ageDays <= 3) return `<div style="font-size:11px;color:#fbbf24;margin-top:2px">⚠️ Данные обновлялись ${ageDays} дн назад</div>`;
+    if (ageDays <= 7) return `<div style="font-size:11px;color:#f97316;margin-top:2px">⚠️ Данные устарели (${ageDays} дн). Сообщите актуальные цены!</div>`;
+    return `<div style="font-size:11px;color:#ef4444;margin-top:2px">🚨 Данные очень старые (${ageDays} дн). Помогите — обновите цены!</div>`;
   }
 
   function fuelLabel(f) {
@@ -719,6 +732,8 @@
     // Updated
     const lastUpdate = statuses[0]?.created_at;
     const updated = lastUpdate ? formatTimeAgo(lastUpdate) : '';
+    const ageDays = getDataAgeDays(lastUpdate);
+    const ageWarning = dataAgeWarning(ageDays);
 
     card.innerHTML = `
       <div class="station-card-row">
@@ -731,6 +746,7 @@
         </div>
       ` : ''}
       ${prices.length > 0 ? `<div class="station-prices">${pricesHtml}</div>` : ''}
+      ${ageWarning}
       <div class="station-footer">
         <span class="station-updated">${updated ? '🕐 ' + updated : 'Нет данных'}</span>
         <div class="station-actions-mini">
@@ -1028,6 +1044,8 @@
     // Last update
     const lastUpdate = statuses[0]?.created_at;
     const updated = lastUpdate ? formatTimeAgo(lastUpdate) : '—';
+    const ageDays = getDataAgeDays(lastUpdate);
+    const ageWarning = dataAgeWarning(ageDays);
 
     // Sources summary from prices API
     let sourcesHtml = '';
@@ -1061,6 +1079,7 @@
             <div class="meta-value">${updated}</div>
           </div>
         </div>
+        ${ageWarning ? `<div style="padding:8px 12px;background:rgba(239,68,68,0.08);border-radius:8px;margin-top:10px;">${ageWarning}</div>` : ''}
       </div>
 
       <div class="section-header">
