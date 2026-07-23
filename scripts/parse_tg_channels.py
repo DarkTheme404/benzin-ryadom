@@ -381,6 +381,87 @@ DEFAULT_CHANNELS = [
     "benzin_kholod_ufa",    # Бензин холодный Уфа
     "benzin_kholod_chelyabinsk", # Бензин холодный Челябинск
     "benzin_kholod_irkutsk", # Бензин холодный Иркутск
+    # === ДОПОЛНИТЕЛЬНЫЕ ДЛЯ НЕПОКРЫТЫХ ГОРОДОВ ===
+    "toplivo_magnitogorsk",     # Магнитогорск
+    "toplivo_chelny",           # Набережные Челны
+    "toplivo_vladikavkaz",      # Владикавказ
+    "toplivo_simferopol",       # Симферополь
+    "toplivo_sevastopol",       # Севастополь
+    "toplivo_grozny",           # Грозный
+    "toplivo_elista",           # Элиста
+    "toplivo_abakan",           # Абакан
+    "toplivo_gorno_altaysk",    # Горно-Алтайск
+    "toplivo_kyzyl",            # Кызыл
+    "toplivo_magadan",          # Магадан
+    "toplivo_petropavlovsk_kamchatskiy", # Петропавловск-Камчатский
+    "toplivo_yuzhno_sakhalinsk",# Южно-Сахалинск
+    "toplivo_nalchik",          # Нальчик
+    "toplivo_karachaevsk",      # Карачаевск
+    "toplivo_stavropol_dop2",   # Ставрополь доп
+    "toplivo_belgorod",         # Белгород
+    "toplivo_orl",              # Орёл
+    "toplivo_oryol",            # Орёл (латиница)
+    "toplivo_pskov",            # Псков
+    "toplivo_novgorod",         # Великий Новгород
+    "toplivo_vologda",          # Вологда
+    "toplivo_syktyvkar",        # Сыктывкар
+    "toplivo_murmansk_dop",     # Мурманск доп
+    "toplivo_arkhangelsk_dop",  # Архангельск доп
+    "toplivo_kostroma_dop2",    # Кострома доп2
+    "toplivo_ivanovo_dop2",     # Иваново доп2
+    "toplivo_vladimir_dop2",    # Владимир доп2
+    "toplivo_smolensk_dop2",    # Смоленск доп2
+    "toplivo_bryansk_dop2",     # Брянск доп2
+    "toplivo_kursk_dop2",       # Курск доп2
+    "toplivo_lipetsk_dop2",     # Липецк доп2
+    "toplivo_tambov_dop2",      # Тамбов доп2
+    "toplivo_penza_dop2",       # Пенза доп2
+    "toplivo_saratov_dop2",     # Саратов доп2
+    "toplivo_volgograd_dop2",   # Волгоград доп2
+    "toplivo_astrakhan_dop2",   # Астрахань доп2
+    "toplivo_kazan_dop2",       # Казань доп2
+    "toplivo_samara_dop2",      # Самара доп2
+    "toplivo_ufa_dop2",         # Уфа доп2
+    "toplivo_izhevsk_dop2",     # Ижевск доп2
+    "toplivo_cheboksary_dop2",  # Чебоксары доп2
+    "toplivo_perm_dop2",        # Пермь доп2
+    "toplivo_orenburg_dop2",    # Оренбург доп2
+    "toplivo_ulyanovsk_dop2",   # Ульяновск доп2
+    "toplivo_saransk_dop2",     # Саранск доп2
+    "toplivo_togliatti_dop2",   # Тольятти доп2
+    "toplivo_ekb_dop2",         # Екатеринбург доп2
+    "toplivo_chelyabinsk_dop2", # Челябинск доп2
+    "toplivo_tyumen_dop2",      # Тюмень доп2
+    "toplivo_kurgan_dop2",      # Курган доп2
+    "toplivo_nsk_dop2",         # Новосибирск доп2
+    "toplivo_barnaul_dop2",     # Барнаул доп2
+    "toplivo_krasnoyarsk_dop2", # Красноярск доп2
+    "toplivo_kemerovo_dop2",    # Кемерово доп2
+    "toplivo_novokuznetsk_dop2",# Новокузнецк доп2
+    "toplivo_omsk_dop2",        # Омск доп2
+    "toplivo_tomsk_dop2",       # Томск доп2
+    "toplivo_chita_dop2",       # Чита доп2
+    "toplivo_khabarovsk_dop2",  # Хабаровск доп2
+    "toplivo_vladivostok_dop2", # Владивосток доп2
+    "toplivo_yakutsk_dop2",     # Якутск доп2
+    "toplivo_krd_dop2",         # Краснодар доп2
+    "toplivo_sochi_dop2",       # Сочи доп2
+    # === ВОДИТЕЛЬСКИЕ — ДЛЯ НЕПОКРЫТЫХ ===
+    "voditeli_magnitogorsk",    # Водители Магнитогорск
+    "voditeli_chelny",          # Водители Наб.Челны
+    "voditeli_vladikavkaz",     # Водители Владикавказ
+    "voditeli_simferopol",      # Водители Симферополь
+    "voditeli_sevastopol",      # Водители Севастополь
+    "voditeli_grozny",          # Водители Грозный
+    "voditeli_abakan",          # Водители Абакан
+    "voditeli_kyzyl",           # Водители Кызыл
+    "voditeli_nalchik",         # Водители Нальчик
+    "voditeli_belgorod",        # Водители Белгород
+    "voditeli_orl",             # Водители Орёл
+    "voditeli_pskov",           # Водители Псков
+    "voditeli_novgorod",        # Водители Великий Новгород
+    "voditeli_vologda",         # Водители Вологда
+    "voditeli_syktyvkar",       # Водители Сыктывкар
 ]
 
 CHANNELS = list(DEFAULT_CHANNELS)
@@ -685,6 +766,43 @@ CHANNEL_CITY_HINTS: dict[str, str] = {
     "gde_zalit_archangelsk": "Архангельск",
     "gde_zalit_surgut": "Сургут",
     "gde_zalit_nizhnevartovsk": "Нижневартовск",
+    # === Дополнительные для непокрытых ===
+    "toplivo_magnitogorsk": "Магнитогорск",
+    "toplivo_chelny": "Набережные Челны",
+    "toplivo_vladikavkaz": "Владикавказ",
+    "toplivo_simferopol": "Симферополь",
+    "toplivo_sevastopol": "Севастополь",
+    "toplivo_grozny": "Грозный",
+    "toplivo_elista": "Элиста",
+    "toplivo_abakan": "Абакан",
+    "toplivo_gorno_altaysk": "Горно-Алтайск",
+    "toplivo_kyzyl": "Кызыл",
+    "toplivo_magadan": "Магадан",
+    "toplivo_petropavlovsk_kamchatskiy": "Петропавловск-Камчатский",
+    "toplivo_yuzhno_sakhalinsk": "Южно-Сахалинск",
+    "toplivo_nalchik": "Нальчик",
+    "toplivo_karachaevsk": "Карачаевск",
+    "toplivo_belgorod": "Белгород",
+    "toplivo_orl": "Орёл",
+    "toplivo_oryol": "Орёл",
+    "toplivo_novgorod": "Великий Новгород",
+    "toplivo_vologda": "Вологда",
+    "toplivo_syktyvkar": "Сыктывкар",
+    "voditeli_magnitogorsk": "Магнитогорск",
+    "voditeli_chelny": "Набережные Челны",
+    "voditeli_vladikavkaz": "Владикавказ",
+    "voditeli_simferopol": "Симферополь",
+    "voditeli_sevastopol": "Севастополь",
+    "voditeli_grozny": "Грозный",
+    "voditeli_abakan": "Абакан",
+    "voditeli_kyzyl": "Кызыл",
+    "voditeli_nalchik": "Нальчик",
+    "voditeli_belgorod": "Белгород",
+    "voditeli_orl": "Орёл",
+    "voditeli_pskov": "Псков",
+    "voditeli_novgorod": "Великий Новгород",
+    "voditeli_vologda": "Вологда",
+    "voditeli_syktyvkar": "Сыктывкар",
 }
 
 logging.basicConfig(
