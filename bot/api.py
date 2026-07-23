@@ -217,15 +217,123 @@ async def handle_health(request):
     return json_resp({"status": "ok"})
 
 
-_scheduler_status = {}  # name -> {last_run, last_ok, last_error, running}
+_scheduler_status = {}
+_last_parse_trigger = 0  # timestamp of last parse trigger
+
+
+async def handle_parse_test(request):
+    """GET /api/parse-test?parser=fuelmap — run one parser synchronously and return output.
+    
+    Public endpoint (no auth) — for debugging on Render.
+    """
+    parser_name = request.query.get("parser", "fuelmap")
+    valid_parsers = {
+        "fuelmap": (["parse_fuelmap"], 1200),
+        "gdebenz": (["parse_gdebenz"], 3600),
+        "ishubenzin": (["parse_ishubenzin"], 600),
+        "benzinmap": (["parse_benzinmap"], 300),
+        "fuelprice": (["parse_fuelprice", "--create-new"], 600),
+        "benzin_status_tech": (["parse_benzin_status_tech"], 300),
+    }
+    if parser_name not in valid_parsers:
+        return json_resp({"error": f"unknown parser. valid: {list(valid_parsers.keys())}"}, status=400)
+
+    import sys as _sys
+    import io
+    import traceback as _tb
+    scripts_dir = str(Path(__file__).parent.parent / "scripts")
+    if scripts_dir not in _sys.path:
+        _sys.path.insert(0, scripts_dir)
+
+    import db as _db_mod
+    _db_mod.API_MODE = True
+
+    cmd, timeout = valid_parsers[parser_name]
+    log_stream = io.StringIO()
+    log_handler = logging.StreamHandler(log_stream)
+    log_handler.setLevel(logging.DEBUG)
+    log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+
+    root_logger = logging.getLogger()
+    root_logger.addHandler(log_handler)
+
+    result = {"parser": parser_name, "timeout": timeout}
+    try:
+        mod = __import__(cmd[0])
+        _sys.argv = cmd
+        logger.info(f"[parse-test] Starting {parser_name} (timeout={timeout}s)...")
+        await asyncio.wait_for(mod.main(), timeout=timeout)
+        result["ok"] = True
+        logger.info(f"[parse-test] {parser_name} completed OK")
+    except asyncio.TimeoutError:
+        result["ok"] = False
+        result["error"] = f"timeout ({timeout}s)"
+        logger.warning(f"[parse-test] {parser_name} timed out")
+    except Exception as e:
+        result["ok"] = False
+        result["error"] = f"{type(e).__name__}: {str(e)}"
+        result["traceback"] = _tb.format_exc()
+        logger.error(f"[parse-test] {parser_name} FAILED: {e}", exc_info=True)
+    finally:
+        _db_mod.API_MODE = False
+        root_logger.removeHandler(log_handler)
+        result["logs"] = log_stream.getvalue()[-3000:]
+
+    return json_resp(result)
 
 
 async def handle_scheduler_status(request):
-    """GET /api/scheduler — публичный статус внутреннего планировщика парсеров."""
+    """GET /api/scheduler — status of internal parser scheduler."""
     return json_resp({
         "scheduler": "active",
         "parsers": _scheduler_status,
     })
+
+
+async def handle_health(request):
+    """Health check + auto-trigger parsers every 30 min."""
+    global _last_parse_trigger
+    now = time.time()
+    if now - _last_parse_trigger > 1800:  # 30 minutes
+        _last_parse_trigger = now
+        asyncio.create_task(_trigger_parsers())
+    return json_resp({"status": "ok"})
+
+
+async def _trigger_parsers():
+    """Запускает ключевые парсеры в фоне (вызывается из health check)."""
+    global _parsers_running
+    if _parsers_running:
+        logger.info("[health-trigger] Parsers already running, skip")
+        return
+    _parsers_running = True
+    try:
+        import sys as _sys
+        scripts_dir = str(Path(__file__).parent.parent / "scripts")
+        if scripts_dir not in _sys.path:
+            _sys.path.insert(0, scripts_dir)
+        import db as _db_mod
+        _db_mod.API_MODE = True
+
+        quick_parsers = [
+            ("fuelmap", ["parse_fuelmap"], 1200),
+            ("gdebenz", ["parse_gdebenz"], 3600),
+        ]
+        for name, cmd, timeout in quick_parsers:
+            try:
+                logger.info(f"[health-trigger] Running {name}...")
+                mod = __import__(cmd[0])
+                _sys.argv = cmd
+                await asyncio.wait_for(mod.main(), timeout=timeout)
+                logger.info(f"[health-trigger] {name} OK")
+            except asyncio.TimeoutError:
+                logger.warning(f"[health-trigger] {name} timed out")
+            except Exception as e:
+                logger.error(f"[health-trigger] {name} FAILED: {e}", exc_info=True)
+            await asyncio.sleep(2)
+        _db_mod.API_MODE = False
+    finally:
+        _parsers_running = False
 
 
 async def handle_logs(request):
@@ -2574,6 +2682,7 @@ def setup_app() -> web.Application:
     # API routes
     app.router.add_get("/api/health", handle_health)
     app.router.add_get("/api/scheduler", handle_scheduler_status)
+    app.router.add_get("/api/parse-test", handle_parse_test)
     app.router.add_get("/api/logs", handle_logs)
     app.router.add_get("/api/admin/stats", handle_admin_stats)
     app.router.add_get("/api/stats", handle_public_stats)
