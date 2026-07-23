@@ -213,10 +213,6 @@ def _parse_float(request, name: str, min_val: float, max_val: float) -> tuple[fl
 
 
 # === Handlers ===
-async def handle_health(request):
-    return json_resp({"status": "ok"})
-
-
 _scheduler_status = {}
 _last_parse_trigger = 0  # timestamp of last parse trigger
 
