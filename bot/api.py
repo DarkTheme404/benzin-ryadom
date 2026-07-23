@@ -316,8 +316,9 @@ async def _trigger_parsers():
         _db_mod.API_MODE = True
 
         quick_parsers = [
-            ("fuelmap", ["parse_fuelmap"], 1200),
-            ("gdebenz", ["parse_gdebenz"], 3600),
+            ("fuelmap", ["parse_fuelmap", "--limit", "200"], 600),
+            ("gdebenz", ["parse_gdebenz"], 1800),
+            ("azslive", ["parse_azslive"], 600),
         ]
         for name, cmd, timeout in quick_parsers:
             try:
