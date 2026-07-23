@@ -2354,6 +2354,62 @@ async def _on_startup(app: web.Application) -> None:
     except Exception as e:
         logger.warning(f"YooMoney polling not started: {e}")
 
+    # === Внутренний планировщик парсеров ===
+    # Запускает парсеры каждые 60 минут прямо в процессе API
+    # (Render Free cron jobs ненадёжны — могут не запускаться)
+    async def _internal_parser_scheduler():
+        """Запускает парсеры по расписанию прямо в процессе API."""
+        import sys as _sys
+        scripts_dir = str(Path(__file__).parent.parent / "scripts")
+        if scripts_dir not in _sys.path:
+            _sys.path.insert(0, scripts_dir)
+
+        import db as _db_mod
+        _db_mod.API_MODE = True
+
+        # Ждём 30 сек после старта, чтобы API полностью запустилось
+        await asyncio.sleep(30)
+
+        # Список парсеров для внутреннего запуска (быстрые + средние)
+        parser_schedule = [
+            ("fuelprice", 60, ["parse_fuelprice", "--create-new"]),
+            ("fuelmap", 360, ["parse_fuelmap"]),
+            ("ishubenzin", 360, ["parse_ishubenzin"]),
+            ("benzin_status_tech", 360, ["parse_benzin_status_tech"]),
+            ("benzinmap", 720, ["parse_benzinmap"]),
+            ("gdebenz", 720, ["parse_gdebenz"]),
+        ]
+
+        last_run = {name: 0 for name, _, _ in parser_schedule}
+
+        while True:
+            try:
+                now = time.time()
+                for name, interval_min, cmd in parser_schedule:
+                    if now - last_run[name] < interval_min * 60:
+                        continue
+                    last_run[name] = now
+                    try:
+                        logger.info(f"[scheduler] Running {name}...")
+                        mod = __import__(cmd[0])
+                        _sys.argv = cmd
+                        await asyncio.wait_for(mod.main(), timeout=600)
+                        logger.info(f"[scheduler] {name} completed")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"[scheduler] {name} timed out")
+                    except Exception as e:
+                        logger.warning(f"[scheduler] {name} failed: {e}")
+                    await asyncio.sleep(5)  # пауза между парсерами
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[scheduler] Error: {e}")
+
+            await asyncio.sleep(60)
+
+    asyncio.create_task(_internal_parser_scheduler())
+    logger.info("Internal parser scheduler started (60min cycle)")
+
 
 async def _on_cleanup(app: web.Application) -> None:
     """Закрытие БД при остановке API."""
