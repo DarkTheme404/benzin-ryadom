@@ -2695,6 +2695,8 @@ async def show_city_results(msg, city: str, fuel: str = None, max_price: float =
                         max_age_days = age
         if max_age_days > 3:
             title += f"\n\n⚠️ <i>Данные устарели ({max_age_days} дн). Помоги — сообщи актуальные цены!</i>"
+        elif max_age_days > 0:
+            title += f"\n\n🕐 <i>Данные обновлялись {max_age_days} дн. назад</i>"
         title += "\n"
 
         buttons = []
@@ -2735,7 +2737,29 @@ async def show_city_results(msg, city: str, fuel: str = None, max_price: float =
                 elif st.get("available") is False:
                     has_unavailable = True
             if best_price is not None and best_fuel:
-                short += f" · АИ-{best_fuel} {best_price:.2f}₽"
+                # Проверяем свежесть для этой станции
+                age_text = ""
+                for st in statuses:
+                    updated = st.get("updated_at") or st.get("created_at")
+                    if updated:
+                        try:
+                            if isinstance(updated, str):
+                                updated = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                            if updated.tzinfo is None:
+                                updated = updated.replace(tzinfo=timezone.utc)
+                            age_hours = (now - updated).total_seconds() / 3600
+                            if age_hours < 1:
+                                age_text = ""
+                            elif age_hours < 6:
+                                age_text = " 🟡"
+                            elif age_hours < 24:
+                                age_text = " 🟠"
+                            else:
+                                age_text = " 🔴"
+                        except Exception:
+                            pass
+                        break
+                short += f" · АИ-{best_fuel} {best_price:.2f}₽{age_text}"
             elif has_available:
                 short += " · ✅ есть"
             elif has_unavailable:

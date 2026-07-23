@@ -314,8 +314,8 @@ LEFT JOIN LATERAL (
     FROM reports
     WHERE station_id = s.id
     AND (
-        -- Парсерские отчёты: только за 2 часа (старые удаляются парсерами)
-        (source != 'user' AND created_at > NOW() - INTERVAL '2 hours')
+        -- Парсерские отчёты: живут 24 часа (обновляются парсерами каждый час)
+        (source != 'user' AND created_at > NOW() - INTERVAL '24 hours')
         OR
         -- Пользовательские отчёты: живут 7 дней или пока не противоречит парсер
         (source = 'user' AND created_at > NOW() - INTERVAL '7 days')
