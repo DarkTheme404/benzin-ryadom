@@ -24,9 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import aiohttp
-from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent.parent / "bot" / ".env")
 sys.path.insert(0, str(Path(__file__).parent.parent / "bot"))
 import db
 from db import init_db, close_db, add_report, find_stations_by_city, upsert_station_for_import, stale_old_reports

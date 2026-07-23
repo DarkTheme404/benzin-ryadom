@@ -19,10 +19,6 @@ from typing import Optional
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bot"))
 
-from dotenv import load_dotenv
-
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "bot", ".env"))
-
 import db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -283,7 +279,8 @@ async def save_region_limits(data: dict) -> int:
 
 
 async def main():
-    await db.init_db()
+    if not db.API_MODE:
+        await db.init_db()
     logger.info("Fetching benzinmap.ru data...")
     data = await fetch_data()
     if data:
@@ -291,7 +288,8 @@ async def main():
         logger.info(f"Done. Saved {saved} reports.")
     else:
         logger.error("Failed to fetch data from benzinmap.ru")
-    await db.close_db()
+    if not db.API_MODE:
+        await db.close_db()
 
 
 if __name__ == "__main__":

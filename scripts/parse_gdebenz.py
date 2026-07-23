@@ -20,10 +20,6 @@ import aiohttp
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bot"))
 
-from dotenv import load_dotenv
-
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "bot", ".env"))
-
 import db
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
