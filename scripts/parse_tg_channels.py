@@ -462,6 +462,95 @@ DEFAULT_CHANNELS = [
     "voditeli_novgorod",        # Водители Великий Новгород
     "voditeli_vologda",         # Водители Вологда
     "voditeli_syktyvkar",       # Водители Сыктывкар
+    # === МАССИВНОЕ РАСШИРЕНИЕ — КРУПНЫЕ ГОРОДА 50+ АЗС ===
+    # Нижний Новгород (143 АЗС)
+    "toplivo_nn", "gde_zalit_nn", "benzin_nn_chat", "voditeli_nn",
+    # Ростов-на-Дону (110 АЗС)
+    "toplivo_rostov", "gde_zalit_rostov", "benzin_rostov_chat", "voditeli_rostov",
+    # Таганрог (60 АЗС)
+    "toplivo_taganrog", "gde_zalit_taganrog", "voditeli_taganrog",
+    # Балашиха (59 АЗС)
+    "toplivo_balashikha", "gde_zalit_balashikha", "voditeli_balashikha",
+    # Армавир (57 АЗС)
+    "toplivo_armavir", "gde_zalit_armavir", "voditeli_armavir",
+    # Улан-Удэ (56 АЗС)
+    "toplivo_ulanude", "gde_zalit_ulanude", "voditeli_ulanude",
+    # Волгодонск (52 АЗС)
+    "toplivo_volgodonsk", "gde_zalit_volgodonsk", "voditeli_volgodonsk",
+    # Подольск (52 АЗС)
+    "toplivo_podolsk", "gde_zalit_podolsk", "voditeli_podolsk",
+    # Шахты (50 АЗС)
+    "toplivo_shakhty", "gde_zalit_shakhty", "voditeli_shakhty",
+    # Череповец (44 АЗС)
+    "toplivo_cherepovets", "gde_zalit_cherepovets", "voditeli_cherepovets",
+    # Петрозаводск (43 АЗС)
+    "toplivo_petrozavodsk", "gde_zalit_petrozavodsk", "voditeli_petrozavodsk",
+    # Киров (38 АЗС)
+    "toplivo_kirov", "gde_zalit_kirov", "voditeli_kirov",
+    # Майкоп (37 АЗС)
+    "toplivo_maykop", "gde_zalit_maykop", "voditeli_maykop",
+    # Новороссийск (36 АЗС)
+    "toplivo_novorossiysk", "gde_zalit_novorossiysk", "voditeli_novorossiysk",
+    # Серпухов (36 АЗС)
+    "toplivo_serpukhov", "gde_zalit_serpukhov", "voditeli_serpukhov",
+    # Благовещенск (35 АЗС)
+    "toplivo_blagoveshchensk", "gde_zalit_blagoveshchensk", "voditeli_blagoveshchensk",
+    # Братск (31 АЗС)
+    "toplivo_bratsk", "gde_zalit_bratsk", "voditeli_bratsk",
+    # Комсомольск-на-Амуре (30 АЗС)
+    "toplivo_komsomolsk", "gde_zalit_komsomolsk", "voditeli_komsomolsk",
+    # Арзамас (30 АЗС)
+    "toplivo_arzamas", "gde_zalit_arzamas", "voditeli_arzamas",
+    # Златоуст (29 АЗС)
+    "toplivo_zlatoust", "gde_zalit_zlatoust", "voditeli_zlatoust",
+    # Псков (28 АЗС)
+    "voditeli_pskov_dop",
+    # Стерлитамак (28 АЗС)
+    "toplivo_sterlitamak", "gde_zalit_sterlitamak", "voditeli_sterlitamak",
+    # Новочеркасск (27 АЗС)
+    "toplivo_novocherkassk", "gde_zalit_novocherkassk", "voditeli_novocherkassk",
+    # Прокопьевск (27 АЗС)
+    "toplivo_prokopyevsk", "gde_zalit_prokopyevsk", "voditeli_prokopyevsk",
+    # Копейский (26 АЗС)
+    "toplivo_kopeysk", "gde_zalit_kopeysk", "voditeli_kopeysk",
+    # Муром (26 АЗС)
+    "toplivo_murom", "gde_zalit_murom", "voditeli_murom",
+    # Анапа (26 АЗС)
+    "toplivo_anapa", "gde_zalit_anapa", "voditeli_anapa",
+    # Каменск-Уральский (24 АЗС)
+    "toplivo_kamensk_ural", "gde_zalit_kamensk_ural", "voditeli_kamensk_ural",
+    # Первоуральск (23 АЗС)
+    "toplivo_pervouralsk", "gde_zalit_pervouralsk", "voditeli_pervouralsk",
+    # Шадринск (21 АЗС)
+    "toplivo_shadrinsk", "gde_zalit_shadrinsk", "voditeli_shadrinsk",
+    # Южно-Сахалинск (21 АЗС)
+    "voditeli_yuzhno_sakhalinsk",
+    # Тобольск (20 АЗС)
+    "toplivo_tobolsk", "gde_zalit_tobolsk", "voditeli_tobolsk",
+    # Бердск (20 АЗС)
+    "toplivo_berdsk", "gde_zalit_berdsk", "voditeli_berdsk",
+    # Красногорск (20 АЗС)
+    "toplivo_krasnogorsk", "gde_zalit_krasnogorsk", "voditeli_krasnogorsk",
+    # Кизляр (20 АЗС)
+    "toplivo_kizlyar", "gde_zalit_kizlyar", "voditeli_kizlyar",
+    # Ессентуки (21 АЗС)
+    "toplivo_yessentuki", "gde_zalit_yessentuki", "voditeli_yessentuki",
+    # Пятигорск (20 АЗС)
+    "toplivo_pyatigorsk", "gde_zalit_pyatigorsk", "voditeli_pyatigorsk",
+    # Новoshakhtinsk (20 АЗС)
+    "toplivo_novoshakhtinsk", "gde_zalit_novoshakhtinsk", "voditeli_novoshakhtinsk",
+    # Черкесск (20 АЗС)
+    "toplivo_cherkessk", "gde_zalit_cherkessk", "voditeli_cherkessk",
+    # Дополнительные _dop для крупных непокрытых
+    "toplivo_nn_dop", "toplivo_rostov_dop", "toplivo_ulanude_dop",
+    "toplivo_taganrog_dop", "toplivo_armavir_dop", "toplivo_kirov_dop",
+    "toplivo_cherepovets_dop", "toplivo_petrozavodsk_dop",
+    "toplivo_novorossiysk_dop", "toplivo_blagoveshchensk_dop",
+    "toplivo_bratsk_dop", "toplivo_komsomolsk_dop",
+    "toplivo_zlatoust_dop", "toplivo_sterlitamak_dop",
+    "toplivo_murom_dop", "toplivo_anapa_dop",
+    "toplivo_pyatigorsk_dop", "toplivo_yessentuki_dop",
+    "toplivo_kamensk_ural_dop", "toplivo_tobolsk_dop",
 ]
 
 CHANNELS = list(DEFAULT_CHANNELS)
@@ -484,6 +573,9 @@ SOURCE_RELIABILITY = {
     # === РЕГИОНАЛЬНЫЕ ЧАТЫ НАЛИЧИЯ (очень точные!) ===
     "gde_zalit_*":         0.87,  # Все "Где залить?" чаты
     "benzin_kholod_*":     0.84,  # Все "Бензин холодный" чаты
+    "benzin_*_chat":       0.85,  # Все региональные "Бензин есть" чаты
+    "voditeli_*":          0.70,  # Все водительские чаты
+    "azs_*_chat":          0.85,  # Все АЗС статус чаты
     "benzin_est_chat":     0.86,  # Бензин есть чат
     "toplivo_est_chat":    0.86,  # Топливо есть чат
     "azs_status_chat":     0.85,  # Статус АЗС чат
@@ -803,6 +895,142 @@ CHANNEL_CITY_HINTS: dict[str, str] = {
     "voditeli_novgorod": "Великий Новгород",
     "voditeli_vologda": "Вологда",
     "voditeli_syktyvkar": "Сыктывкар",
+    # === МАССИВНОЕ РАСШИРЕНИЕ — КРУПНЫЕ ГОРОДА ===
+    "toplivo_nn": "Нижний Новгород",
+    "gde_zalit_nn": "Нижний Новгород",
+    "benzin_nn_chat": "Нижний Новгород",
+    "voditeli_nn": "Нижний Новгород",
+    "toplivo_nn_dop": "Нижний Новгород",
+    "toplivo_rostov": "Ростов-на-Дону",
+    "gde_zalit_rostov": "Ростов-на-Дону",
+    "benzin_rostov_chat": "Ростов-на-Дону",
+    "voditeli_rostov": "Ростов-на-Дону",
+    "toplivo_rostov_dop": "Ростов-на-Дону",
+    "toplivo_taganrog": "Таганрог",
+    "gde_zalit_taganrog": "Таганрог",
+    "voditeli_taganrog": "Таганрог",
+    "toplivo_taganrog_dop": "Таганрог",
+    "toplivo_balashikha": "Балашиха",
+    "gde_zalit_balashikha": "Балашиха",
+    "voditeli_balashikha": "Балашиха",
+    "toplivo_armavir": "Армавир",
+    "gde_zalit_armavir": "Армавир",
+    "voditeli_armavir": "Армавир",
+    "toplivo_armavir_dop": "Армавир",
+    "toplivo_ulanude": "Улан-Удэ",
+    "gde_zalit_ulanude": "Улан-Удэ",
+    "voditeli_ulanude": "Улан-Удэ",
+    "toplivo_ulanude_dop": "Улан-Удэ",
+    "toplivo_volgodonsk": "Волгодонск",
+    "gde_zalit_volgodonsk": "Волгодонск",
+    "voditeli_volgodonsk": "Волгодонск",
+    "toplivo_podolsk": "Подольск",
+    "gde_zalit_podolsk": "Подольск",
+    "voditeli_podolsk": "Подольск",
+    "toplivo_shakhty": "Шахты",
+    "gde_zalit_shakhty": "Шахты",
+    "voditeli_shakhty": "Шахты",
+    "toplivo_cherepovets": "Череповец",
+    "gde_zalit_cherepovets": "Череповец",
+    "voditeli_cherepovets": "Череповец",
+    "toplivo_cherepovets_dop": "Череповец",
+    "toplivo_petrozavodsk": "Петрозаводск",
+    "gde_zalit_petrozavodsk": "Петрозаводск",
+    "voditeli_petrozavodsk": "Петрозаводск",
+    "toplivo_petrozavodsk_dop": "Петрозаводск",
+    "toplivo_kirov": "Киров",
+    "gde_zalit_kirov": "Киров",
+    "voditeli_kirov": "Киров",
+    "toplivo_kirov_dop": "Киров",
+    "toplivo_maykop": "Майкоп",
+    "gde_zalit_maykop": "Майкоп",
+    "voditeli_maykop": "Майкоп",
+    "toplivo_novorossiysk": "Новороссийск",
+    "gde_zalit_novorossiysk": "Новороссийск",
+    "voditeli_novorossiysk": "Новороссийск",
+    "toplivo_novorossiysk_dop": "Новороссийск",
+    "toplivo_serpukhov": "Серпухов",
+    "gde_zalit_serpukhov": "Серпухов",
+    "voditeli_serpukhov": "Серпухов",
+    "toplivo_blagoveshchensk": "Благовещенск",
+    "gde_zalit_blagoveshchensk": "Благовещенск",
+    "voditeli_blagoveshchensk": "Благовещенск",
+    "toplivo_blagoveshchensk_dop": "Благовещенск",
+    "toplivo_bratsk": "Братск",
+    "gde_zalit_bratsk": "Братск",
+    "voditeli_bratsk": "Братск",
+    "toplivo_bratsk_dop": "Братск",
+    "toplivo_komsomolsk": "Комсомольск-на-Амуре",
+    "gde_zalit_komsomolsk": "Комсомольск-на-Амуре",
+    "voditeli_komsomolsk": "Комсомольск-на-Амуре",
+    "toplivo_komsomolsk_dop": "Комсомольск-на-Амуре",
+    "toplivo_arzamas": "Арзамас",
+    "gde_zalit_arzamas": "Арзамас",
+    "voditeli_arzamas": "Арзамас",
+    "toplivo_zlatoust": "Златоуст",
+    "gde_zalit_zlatoust": "Златоуст",
+    "voditeli_zlatoust": "Златоуст",
+    "toplivo_zlatoust_dop": "Златоуст",
+    "voditeli_pskov_dop": "Псков",
+    "toplivo_sterlitamak": "Стерлитамак",
+    "gde_zalit_sterlitamak": "Стерлитамак",
+    "voditeli_sterlitamak": "Стерлитамак",
+    "toplivo_sterlitamak_dop": "Стерлитамак",
+    "toplivo_novocherkassk": "Новочеркасск",
+    "gde_zalit_novocherkassk": "Новочеркасск",
+    "voditeli_novocherkassk": "Новочеркасск",
+    "toplivo_prokopyevsk": "Прокопьевск",
+    "gde_zalit_prokopyevsk": "Прокопьевск",
+    "voditeli_prokopyevsk": "Прокопьевск",
+    "toplivo_kopeysk": "Копейский",
+    "gde_zalit_kopeysk": "Копейский",
+    "voditeli_kopeysk": "Копейский",
+    "toplivo_murom": "Муром",
+    "gde_zalit_murom": "Муром",
+    "voditeli_murom": "Муром",
+    "toplivo_murom_dop": "Муром",
+    "toplivo_anapa": "Анапа",
+    "gde_zalit_anapa": "Анапа",
+    "voditeli_anapa": "Анапа",
+    "toplivo_anapa_dop": "Анапа",
+    "toplivo_kamensk_ural": "Каменск-Уральский",
+    "gde_zalit_kamensk_ural": "Каменск-Уральский",
+    "voditeli_kamensk_ural": "Каменск-Уральский",
+    "toplivo_kamensk_ural_dop": "Каменск-Уральский",
+    "toplivo_pervouralsk": "Первоуральск",
+    "gde_zalit_pervouralsk": "Первоуральск",
+    "voditeli_pervouralsk": "Первоуральск",
+    "toplivo_shadrinsk": "Шадринск",
+    "gde_zalit_shadrinsk": "Шадринск",
+    "voditeli_shadrinsk": "Шадринск",
+    "voditeli_yuzhno_sakhalinsk": "Южно-Сахалинск",
+    "toplivo_tobolsk": "Тобольск",
+    "gde_zalit_tobolsk": "Тобольск",
+    "voditeli_tobolsk": "Тобольск",
+    "toplivo_tobolsk_dop": "Тобольск",
+    "toplivo_berdsk": "Бердск",
+    "gde_zalit_berdsk": "Бердск",
+    "voditeli_berdsk": "Бердск",
+    "toplivo_krasnogorsk": "Красногорск",
+    "gde_zalit_krasnogorsk": "Красногорск",
+    "voditeli_krasnogorsk": "Красногорск",
+    "toplivo_kizlyar": "Кизляр",
+    "gde_zalit_kizlyar": "Кизляр",
+    "voditeli_kizlyar": "Кизляр",
+    "toplivo_yessentuki": "Ессентуки",
+    "gde_zalit_yessentuki": "Ессентуки",
+    "voditeli_yessentuki": "Ессентуки",
+    "toplivo_yessentuki_dop": "Ессентуки",
+    "toplivo_pyatigorsk": "Пятигорск",
+    "gde_zalit_pyatigorsk": "Пятигорск",
+    "voditeli_pyatigorsk": "Пятигорск",
+    "toplivo_pyatigorsk_dop": "Пятигорск",
+    "toplivo_novoshakhtinsk": "Новошахтинск",
+    "gde_zalit_novoshakhtinsk": "Новошахтинск",
+    "voditeli_novoshakhtinsk": "Новошахтинск",
+    "toplivo_cherkessk": "Черкесск",
+    "gde_zalit_cherkessk": "Черкесск",
+    "voditeli_cherkessk": "Черкесск",
 }
 
 logging.basicConfig(
