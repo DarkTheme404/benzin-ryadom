@@ -319,6 +319,7 @@ async def _trigger_parsers():
             ("fuelmap", ["parse_fuelmap", "--limit", "200"], 600),
             ("gdebenz", ["parse_gdebenz"], 1800),
             ("azslive", ["parse_azslive"], 600),
+            ("osm_availability", ["parse_osm_availability"], 1200),
         ]
         for name, cmd, timeout in quick_parsers:
             try:
@@ -2499,6 +2500,7 @@ async def _on_startup(app: web.Application) -> None:
             ("benzinmap", 360, ["parse_benzinmap"], 300),
             ("gdebenz", 360, ["parse_gdebenz"], 1800),
             ("azslive", 180, ["parse_azslive"], 600),
+            ("osm_availability", 360, ["parse_osm_availability"], 1200),
         ]
 
         last_run = {name: 0 for name, _, _, _ in parser_schedule}
