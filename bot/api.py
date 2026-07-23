@@ -2423,13 +2423,13 @@ async def _on_startup(app: web.Application) -> None:
                         _scheduler_status[name]["running"] = False
                         _scheduler_status[name]["last_error"] = f"{type(e).__name__}: {str(e)[:200]}"
                         logger.error(f"[scheduler] {name} FAILED: {type(e).__name__}: {e}", exc_info=True)
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(2)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"[scheduler] Loop error: {e}")
 
-            await asyncio.sleep(60)
+            await asyncio.sleep(30)
 
     asyncio.create_task(_internal_parser_scheduler())
     logger.info("Internal parser scheduler started (60min cycle)")
