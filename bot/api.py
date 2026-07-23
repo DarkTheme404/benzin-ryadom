@@ -400,44 +400,44 @@ async def handle_public_stats(request):
                     premium_users = await conn.fetchval("SELECT COUNT(*) FROM premium_users WHERE is_active = 1")
                 except Exception:
                     premium_users = 0
-            total_stations = await conn.fetchval("SELECT COUNT(*) FROM stations")
-            try:
-                total_reports = await conn.fetchval("SELECT COUNT(*) FROM reports")
-            except Exception:
-                total_reports = 0
-            # Города с живыми данными (за 7 дней)
-            try:
-                cities_fresh_7d = await conn.fetchval("""
-                    SELECT COUNT(DISTINCT s.city)
-                    FROM stations s
-                    JOIN reports pr ON pr.station_id = s.id
-                    WHERE s.city IS NOT NULL AND s.city != ''
-                    AND pr.created_at > NOW() - INTERVAL '7 days'
-                """)
-            except Exception:
-                cities_fresh_7d = 0
-            # Города с живыми данными (за 24 часа)
-            try:
-                cities_fresh_24h = await conn.fetchval("""
-                    SELECT COUNT(DISTINCT s.city)
-                    FROM stations s
-                    JOIN reports pr ON pr.station_id = s.id
-                    WHERE s.city IS NOT NULL AND s.city != ''
-                    AND pr.created_at > NOW() - INTERVAL '24 hours'
-                """)
-            except Exception:
-                cities_fresh_24h = 0
-            # Города с живыми данными (за 3 дня)
-            try:
-                cities_fresh_3d = await conn.fetchval("""
-                    SELECT COUNT(DISTINCT s.city)
-                    FROM stations s
-                    JOIN reports pr ON pr.station_id = s.id
-                    WHERE s.city IS NOT NULL AND s.city != ''
-                    AND pr.created_at > NOW() - INTERVAL '3 days'
-                """)
-            except Exception:
-                cities_fresh_3d = 0
+                total_stations = await conn.fetchval("SELECT COUNT(*) FROM stations")
+                try:
+                    total_reports = await conn.fetchval("SELECT COUNT(*) FROM reports")
+                except Exception:
+                    total_reports = 0
+                # Города с живыми данными (за 7 дней)
+                try:
+                    cities_fresh_7d = await conn.fetchval("""
+                        SELECT COUNT(DISTINCT s.city)
+                        FROM stations s
+                        JOIN reports pr ON pr.station_id = s.id
+                        WHERE s.city IS NOT NULL AND s.city != ''
+                        AND pr.created_at > NOW() - INTERVAL '7 days'
+                    """)
+                except Exception:
+                    cities_fresh_7d = 0
+                # Города с живыми данными (за 24 часа)
+                try:
+                    cities_fresh_24h = await conn.fetchval("""
+                        SELECT COUNT(DISTINCT s.city)
+                        FROM stations s
+                        JOIN reports pr ON pr.station_id = s.id
+                        WHERE s.city IS NOT NULL AND s.city != ''
+                        AND pr.created_at > NOW() - INTERVAL '24 hours'
+                    """)
+                except Exception:
+                    cities_fresh_24h = 0
+                # Города с живыми данными (за 3 дня)
+                try:
+                    cities_fresh_3d = await conn.fetchval("""
+                        SELECT COUNT(DISTINCT s.city)
+                        FROM stations s
+                        JOIN reports pr ON pr.station_id = s.id
+                        WHERE s.city IS NOT NULL AND s.city != ''
+                        AND pr.created_at > NOW() - INTERVAL '3 days'
+                    """)
+                except Exception:
+                    cities_fresh_3d = 0
 
         def _get(r, key="c"):
             if r is None: return 0
