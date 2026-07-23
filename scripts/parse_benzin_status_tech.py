@@ -412,7 +412,7 @@ async def run(cities: list[str]) -> int:
     logger.info("  USE_SQLITE=%s _API_MODE=%s", db.USE_SQLITE, db.API_MODE)
     if not db.API_MODE:
         await db.init_db()
-    await db.stale_old_reports("benzin_status_tech")
+    await db.stale_old_reports("benzin_status_tech", older_than_hours=24)
 
     total = 0
     async with aiohttp.ClientSession() as session:

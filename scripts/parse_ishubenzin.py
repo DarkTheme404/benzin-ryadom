@@ -150,7 +150,7 @@ async def main():
     logger.info("=== ishubenzin.ru parser ===")
     if not db.API_MODE:
         await init_db()
-    await stale_old_reports("ishubenzin")
+    await stale_old_reports("ishubenzin", older_than_hours=24)
     logger.info("DB ready")
 
     total_reports = 0

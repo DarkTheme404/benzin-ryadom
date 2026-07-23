@@ -219,7 +219,7 @@ async def main():
     if not args.dry_run:
         if not db.API_MODE:
             await db.init_db()
-        await db.stale_old_reports(SOURCE_NAME)
+        await db.stale_old_reports(SOURCE_NAME, older_than_hours=24)
 
     async with aiohttp.ClientSession() as session:
         cities = []

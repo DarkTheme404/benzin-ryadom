@@ -553,7 +553,7 @@ async def save_reports(stations_data: list, area_name: str):
 async def main():
     if not db.API_MODE:
         await db.init_db()
-    await db.stale_old_reports("gdebenz")
+    await db.stale_old_reports("gdebenz", older_than_hours=24)
 
     # Сброс кешей
     _station_cache.clear()

@@ -339,7 +339,7 @@ async def main():
     print()
 
     await db.init_db()
-    await db.stale_old_reports("2gis")
+    await db.stale_old_reports("2gis", older_than_hours=24)
     saved = 0
     prices_collected = 0
 

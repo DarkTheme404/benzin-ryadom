@@ -1595,7 +1595,7 @@ async def run_once(upload_url: str = None, api_key: str = "", discover: bool = F
     import os
     if not db.API_MODE:
         await db.init_db()
-    await db.stale_old_reports("tg")
+    await db.stale_old_reports("tg", older_than_hours=24)
 
     # Автоматическое обнаружение приватных чатов
     all_channels = list(CHANNELS)
