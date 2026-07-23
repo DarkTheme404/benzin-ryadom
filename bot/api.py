@@ -2492,11 +2492,12 @@ async def _on_startup(app: web.Application) -> None:
 
         parser_schedule = [
             ("fuelprice", 60, ["parse_fuelprice", "--create-new"], 600),
-            ("fuelmap", 360, ["parse_fuelmap"], 1200),
+            ("fuelmap", 180, ["parse_fuelmap", "--limit", "200"], 600),
             ("ishubenzin", 360, ["parse_ishubenzin"], 600),
             ("benzin_status_tech", 360, ["parse_benzin_status_tech"], 300),
-            ("benzinmap", 720, ["parse_benzinmap"], 300),
-            ("gdebenz", 720, ["parse_gdebenz"], 3600),
+            ("benzinmap", 360, ["parse_benzinmap"], 300),
+            ("gdebenz", 360, ["parse_gdebenz"], 1800),
+            ("azslive", 180, ["parse_azslive"], 600),
         ]
 
         last_run = {name: 0 for name, _, _, _ in parser_schedule}

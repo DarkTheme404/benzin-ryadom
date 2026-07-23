@@ -191,12 +191,14 @@ async def save_azslive_data(stations):
 
 
 async def main():
-    await db.init_db()
+    if not db.API_MODE:
+        await db.init_db()
 
     meta = await fetch_meta()
     if not meta:
         logger.error("Failed to fetch azslive meta")
-        await db.close_db()
+        if not db.API_MODE:
+            await db.close_db()
         return
 
     logger.info(f"azslive.ru: {meta.get('stations_count', 0)} станций")
@@ -215,7 +217,10 @@ async def main():
     saved = await save_azslive_data(list(all_stations.values()))
     logger.info(f"azslive.ru: saved {saved} reports")
 
-    await db.close_db()
+    await db.stale_old_reports("azslive", older_than_hours=24)
+
+    if not db.API_MODE:
+        await db.close_db()
 
 
 if __name__ == "__main__":
