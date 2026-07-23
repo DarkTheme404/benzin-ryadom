@@ -367,6 +367,9 @@ async def handle_public_stats(request):
             except: return row[0] if row else 0
 
         # Используем простые COUNT через raw SQL
+        cities_fresh_24h = 0
+        cities_fresh_3d = 0
+        cities_fresh_7d = 0
         if _db_mod.USE_SQLITE:
             total_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users", one=True)
             tg_users = _db_mod._fetch("SELECT COUNT(*) as c FROM users WHERE telegram_id > 0 AND vk_id IS NULL", one=True)
@@ -397,11 +400,44 @@ async def handle_public_stats(request):
                     premium_users = await conn.fetchval("SELECT COUNT(*) FROM premium_users WHERE is_active = 1")
                 except Exception:
                     premium_users = 0
-                total_stations = await conn.fetchval("SELECT COUNT(*) FROM stations")
-                try:
-                    total_reports = await conn.fetchval("SELECT COUNT(*) FROM reports")
-                except Exception:
-                    total_reports = 0
+            total_stations = await conn.fetchval("SELECT COUNT(*) FROM stations")
+            try:
+                total_reports = await conn.fetchval("SELECT COUNT(*) FROM reports")
+            except Exception:
+                total_reports = 0
+            # Города с живыми данными (за 7 дней)
+            try:
+                cities_fresh_7d = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT s.city)
+                    FROM stations s
+                    JOIN reports pr ON pr.station_id = s.id
+                    WHERE s.city IS NOT NULL AND s.city != ''
+                    AND pr.created_at > NOW() - INTERVAL '7 days'
+                """)
+            except Exception:
+                cities_fresh_7d = 0
+            # Города с живыми данными (за 24 часа)
+            try:
+                cities_fresh_24h = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT s.city)
+                    FROM stations s
+                    JOIN reports pr ON pr.station_id = s.id
+                    WHERE s.city IS NOT NULL AND s.city != ''
+                    AND pr.created_at > NOW() - INTERVAL '24 hours'
+                """)
+            except Exception:
+                cities_fresh_24h = 0
+            # Города с живыми данными (за 3 дня)
+            try:
+                cities_fresh_3d = await conn.fetchval("""
+                    SELECT COUNT(DISTINCT s.city)
+                    FROM stations s
+                    JOIN reports pr ON pr.station_id = s.id
+                    WHERE s.city IS NOT NULL AND s.city != ''
+                    AND pr.created_at > NOW() - INTERVAL '3 days'
+                """)
+            except Exception:
+                cities_fresh_3d = 0
 
         def _get(r, key="c"):
             if r is None: return 0
@@ -420,6 +456,11 @@ async def handle_public_stats(request):
             },
             "stations": _get(total_stations),
             "reports": _get(total_reports),
+            "cities": {
+                "fresh_24h": cities_fresh_24h,
+                "fresh_3d": cities_fresh_3d,
+                "fresh_7d": cities_fresh_7d,
+            },
         })
     except Exception as e:
         logger.exception(f"public_stats error: {e}")
