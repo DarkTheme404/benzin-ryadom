@@ -2383,20 +2383,20 @@ async def _on_startup(app: web.Application) -> None:
         await asyncio.sleep(30)
 
         parser_schedule = [
-            ("fuelprice", 60, ["parse_fuelprice", "--create-new"]),
-            ("fuelmap", 360, ["parse_fuelmap"]),
-            ("ishubenzin", 360, ["parse_ishubenzin"]),
-            ("benzin_status_tech", 360, ["parse_benzin_status_tech"]),
-            ("benzinmap", 720, ["parse_benzinmap"]),
-            ("gdebenz", 720, ["parse_gdebenz"]),
+            ("fuelprice", 60, ["parse_fuelprice", "--create-new"], 600),
+            ("fuelmap", 360, ["parse_fuelmap"], 1200),
+            ("ishubenzin", 360, ["parse_ishubenzin"], 600),
+            ("benzin_status_tech", 360, ["parse_benzin_status_tech"], 300),
+            ("benzinmap", 720, ["parse_benzinmap"], 300),
+            ("gdebenz", 720, ["parse_gdebenz"], 3600),
         ]
 
-        last_run = {name: 0 for name, _, _ in parser_schedule}
+        last_run = {name: 0 for name, _, _, _ in parser_schedule}
 
         while True:
             try:
                 now = time.time()
-                for name, interval_min, cmd in parser_schedule:
+                for name, interval_min, cmd, timeout in parser_schedule:
                     if now - last_run[name] < interval_min * 60:
                         continue
                     last_run[name] = now
@@ -2407,18 +2407,18 @@ async def _on_startup(app: web.Application) -> None:
                         "last_error": _scheduler_status.get(name, {}).get("last_error"),
                     }
                     try:
-                        logger.info(f"[scheduler] Running {name}...")
+                        logger.info(f"[scheduler] Running {name} (timeout={timeout}s)...")
                         mod = __import__(cmd[0])
                         _sys.argv = cmd
-                        await asyncio.wait_for(mod.main(), timeout=900)
+                        await asyncio.wait_for(mod.main(), timeout=timeout)
                         _scheduler_status[name]["running"] = False
                         _scheduler_status[name]["last_ok"] = datetime.now(timezone.utc).isoformat()
                         _scheduler_status[name]["last_error"] = None
                         logger.info(f"[scheduler] {name} completed OK")
                     except asyncio.TimeoutError:
                         _scheduler_status[name]["running"] = False
-                        _scheduler_status[name]["last_error"] = "timeout (900s)"
-                        logger.warning(f"[scheduler] {name} timed out (900s)")
+                        _scheduler_status[name]["last_error"] = f"timeout ({timeout}s)"
+                        logger.warning(f"[scheduler] {name} timed out ({timeout}s)")
                     except Exception as e:
                         _scheduler_status[name]["running"] = False
                         _scheduler_status[name]["last_error"] = f"{type(e).__name__}: {str(e)[:200]}"
