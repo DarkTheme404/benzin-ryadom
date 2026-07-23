@@ -2393,17 +2393,17 @@ async def _on_startup(app: web.Application) -> None:
                         logger.info(f"[scheduler] Running {name}...")
                         mod = __import__(cmd[0])
                         _sys.argv = cmd
-                        await asyncio.wait_for(mod.main(), timeout=600)
-                        logger.info(f"[scheduler] {name} completed")
+                        result = await asyncio.wait_for(mod.main(), timeout=900)
+                        logger.info(f"[scheduler] {name} completed OK")
                     except asyncio.TimeoutError:
-                        logger.warning(f"[scheduler] {name} timed out")
+                        logger.warning(f"[scheduler] {name} timed out (900s)")
                     except Exception as e:
-                        logger.warning(f"[scheduler] {name} failed: {e}")
+                        logger.error(f"[scheduler] {name} FAILED: {type(e).__name__}: {e}", exc_info=True)
                     await asyncio.sleep(5)  # пауза между парсерами
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"[scheduler] Error: {e}")
+                logger.error(f"[scheduler] Loop error: {e}")
 
             await asyncio.sleep(60)
 
