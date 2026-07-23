@@ -461,6 +461,7 @@ async def handle_public_stats(request):
                 "fresh_3d": cities_fresh_3d,
                 "fresh_7d": cities_fresh_7d,
             },
+            "sources": await get_source_stats(),
         })
     except Exception as e:
         logger.exception(f"public_stats error: {e}")
