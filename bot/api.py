@@ -217,6 +217,14 @@ async def handle_health(request):
     return json_resp({"status": "ok"})
 
 
+async def handle_scheduler_status(request):
+    """GET /api/scheduler — публичный статус внутреннего планировщика парсеров."""
+    return json_resp({
+        "scheduler": "active",
+        "parsers": _scheduler_status,
+    })
+
+
 async def handle_logs(request):
     """GET /api/logs?lines=50 — последние строки bot.log (для отладки).
 
@@ -2357,6 +2365,8 @@ async def _on_startup(app: web.Application) -> None:
     # === Внутренний планировщик парсеров ===
     # Запускает парсеры каждые 60 минут прямо в процессе API
     # (Render Free cron jobs ненадёжны — могут не запускаться)
+    _scheduler_status = {}  # name -> {last_run, last_ok, last_error, running}
+
     async def _internal_parser_scheduler():
         """Запускает парсеры по расписанию прямо в процессе API."""
         import sys as _sys
@@ -2367,10 +2377,8 @@ async def _on_startup(app: web.Application) -> None:
         import db as _db_mod
         _db_mod.API_MODE = True
 
-        # Ждём 30 сек после старта, чтобы API полностью запустилось
         await asyncio.sleep(30)
 
-        # Список парсеров для внутреннего запуска (быстрые + средние)
         parser_schedule = [
             ("fuelprice", 60, ["parse_fuelprice", "--create-new"]),
             ("fuelmap", 360, ["parse_fuelmap"]),
@@ -2389,17 +2397,30 @@ async def _on_startup(app: web.Application) -> None:
                     if now - last_run[name] < interval_min * 60:
                         continue
                     last_run[name] = now
+                    _scheduler_status[name] = {
+                        "last_run": datetime.now(timezone.utc).isoformat(),
+                        "running": True,
+                        "last_ok": _scheduler_status.get(name, {}).get("last_ok"),
+                        "last_error": _scheduler_status.get(name, {}).get("last_error"),
+                    }
                     try:
                         logger.info(f"[scheduler] Running {name}...")
                         mod = __import__(cmd[0])
                         _sys.argv = cmd
-                        result = await asyncio.wait_for(mod.main(), timeout=900)
+                        await asyncio.wait_for(mod.main(), timeout=900)
+                        _scheduler_status[name]["running"] = False
+                        _scheduler_status[name]["last_ok"] = datetime.now(timezone.utc).isoformat()
+                        _scheduler_status[name]["last_error"] = None
                         logger.info(f"[scheduler] {name} completed OK")
                     except asyncio.TimeoutError:
+                        _scheduler_status[name]["running"] = False
+                        _scheduler_status[name]["last_error"] = "timeout (900s)"
                         logger.warning(f"[scheduler] {name} timed out (900s)")
                     except Exception as e:
+                        _scheduler_status[name]["running"] = False
+                        _scheduler_status[name]["last_error"] = f"{type(e).__name__}: {str(e)[:200]}"
                         logger.error(f"[scheduler] {name} FAILED: {type(e).__name__}: {e}", exc_info=True)
-                    await asyncio.sleep(5)  # пауза между парсерами
+                    await asyncio.sleep(5)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -2549,6 +2570,7 @@ def setup_app() -> web.Application:
     app = web.Application(middlewares=[audit_middleware, cors_middleware])
     # API routes
     app.router.add_get("/api/health", handle_health)
+    app.router.add_get("/api/scheduler", handle_scheduler_status)
     app.router.add_get("/api/logs", handle_logs)
     app.router.add_get("/api/admin/stats", handle_admin_stats)
     app.router.add_get("/api/stats", handle_public_stats)
