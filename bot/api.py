@@ -217,6 +217,9 @@ async def handle_health(request):
     return json_resp({"status": "ok"})
 
 
+_scheduler_status = {}  # name -> {last_run, last_ok, last_error, running}
+
+
 async def handle_scheduler_status(request):
     """GET /api/scheduler — публичный статус внутреннего планировщика парсеров."""
     return json_resp({
@@ -2365,7 +2368,7 @@ async def _on_startup(app: web.Application) -> None:
     # === Внутренний планировщик парсеров ===
     # Запускает парсеры каждые 60 минут прямо в процессе API
     # (Render Free cron jobs ненадёжны — могут не запускаться)
-    _scheduler_status = {}  # name -> {last_run, last_ok, last_error, running}
+    global _scheduler_status
 
     async def _internal_parser_scheduler():
         """Запускает парсеры по расписанию прямо в процессе API."""
