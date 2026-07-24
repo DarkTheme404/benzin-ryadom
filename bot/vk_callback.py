@@ -323,10 +323,10 @@ async def _handle_chat_message(peer_id: int, text: str, msg: dict) -> None:
 
 
 async def _chat_find_stations(peer_id: int, query: str) -> None:
-    """Поиск АЗС для VK чата — упрощённый ответ."""
-    from db import find_stations_by_city, find_stations_by_address, find_stations_by_name
+    """Поиск АЗС для VK чата — с реальным наличием."""
+    from db import find_stations_by_city, find_stations_by_address, find_stations_by_name, get_station_current_status
     try:
-        stations = await find_stations_by_city(query)
+        stations = await find_stations_by_city(query, has_stock=False)
         if not stations:
             stations = await find_stations_by_address(query)
         if not stations:
@@ -345,20 +345,53 @@ async def _chat_find_stations(peer_id: int, query: str) -> None:
             "• Название сети АЗС")
         return
 
-    lines = [f"⛽ <b>Найдено АЗС: {len(stations)}</b>\n"]
+    lines = [f"⛽ <b>Найдено АЗС: {len(stations[:10])}</b>\n"]
     for s in stations[:10]:
         name = s.get("name", "АЗС")
         addr = s.get("address", "")
         city = s.get("city", "")
-        network = s.get("network", "")
-        fuel_types = s.get("fuel_types") or ""
-        status = s.get("status") or ""
-        status_emoji = {"available": "🟢", "limited": "🟡", "unavailable": "🔴"}.get(status, "⚪")
+        operator = s.get("operator") or s.get("brand") or ""
+        sid = s.get("id")
 
         display = addr or city or name
-        net_str = f" ({network})" if network else ""
-        fuel_str = f"\n    Топливо: {fuel_types}" if fuel_types else ""
-        lines.append(f"{status_emoji} <b>{name}</b>{net_str}")
+
+        # Получаем реальный статус наличия
+        status_map = {}
+        price_map = {}
+        if sid:
+            try:
+                statuses = await get_station_current_status(sid)
+                for st in statuses:
+                    ft = st.get("fuel_type", "")
+                    avail = st.get("available")
+                    price = st.get("price")
+                    if avail is True:
+                        status_map[ft] = "🟢"
+                    elif avail is False:
+                        status_map[ft] = "🔴"
+                    elif avail is None:
+                        status_map[ft] = "🟡"
+                    if price:
+                        price_map[ft] = price
+            except Exception:
+                pass
+
+        net_str = f" ({operator})" if operator else ""
+
+        # Формируем строку топлива с реальным статусом
+        if status_map:
+            fuel_parts = []
+            for ft in ["92", "95", "98", "100", "diesel", "lpg", "all"]:
+                if ft in status_map:
+                    emoji = status_map[ft]
+                    label = "АИ-" + ft if ft in ("92", "95", "98", "100") else "Дизель" if ft == "diesel" else "Газ" if ft == "lpg" else ft.upper()
+                    price_str = f" — {price_map[ft]:.2f}₽" if ft in price_map else ""
+                    fuel_parts.append(f"{emoji} {label}{price_str}")
+            fuel_str = "\n    " + "\n    ".join(fuel_parts) if fuel_parts else ""
+        else:
+            fuel_str = ""
+
+        lines.append(f"⚪ <b>{name}</b>{net_str}")
         if display:
             lines.append(f"    📍 {display}")
         if fuel_str:
@@ -372,10 +405,10 @@ async def _chat_find_stations(peer_id: int, query: str) -> None:
 
 
 async def _chat_prices(peer_id: int, city: str) -> None:
-    """Показать цены на топливо для VK чата."""
-    from db import find_stations_by_city
+    """Показать цены на топливо для VK чата — из реальных отчётов."""
+    from db import find_stations_by_city, get_station_current_status
     try:
-        stations = await find_stations_by_city(city or "Шарья")
+        stations = await find_stations_by_city(city or "Шарья", has_stock=False)
     except Exception:
         await _vk_send(peer_id, "❌ Ошибка")
         return
@@ -384,12 +417,20 @@ async def _chat_prices(peer_id: int, city: str) -> None:
         await _vk_send(peer_id, f"🔍 АЗС в «{city}» не найдены.")
         return
 
-    fuel_prices = {}
-    for s in stations:
-        prices = s.get("prices") or {}
-        for fuel, price in prices.items():
-            if price and (fuel not in fuel_prices or price < fuel_prices[fuel]):
-                fuel_prices[fuel] = price
+    fuel_prices: dict[str, float] = {}
+    for s in stations[:20]:
+        sid = s.get("id")
+        if not sid:
+            continue
+        try:
+            statuses = await get_station_current_status(sid)
+            for st in statuses:
+                ft = st.get("fuel_type", "")
+                price = st.get("price")
+                if price and (ft not in fuel_prices or price < fuel_prices[ft]):
+                    fuel_prices[ft] = price
+        except Exception:
+            pass
 
     if not fuel_prices:
         await _vk_send(peer_id,
@@ -401,17 +442,17 @@ async def _chat_prices(peer_id: int, city: str) -> None:
     fuel_names = {"92": "АИ-92", "95": "АИ-95", "98": "АИ-98", "100": "АИ-100", "diesel": "ДТ", "gas": "Газ"}
     for fuel_key, price in sorted(fuel_prices.items()):
         name = fuel_names.get(fuel_key, fuel_key)
-        lines.append(f"• {name}: <b>{price} ₽</b>")
+        lines.append(f"• {name}: <b>{price:.2f} ₽</b>")
 
     lines.append(f"\n📱 <a href=\"https://t.me/benzyn_ryadom_bot?start=ref\">Полная карта в Telegram</a>")
     await _vk_send(peer_id, "\n".join(lines))
 
 
 async def _chat_status(peer_id: int, city: str) -> None:
-    """Показать статус наличия топлива для VK чата."""
-    from db import find_stations_by_city
+    """Показать статус наличия топлива для VK чата — из реальных отчётов."""
+    from db import find_stations_by_city, get_station_current_status
     try:
-        stations = await find_stations_by_city(city or "Шарья")
+        stations = await find_stations_by_city(city or "Шарья", has_stock=False)
     except Exception:
         await _vk_send(peer_id, "❌ Ошибка")
         return
@@ -420,19 +461,36 @@ async def _chat_status(peer_id: int, city: str) -> None:
         await _vk_send(peer_id, f"🔍 АЗС в «{city}» не найдены.")
         return
 
-    available = sum(1 for s in stations if (s.get("status") or "") == "available")
-    limited = sum(1 for s in stations if (s.get("status") or "") == "limited")
-    unavailable = sum(1 for s in stations if (s.get("status") or "") == "unavailable")
-    unknown = len(stations) - available - limited - unavailable
+    available = 0
+    limited = 0
+    unavailable = 0
+    for s in stations[:20]:
+        sid = s.get("id")
+        if not sid:
+            continue
+        try:
+            statuses = await get_station_current_status(sid)
+            for st in statuses:
+                avail = st.get("available")
+                if avail is True:
+                    available += 1
+                elif avail is None:
+                    limited += 1
+                elif avail is False:
+                    unavailable += 1
+        except Exception:
+            pass
+
+    total_reports = available + limited + unavailable
 
     lines = [
         f"📊 <b>Наличие топлива — {city or 'Шарья'}</b>\n",
         f"🟢 Есть топливо: <b>{available}</b>",
-        f"🟡 Мало: <b>{limited}</b>",
-        f"🔴 Нет: <b>{unavailable}</b>",
+        f"🟡 Мало / кончается: <b>{limited}</b>",
+        f"🔴 Нет топлива: <b>{unavailable}</b>",
     ]
-    if unknown:
-        lines.append(f"⚪ Неизвестно: <b>{unknown}</b>")
+    if total_reports == 0:
+        lines.append(f"\n⚠️ Активных отчётов пока нет.\nБудь первым — сообщи о наличии!")
     lines.append(f"\n📊 Всего АЗС: <b>{len(stations)}</b>")
     lines.append(f"\n📱 <a href=\"https://t.me/benzyn_ryadom_bot?start=ref\">Полная карта в Telegram</a>")
     await _vk_send(peer_id, "\n".join(lines))
