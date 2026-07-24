@@ -736,7 +736,7 @@ async def cmd_anti_traffic(message: Message, state: FSMContext | None = None):
                     [InlineKeyboardButton(text="💎 Premium", callback_data="cmd_premium")],
                 ]),
             )
-        return
+            return
     if state:
         await state.set_state(AntiTrafficStates.waiting_from)
     await message.answer(
