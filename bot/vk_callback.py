@@ -317,10 +317,6 @@ async def _handle_chat_message(peer_id: int, text: str, msg: dict) -> None:
         await _chat_status(peer_id, query)
         return
 
-    # По умолчанию — ищем АЗС по тексту (название города/адреса)
-    if len(text) >= 2:
-        await _chat_find_stations(peer_id, text)
-
 
 async def _chat_find_stations(peer_id: int, query: str) -> None:
     """Поиск АЗС для VK чата — с реальным наличием."""
