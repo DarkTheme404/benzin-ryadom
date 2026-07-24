@@ -2471,6 +2471,17 @@ async def _on_startup(app: web.Application) -> None:
     except Exception as e:
         logger.warning(f"YooMoney polling not started: {e}")
 
+    # VK Chat Poster — авто-рассылка данных по топливу в VK чаты
+    try:
+        from vk_chat_poster import vk_chat_poster_loop, VK_CHAT_PEER_IDS
+        if VK_CHAT_PEER_IDS:
+            asyncio.create_task(vk_chat_poster_loop())
+            logger.info("VK Chat Poster started (chats: %s)", VK_CHAT_PEER_IDS)
+        else:
+            logger.info("VK Chat Poster: VK_CHAT_PEER_IDS not set, skipping")
+    except Exception as e:
+        logger.warning(f"VK Chat Poster not started: {e}")
+
     # === Внутренний планировщик парсеров ===
     # Запускает парсеры каждые 60 минут прямо в процессе API
     # (Render Free cron jobs ненадёжны — могут не запускаться)

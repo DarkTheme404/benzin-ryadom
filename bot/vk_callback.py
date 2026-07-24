@@ -270,7 +270,172 @@ async def _ensure_user(peer_id: int, first_name: str = "VK") -> int | None:
     return await upsert_user_vk(peer_id, first_name=first_name)
 
 
-# === Text handlers ===
+async def _handle_chat_message(peer_id: int, text: str, msg: dict) -> None:
+    """Обработка сообщений в VK чате — упрощённый бот для поиска АЗС."""
+    low = text.lower().strip()
+
+    if not text:
+        return
+
+    # Подсказка по командам
+    if low in ("/help", "help", "помощь", "/menu", "menu", "начать", "/start", "start"):
+        await _vk_send(peer_id,
+            "⛽ <b>Бензин рядом</b> — бот для поиска АЗС\n\n"
+            "Просто напиши <b>название города</b> или <b>адрес</b>:\n"
+            "• Шарья\n"
+            "• Кострома\n"
+            "• Москва, Ленина 15\n\n"
+            "Или команды:\n"
+            "• <code>/find Шарья</code> — поиск АЗС в городе\n"
+            "• <code>/prices Шарья</code> — цены на топливо\n"
+            "• <code>/status Шарья</code> — статус наличия\n\n"
+            "📱 <a href=\"https://t.me/benzyn_ryadom_bot?start=ref\">Полная версия в Telegram</a>")
+        return
+
+    # Поиск АЗС по городу или адресу
+    if low.startswith("/find ") or low.startswith("найти "):
+        query = text.split(maxsplit=1)[1] if " " in text else ""
+        if not query:
+            await _vk_send(peer_id, "Укажи город или адрес. Пример: <code>/find Шарья</code>")
+            return
+        await _chat_find_stations(peer_id, query)
+        return
+
+    # Цены
+    if low.startswith("/prices ") or low.startswith("цены "):
+        query = text.split(maxsplit=1)[1] if " " in text else ""
+        if not query:
+            query = ""
+        await _chat_prices(peer_id, query)
+        return
+
+    # Статус наличия
+    if low.startswith("/status ") or low.startswith("наличие "):
+        query = text.split(maxsplit=1)[1] if " " in text else ""
+        if not query:
+            query = ""
+        await _chat_status(peer_id, query)
+        return
+
+    # По умолчанию — ищем АЗС по тексту (название города/адреса)
+    if len(text) >= 2:
+        await _chat_find_stations(peer_id, text)
+
+
+async def _chat_find_stations(peer_id: int, query: str) -> None:
+    """Поиск АЗС для VK чата — упрощённый ответ."""
+    from db import find_stations_by_city, find_stations_by_address, find_stations_by_name
+    try:
+        stations = await find_stations_by_city(query)
+        if not stations:
+            stations = await find_stations_by_address(query)
+        if not stations:
+            stations = await find_stations_by_name(query)
+    except Exception as e:
+        logger.error("Chat find error: %s", e)
+        await _vk_send(peer_id, "❌ Ошибка поиска. Попробуй позже.")
+        return
+
+    if not stations:
+        await _vk_send(peer_id,
+            f"🔍 АЗС по запросу «{query}» не найдены.\n\n"
+            "Попробуй:\n"
+            "• Другое название города\n"
+            "• Улицу или район\n"
+            "• Название сети АЗС")
+        return
+
+    lines = [f"⛽ <b>Найдено АЗС: {len(stations)}</b>\n"]
+    for s in stations[:10]:
+        name = s.get("name", "АЗС")
+        addr = s.get("address", "")
+        city = s.get("city", "")
+        network = s.get("network", "")
+        fuel_types = s.get("fuel_types") or ""
+        status = s.get("status") or ""
+        status_emoji = {"available": "🟢", "limited": "🟡", "unavailable": "🔴"}.get(status, "⚪")
+
+        display = addr or city or name
+        net_str = f" ({network})" if network else ""
+        fuel_str = f"\n    Топливо: {fuel_types}" if fuel_types else ""
+        lines.append(f"{status_emoji} <b>{name}</b>{net_str}")
+        if display:
+            lines.append(f"    📍 {display}")
+        if fuel_str:
+            lines.append(fuel_str)
+
+    if len(stations) > 10:
+        lines.append(f"\n... и ещё {len(stations) - 10} АЗС")
+
+    lines.append(f"\n📱 <a href=\"https://t.me/benzyn_ryadom_bot?start=ref\">Полная карта в Telegram</a>")
+    await _vk_send(peer_id, "\n".join(lines))
+
+
+async def _chat_prices(peer_id: int, city: str) -> None:
+    """Показать цены на топливо для VK чата."""
+    from db import find_stations_by_city
+    try:
+        stations = await find_stations_by_city(city or "Шарья")
+    except Exception:
+        await _vk_send(peer_id, "❌ Ошибка")
+        return
+
+    if not stations:
+        await _vk_send(peer_id, f"🔍 АЗС в «{city}» не найдены.")
+        return
+
+    fuel_prices = {}
+    for s in stations:
+        prices = s.get("prices") or {}
+        for fuel, price in prices.items():
+            if price and (fuel not in fuel_prices or price < fuel_prices[fuel]):
+                fuel_prices[fuel] = price
+
+    if not fuel_prices:
+        await _vk_send(peer_id,
+            f"⛽ <b>{city or 'Шарья'}</b> — цены пока неизвестны\n\n"
+            "Данные обновляются от водителей. Будь первым — сообщи цены!")
+        return
+
+    lines = [f"⛽ <b>Цены в «{city or 'Шарья'}»</b>\n"]
+    fuel_names = {"92": "АИ-92", "95": "АИ-95", "98": "АИ-98", "100": "АИ-100", "diesel": "ДТ", "gas": "Газ"}
+    for fuel_key, price in sorted(fuel_prices.items()):
+        name = fuel_names.get(fuel_key, fuel_key)
+        lines.append(f"• {name}: <b>{price} ₽</b>")
+
+    lines.append(f"\n📱 <a href=\"https://t.me/benzyn_ryadom_bot?start=ref\">Полная карта в Telegram</a>")
+    await _vk_send(peer_id, "\n".join(lines))
+
+
+async def _chat_status(peer_id: int, city: str) -> None:
+    """Показать статус наличия топлива для VK чата."""
+    from db import find_stations_by_city
+    try:
+        stations = await find_stations_by_city(city or "Шарья")
+    except Exception:
+        await _vk_send(peer_id, "❌ Ошибка")
+        return
+
+    if not stations:
+        await _vk_send(peer_id, f"🔍 АЗС в «{city}» не найдены.")
+        return
+
+    available = sum(1 for s in stations if (s.get("status") or "") == "available")
+    limited = sum(1 for s in stations if (s.get("status") or "") == "limited")
+    unavailable = sum(1 for s in stations if (s.get("status") or "") == "unavailable")
+    unknown = len(stations) - available - limited - unavailable
+
+    lines = [
+        f"📊 <b>Наличие топлива — {city or 'Шарья'}</b>\n",
+        f"🟢 Есть топливо: <b>{available}</b>",
+        f"🟡 Мало: <b>{limited}</b>",
+        f"🔴 Нет: <b>{unavailable}</b>",
+    ]
+    if unknown:
+        lines.append(f"⚪ Неизвестно: <b>{unknown}</b>")
+    lines.append(f"\n📊 Всего АЗС: <b>{len(stations)}</b>")
+    lines.append(f"\n📱 <a href=\"https://t.me/benzyn_ryadom_bot?start=ref\">Полная карта в Telegram</a>")
+    await _vk_send(peer_id, "\n".join(lines))
 async def handle_start(peer_id: int) -> None:
     uid = await _ensure_user(peer_id)
     if uid:
@@ -1724,7 +1889,9 @@ async def process_message_new(event: dict) -> None:
         return
     peer_id = msg.get("peer_id", 0)
     if not peer_id or peer_id < 0:
-        return  # групповые чаты игнорируем
+        return  # сообщества (группы) игнорируем
+
+    is_chat = peer_id > 2000000000  # VK чат (2000000001+)
 
     # Дедупликация
     msg_id = str(msg.get("id", ""))
@@ -1745,14 +1912,19 @@ async def process_message_new(event: dict) -> None:
 
     if not text and not geo and not has_attachments:
         return
-    logger.info("[vk-cb] peer=%d text=%r geo=%s", peer_id, text[:50], bool(geo))
+    logger.info("[vk-cb] peer=%d text=%r geo=%s is_chat=%s", peer_id, text[:50], bool(geo), is_chat)
+
+    # === ЧАТ: упрощённая обработка (только поиск АЗС) ===
+    if is_chat:
+        await _handle_chat_message(peer_id, text, msg)
+        return
 
     # Регистрация пользователя
     user_info = msg.get("from") or {}
     first_name = user_info.get("first_name", "VK")
     await _ensure_user(peer_id, first_name)
 
-    # Проверка подписки на сообщество (для ВСЕХ сообщений)
+    # Проверка подписки на сообщество (только для личных сообщений)
     is_sub = await _check_vk_subscription(peer_id)
     if not is_sub:
         await _vk_send(peer_id,
@@ -1852,6 +2024,69 @@ async def process_message_new(event: dict) -> None:
             await _aio.sleep(0.1)
 
         await _vk_send(peer_id, f"✅ VK рассылка: {sent} отправлено, {failed} ошибок", vk_admin_keyboard())
+
+    elif low.startswith("/chat_welcome") or low.startswith("chat_welcome "):
+        import os
+        vk_admin_ids = [int(x) for x in os.getenv("VK_ADMIN_IDS", "772577887").split(",") if x.strip().isdigit()]
+        if peer_id not in vk_admin_ids:
+            await _vk_send(peer_id, "⛔ Нет доступа")
+            return
+        parts = text.split()
+        target_peer = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        if not target_peer:
+            await _vk_send(peer_id, "Использование: <code>/chat_welcome PEER_ID</code>\nPEER_ID = ID чата VK (>2000000000)")
+            return
+        welcome = (
+            "⛽ <b>Добро пожаловать в «Бензин рядом»!</b>\n\n"
+            "🔍 <b>Как найти АЗС:</b>\n"
+            "Просто напиши название города или адрес:\n"
+            "• Шарья\n"
+            "• Кострома, ул. Советская\n\n"
+            "📋 <b>Команды:</b>\n"
+            "• <code>/find Шарья</code> — поиск АЗС\n"
+            "• <code>/prices Шарья</code> — цены на топливо\n"
+            "• <code>/status Шарья</code> — статус наличия\n"
+            "• <code>/help</code> — все команды\n\n"
+            "📊 <b>Данные обновляются</b> каждые 2 часа от водителей и парсеров.\n\n"
+            "📱 <b>Полная версия</b> (карта, отчёты, уведомления):\n"
+            "• Telegram: @benzyn_ryadom_bot\n"
+            "• VK: https://vk.com/benzyn_ryadom\n\n"
+            "💡 <b>Помоги сообществу:</b> сообщи о наличии/ценах на ближайшей АЗС!"
+        )
+        await _vk_send(target_peer, welcome)
+        await _vk_send(peer_id, f"✅ Приветственный пост отправлен в чат {target_peer}")
+
+    elif low.startswith("/chat_post") or low.startswith("chat_post "):
+        import os
+        vk_admin_ids = [int(x) for x in os.getenv("VK_ADMIN_IDS", "772577887").split(",") if x.strip().isdigit()]
+        if peer_id not in vk_admin_ids:
+            await _vk_send(peer_id, "⛔ Нет доступа")
+            return
+        parts = text.split()
+        target_peer = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        if not target_peer:
+            await _vk_send(peer_id, "Использование: <code>/chat_post PEER_ID</code>")
+            return
+        from vk_chat_poster import _post_to_chat
+        await _post_to_chat(target_peer)
+        await _vk_send(peer_id, f"✅ Данные по топливу отправлены в чат {target_peer}")
+
+    elif low.startswith("/chat_list"):
+        import os
+        from vk_chat_poster import VK_CHAT_PEER_IDS
+        vk_admin_ids = [int(x) for x in os.getenv("VK_ADMIN_IDS", "772577887").split(",") if x.strip().isdigit()]
+        if peer_id not in vk_admin_ids:
+            await _vk_send(peer_id, "⛔ Нет доступа")
+            return
+        if VK_CHAT_PEER_IDS:
+            chats = "\n".join(f"• {c}" for c in VK_CHAT_PEER_IDS)
+            await _vk_send(peer_id, f"📋 VK Chat IDs:\n{chats}\n\nНастройка: <code>VK_CHAT_PEER_IDS={','.join(str(c) for c in VK_CHAT_PEER_IDS)}</code>")
+        else:
+            await _vk_send(peer_id, "⚠️ VK_CHAT_PEER_IDS не задан.\n\nЧтобы добавить чат:\n1. Добавь бота в чат\n2. Узнай peer_id чата (напиши боту /my_peer)\n3. Задай в Render: VK_CHAT_PEER_IDS=peer_id")
+
+    elif low in ("/my_peer", "my_peer"):
+        await _vk_send(peer_id, f"Твой peer_id: <code>{peer_id}</code>\n\nДля чата: peer_id > 2000000000")
+
     else:
         # Контекстный ввод
         state = _get_state(peer_id)

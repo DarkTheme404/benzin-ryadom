@@ -41,6 +41,8 @@ class Settings:
     # Канал/сообщество для обязательной подписки
     SUBSCRIBE_CHANNEL_TG: str = os.getenv("SUBSCRIBE_CHANNEL_TG", "")  # @channel_username или chat_id
     SUBSCRIBE_COMMUNITY_VK: int = int(os.getenv("SUBSCRIBE_COMMUNITY_VK", "0"))  # ID сообщества VK
+    # VK Chat IDs для автопубликации (через запятую)
+    VK_CHAT_PEER_IDS: str = os.getenv("VK_CHAT_PEER_IDS", "")
 
     def __post_init__(self):
         if self.ADMIN_IDS is None:
