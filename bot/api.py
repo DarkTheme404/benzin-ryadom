@@ -2,6 +2,7 @@
 API-сервер для Mini App.
 Работает рядом с ботом в одном процессе (порт 8080).
 """
+import asyncio
 import json
 import logging
 import os
