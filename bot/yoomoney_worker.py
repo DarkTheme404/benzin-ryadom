@@ -75,8 +75,8 @@ async def _poll_once() -> None:
         if _is_too_old(payment.get("created_at")):
             continue
 
-        # check_payment_status — синхронный (httpx) → запускаем в thread pool
-        result = await asyncio.to_thread(check_payment_status, token, amount)
+        # check_payment_status — async (обёртка над sync httpx)
+        result = await check_payment_status(token, amount)
         if result.get("ok") and result.get("paid"):
             logger.info(
                 "YooMoney: активирую Premium по токену %s (operation=%s)",
@@ -98,7 +98,7 @@ async def _poll_once() -> None:
         if _is_too_old(purchase.get("created_at")):
             continue
 
-        result = await asyncio.to_thread(check_payment_status, token, amount)
+        result = await check_payment_status(token, amount)
         if result.get("ok") and result.get("paid"):
             logger.info(
                 "YooMoney: активирую Founder Pack по токену %s (operation=%s)",

@@ -625,7 +625,6 @@ async def main():
     logger.info(f"  Станций: {total_stations}")
     logger.info(f"  Отчётов сохранено: {total_saved}")
 
-    import os
     if not db.API_MODE:
         await db.close_db()
 
