@@ -2471,16 +2471,15 @@ async def _on_startup(app: web.Application) -> None:
     except Exception as e:
         logger.warning(f"YooMoney polling not started: {e}")
 
-    # VK Chat Poster — авто-рассылка данных по топливу в VK чаты
+    # VK Chat Notifier — уведомления при новом отчёте (вместо периодического poster'а)
     try:
-        from vk_chat_poster import vk_chat_poster_loop, VK_CHAT_PEER_IDS
-        if VK_CHAT_PEER_IDS:
-            asyncio.create_task(vk_chat_poster_loop())
-            logger.info("VK Chat Poster started (chats: %s)", VK_CHAT_PEER_IDS)
+        from vk_chat_notifier import _VK_CHAT_PEER_IDS
+        if _VK_CHAT_PEER_IDS:
+            logger.info("VK Chat Notifier active (chats: %s)", _VK_CHAT_PEER_IDS)
         else:
-            logger.info("VK Chat Poster: VK_CHAT_PEER_IDS not set, skipping")
+            logger.info("VK Chat Notifier: VK_CHAT_PEER_IDS not set, notifications disabled")
     except Exception as e:
-        logger.warning(f"VK Chat Poster not started: {e}")
+        logger.warning(f"VK Chat Notifier init: {e}")
 
     # === Внутренний планировщик парсеров ===
     # Запускает парсеры каждые 60 минут прямо в процессе API

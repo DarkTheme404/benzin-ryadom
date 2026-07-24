@@ -2273,6 +2273,35 @@ async def upsert_user_vk(vk_id: int, first_name: str = "", last_name: str = "", 
                 raise
 
 
+async def _fire_chat_notify(station_id: int, fuel_type: str, available, price, source):
+    """Fire-and-forget: уведомление в VK чат при новом отчёте для отслеживаемых городов."""
+    try:
+        # Получаем город и название станции
+        row = await _fetch("SELECT city, name FROM stations WHERE id = $1" if not USE_SQLITE
+                           else "SELECT city, name FROM stations WHERE id = ?",
+                           station_id)
+        if not row:
+            return
+        city = row[0].get("city", "")
+        name = row[0].get("name", "")
+        try:
+            from vk_chat_notifier import notify_new_report, is_watched_city
+            if is_watched_city(city):
+                asyncio.create_task(notify_new_report(
+                    station_id=station_id,
+                    fuel_type=fuel_type,
+                    available=available,
+                    price=price,
+                    source=source,
+                    station_city=city,
+                    station_name=name,
+                ))
+        except ImportError:
+            pass
+    except Exception:
+        pass  # never crash add_report
+
+
 async def add_report(
     station_id: int,
     fuel_type: str,
@@ -2390,6 +2419,7 @@ async def add_report(
                 (user_id,),
             )
         await _db.commit()
+        asyncio.create_task(_fire_chat_notify(station_id, fuel_type, available, price, source))
         return report_id
     else:
         async with _db.acquire() as conn:
@@ -2421,8 +2451,9 @@ async def add_report(
             if user_id:
                 await conn.execute(
                     "UPDATE users SET total_reports = total_reports + 1, last_active_at = NOW() WHERE id = $1",
-                    user_id,
-                )
+                user_id,
+            )
+            asyncio.create_task(_fire_chat_notify(station_id, fuel_type, available, price, source))
             return row["id"]
 
 
