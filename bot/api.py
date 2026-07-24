@@ -5650,14 +5650,14 @@ async def handle_legal_status(request):
 async def handle_accept_legal(request):
     """POST /api/user/accept-legal — записывает факт принятия всех обязательных документов.
 
-    Body: {"telegram_id": 123, "vk_id": 456, "version": "2026-07-21"}
+    Body: {"telegram_id": 123, "vk_user_id": 456, "version": "2026-07-21"}
     """
     try:
         body = await request.json()
     except Exception:
         return json_resp({"error": "invalid json"}, status=400)
     tid = body.get("telegram_id")
-    vkid = body.get("vk_id")
+    vkid = body.get("vk_user_id") or body.get("vk_id")
     version = body.get("version", LEGAL_DOCUMENTS_VERSION)
     if version != LEGAL_DOCUMENTS_VERSION:
         return json_resp({

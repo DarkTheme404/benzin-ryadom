@@ -1962,7 +1962,7 @@ async def process_message_event(event: dict) -> None:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{backend}/api/user/accept-legal",
-                    json={"vk_id": peer_id, "version": "2026-07-21"},
+                    json={"vk_user_id": user_id, "version": "2026-07-21"},
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as r:
                     resp = await r.json()
