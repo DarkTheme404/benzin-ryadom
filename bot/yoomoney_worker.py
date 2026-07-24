@@ -57,57 +57,95 @@ async def yoomoney_polling_loop() -> None:
 
 
 async def _poll_once() -> None:
-    """Один проход: проверяет все pending payments (Premium + Founder)."""
-    from yoomoney_pay import check_payment_status, YOOMONEY_RECEIVER
+    """Один проход: проверяет все pending payments (Premium + Founder).
+
+    Оптимизация: вместо отдельного check_payment_status() для каждого платежа
+    делаем ОДИН запрос operation_history и матчим все pending по label.
+    """
+    from yoomoney_pay import is_configured, YOOMONEY_RECEIVER
     import db
 
-    if not YOOMONEY_RECEIVER:
+    if not YOOMONEY_RECEIVER or not is_configured():
         return
 
-    # 1) Premium подписки (economy / standard / elite)
-    pending = await db.get_pending_payments(limit=30)
-    for payment in pending:
-        token = payment.get("external_id")
-        amount = payment.get("amount", 0)
-        if not token:
-            continue
+    # Собираем все pending payment'ы
+    pending = await db.get_pending_payments(limit=50)
+    pending_founder = await db.get_pending_founder_purchases(limit=50)
 
-        if _is_too_old(payment.get("created_at")):
-            continue
+    # Фильтруем старые (>30 дней)
+    pending = [p for p in pending if not _is_too_old(p.get("created_at"))]
+    pending_founder = [p for p in pending_founder if not _is_too_old(p.get("created_at"))]
 
-        # check_payment_status — async (обёртка над sync httpx)
-        result = await check_payment_status(token, amount)
-        if result.get("ok") and result.get("paid"):
-            logger.info(
-                "YooMoney: активирую Premium по токену %s (operation=%s)",
-                token[:12], result.get("operation_id"),
+    all_pending = pending + pending_founder
+    if not all_pending:
+        return
+
+    # Строим map: label -> (token, amount, type)
+    label_map = {}
+    for p in pending:
+        token = p.get("external_id")
+        if token:
+            label_map[f"benzin-{token}"] = (token, p.get("amount", 0), "premium")
+    for p in pending_founder:
+        token = p.get("external_id")
+        if token:
+            label_map[f"benzin-{token}"] = (token, p.get("amount", 0), "founder")
+
+    if not label_map:
+        return
+
+    # ОДИН запрос operation_history (records=100 чтобы покрыть все pending)
+    try:
+        from yoomoney import Client
+        import os, certifi
+        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+
+        client = Client(os.environ.get("YOOMONEY_TOKEN", ""))
+        try:
+            import httpx
+            client._transport._client = httpx.Client(
+                timeout=httpx.Timeout(20.0),
+                headers=client._transport._auth_headers(),
             )
-            try:
+        except Exception:
+            pass
+
+        history = client.operation_history(records=min(100, len(label_map) * 3 + 20))
+    except Exception as e:
+        logger.warning("YooMoney history fetch failed: %s", e)
+        return
+
+    # Матчим операции с pending payment'ами
+    matched_tokens = set()
+    for op in getattr(history, "operations", []):
+        label = getattr(op, "label", "")
+        if label not in label_map:
+            continue
+        if getattr(op, "direction", "") != "in" or getattr(op, "status", "") != "success":
+            continue
+
+        token, expected_amount, pay_type = label_map[label]
+        if token in matched_tokens:
+            continue
+        if getattr(op, "amount", 0) < expected_amount:
+            logger.warning(
+                "YooMoney: label=%s amount=%s < expected=%s",
+                label[:30], op.amount, expected_amount,
+            )
+            continue
+
+        matched_tokens.add(token)
+        logger.info(
+            "YooMoney: payment matched (type=%s, token=%s, op=%s)",
+            pay_type, token[:12], getattr(op, "operation_id", "?"),
+        )
+        try:
+            if pay_type == "premium":
                 await db.confirm_payment(token)
-            except Exception as e:
-                logger.exception("Ошибка активации Premium: %s", e)
-
-    # 2) Founder Pack (пожизненный Elite)
-    pending_founder = await db.get_pending_founder_purchases(limit=30)
-    for purchase in pending_founder:
-        token = purchase.get("external_id")
-        amount = purchase.get("amount", 0)
-        if not token:
-            continue
-
-        if _is_too_old(purchase.get("created_at")):
-            continue
-
-        result = await check_payment_status(token, amount)
-        if result.get("ok") and result.get("paid"):
-            logger.info(
-                "YooMoney: активирую Founder Pack по токену %s (operation=%s)",
-                token[:12], result.get("operation_id"),
-            )
-            try:
+            else:
                 await db.confirm_founder_purchase(token)
-            except Exception as e:
-                logger.exception("Ошибка активации Founder: %s", e)
+        except Exception as e:
+            logger.exception("YooMoney activation error (type=%s): %s", pay_type, e)
 
 
 def _is_too_old(created_at) -> bool:

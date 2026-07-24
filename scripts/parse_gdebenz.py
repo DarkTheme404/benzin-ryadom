@@ -372,20 +372,79 @@ except ImportError:
 ]
 
 
-async def fetch_stations(area: dict, session: aiohttp.ClientSession) -> list:
-    """Загружает станции для области из gdebenz.ru API."""
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": "https://gdebenz.ru/",
+    "Origin": "https://gdebenz.ru",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Ch-Ua": '"Chromium";v="137", "Not/A)Brand";v="24", "Google Chrome";v="137"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+}
+_cookies: dict = {}
+_cookies_lock = asyncio.Lock()
+
+
+async def _ensure_cookies(session: aiohttp.ClientSession) -> None:
+    """Получает cookies от главной страницы gdebenz.ru (обход DDoS Guard)."""
+    global _cookies
+    if _cookies:
+        return
     try:
-        url = f"https://gdebenz.ru/api/stations?lat1={area['lat1']}&lon1={area['lon1']}&lat2={area['lat2']}&lon2={area['lon2']}"
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30),
-                               headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}) as resp:
+        async with session.get(
+            "https://gdebenz.ru/",
+            timeout=aiohttp.ClientTimeout(total=15),
+            headers=_BROWSER_HEADERS,
+            allow_redirects=True,
+        ) as resp:
             if resp.status == 200:
-                return await resp.json(content_type=None)
-            else:
-                logger.warning(f"HTTP {resp.status} for {area['name']}")
-                return []
+                for name, value in resp.cookies.items():
+                    _cookies[name] = value
+                logger.info("gdebenz: cookies obtained (%d)", len(_cookies))
     except Exception as e:
-        logger.error(f"Failed to fetch {area['name']}: {e}")
-        return []
+        logger.debug("gdebenz: cookie fetch failed: %s", e)
+
+
+async def fetch_stations(area: dict, session: aiohttp.ClientSession) -> list:
+    """Загружает станции для области из gdebenz.ru API с обходом DDoS Guard."""
+    url = f"https://gdebenz.ru/api/stations?lat1={area['lat1']}&lon1={area['lon1']}&lat2={area['lat2']}&lon2={area['lon2']}"
+    headers = {**_BROWSER_HEADERS}
+    if _cookies:
+        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in _cookies.items())
+
+    for attempt in range(3):
+        try:
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=30),
+                headers=headers,
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json(content_type=None)
+                elif resp.status == 403:
+                    logger.warning(f"DDoS Guard 403 for {area['name']}, refreshing cookies...")
+                    async with _cookies_lock:
+                        _cookies.clear()
+                        await _ensure_cookies(session)
+                        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in _cookies.items())
+                    await asyncio.sleep(2 * (attempt + 1))
+                    continue
+                else:
+                    logger.warning(f"HTTP {resp.status} for {area['name']}")
+                    return []
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout for {area['name']} (attempt {attempt+1})")
+            await asyncio.sleep(1)
+        except Exception as e:
+            logger.error(f"Failed to fetch {area['name']}: {e}")
+            return []
+    return []
 
 
 _station_cache = {}  # (name, lat, lon) -> station_id
@@ -578,13 +637,13 @@ async def main():
     logger.info(f"Parsing {len(areas_to_parse)}/{len(SEARCH_AREAS)} areas "
                 f"(skipped {len(SEARCH_AREAS) - len(areas_to_parse)} dead)")
 
-    semaphore = asyncio.Semaphore(15)  # 15 параллельных запросов
+    semaphore = asyncio.Semaphore(8)  # 8 параллельных запросов (меньше = меньше RAM)
     new_dead = set()
 
     async def _fetch_one(area, sess):
         async with semaphore:
             stations = await fetch_stations(area, sess)
-            await asyncio.sleep(0.15)  # мини-пауза чтобы не задdosить
+            await asyncio.sleep(0.3)  # пауза чтобы не задdosить
             return area, stations
 
     async def _process_area(area, stations, sess):
@@ -601,6 +660,8 @@ async def main():
             logger.debug(f"✗ {area['name']}: no data")
 
     async with aiohttp.ClientSession() as session:
+        # Получаем cookies для обхода DDoS Guard
+        await _ensure_cookies(session)
         # Запускаем все запросы параллельно
         tasks = [_fetch_one(area, session) for area in areas_to_parse]
         results = await asyncio.gather(*tasks, return_exceptions=True)
