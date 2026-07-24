@@ -2362,7 +2362,9 @@ async def handle_vk_callback(request):
     # Обработка — ловим ВСЁ, логируем, но НИКОГДА не падаем
     try:
         if event_type == "message_new":
-            asyncio.create_task(_safe_vk_process(process_message_new, event))
+            # Long Poll обрабатывает все message_new (включая чаты)
+            # Callback API — только для inline-кнопок (message_event)
+            pass
         elif event_type == "message_event":
             asyncio.create_task(_safe_vk_process(process_message_event, event))
     except Exception as e:

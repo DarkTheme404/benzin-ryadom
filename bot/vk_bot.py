@@ -868,14 +868,10 @@ async def run_vk_bot():
             logger.warning("VK_TOKEN не задан — VK-бот НЕ запускается")
             return
 
-        # Если включён Callback API, отключаем Long Poll (избегаем двойной обработки)
+        # Long Poll работает ВСЕГДА для обработки сообщений из чатов.
+        # Callback API обрабатывает только inline-кнопки (message_event).
         if os.getenv("VK_CALLBACK_ENABLED", "").lower() in ("1", "true", "yes"):
-            logger.info("VK Callback API enabled — Long Poll отключён")
-            logger.info("События принимаются через /api/vk/callback")
-            # Просто держим задачу живой
-            while True:
-                await asyncio.sleep(3600)
-            return
+            logger.info("VK Callback API enabled — Long Poll обрабатывает сообщения (включая чаты)")
 
         bot = Bot(token=vk_token)
         logger.info("VK-бот инициализирован (Long Poll)")
@@ -888,6 +884,9 @@ async def run_vk_bot():
         uid = _uid(msg)
         text = (msg.text or "").strip()
         if text in ("/start", "start"):
+            return True
+        # Чаты (peer_id > 2000000000) — пропускаем проверку подписки
+        if uid > 2000000000:
             return True
         is_sub = await _check_vk_subscription(uid, bot.api)
         if not is_sub:
@@ -954,6 +953,16 @@ async def run_vk_bot():
     @bot.on.message()
     async def on_geo_and_text(msg: Message):
         try:
+            uid = _uid(msg)
+
+            # === ЧАТ (peer_id > 2000000000): упрощённая обработка ===
+            if uid > 2000000000:
+                from vk_callback import _handle_chat_message
+                text = (msg.text or "").strip()
+                if text:
+                    await _handle_chat_message(uid, text, {"text": text})
+                return
+
             if msg.geo:
                 await handle_geo_location(msg)
                 return
