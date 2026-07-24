@@ -297,6 +297,43 @@ async def handle_health(request):
     return json_resp({"status": "ok"})
 
 
+async def handle_vk_chats(request):
+    """GET /api/vk-chats — список всех диалогов VK бота (peer_id чатов)."""
+    import aiohttp as _aiohttp
+    token = os.getenv("VK_TOKEN", "")
+    if not token:
+        return json_resp({"error": "VK_TOKEN not set"}, status=400)
+    try:
+        async with _aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.vk.com/method/messages.getConversations",
+                data={"access_token": token, "v": "5.199", "count": "200"},
+                timeout=_aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                data = await resp.json()
+        if "error" in data:
+            return json_resp({"error": data["error"]}, status=500)
+        items = data.get("response", {}).get("items", [])
+        chats = []
+        for item in items:
+            conv = item.get("conversation", {})
+            peer = conv.get("peer", {})
+            peer_id = peer.get("id", 0)
+            peer_type = peer.get("type", "")
+            if peer_type == "chat":
+                title = conv.get("chat_settings", {}).get("title", "")
+                members = conv.get("chat_settings", {}).get("members_count", 0)
+                chats.append({
+                    "peer_id": peer_id,
+                    "title": title,
+                    "members": members,
+                    "last_message": item.get("last_message", {}).get("text", "")[:100],
+                })
+        return json_resp({"chats": chats, "total": len(chats)})
+    except Exception as e:
+        return json_resp({"error": str(e)}, status=500)
+
+
 async def _trigger_parsers():
     """Запускает ключевые парсеры в фоне (вызывается из health check)."""
     global _parsers_running
@@ -2689,6 +2726,7 @@ def setup_app() -> web.Application:
     app = web.Application(middlewares=[audit_middleware, cors_middleware])
     # API routes
     app.router.add_get("/api/health", handle_health)
+    app.router.add_get("/api/vk-chats", handle_vk_chats)
     app.router.add_get("/api/scheduler", handle_scheduler_status)
     app.router.add_get("/api/parse-test", handle_parse_test)
     app.router.add_get("/api/logs", handle_logs)
