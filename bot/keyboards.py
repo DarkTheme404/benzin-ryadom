@@ -78,38 +78,69 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-# === Топ городов для быстрого выбора (Иваново + соседи + крупные) ===
-TOP_CITIES = [
-    ("Иваново", "Иваново"),
-    ("Кинешма", "Кинешма"),
-    ("Шуя", "Шуя"),
-    ("Кохма", "Кохма"),
-    ("Вичуга", "Вичуга"),
-    ("Фурманов", "Фурманов"),
+# === Топ городов — кеш, обновляется из БД ===
+_TOP_CITIES_FALLBACK = [
     ("Москва", "Москва"),
-    ("Ярославль", "Ярославль"),
-    ("Кострома", "Кострома"),
-    ("Владимир", "Владимир"),
-    ("Нижний Новгород", "Нижний Новгород"),
-    ("Тула", "Тула"),
-    ("Калуга", "Калуга"),
-    ("Краснодар", "Краснодар"),
-    ("Ростов-на-Дону", "Ростов-на-Дону"),
-    ("Казань", "Казань"),
+    ("Санкт-Петербург", "Санкт-Петербург"),
+    ("Челябинск", "Челябинск"),
     ("Екатеринбург", "Екатеринбург"),
     ("Новосибирск", "Новосибирск"),
-    ("Челябинск", "Челябинск"),
+    ("Краснодар", "Краснодар"),
+    ("Казань", "Казань"),
     ("Самара", "Самара"),
+    ("Нижний Новгород", "Нижний Новгород"),
+    ("Кострома", "Кострома"),
+    ("Ярославль", "Ярославль"),
+    ("Иваново", "Иваново"),
+    ("Владимир", "Владимир"),
+    ("Тула", "Тула"),
+    ("Калуга", "Калуга"),
+    ("Ростов-на-Дону", "Ростов-на-Дону"),
 ]
+
+_TOP_CITIES_CACHE: list[tuple[str, str]] = list(_TOP_CITIES_FALLBACK)
+_TOP_CITIES_CACHE_TIME: float = 0
+
+import logging as _logging
+_logger = _logging.getLogger(__name__)
+
+
+async def refresh_top_cities_cache():
+    """Загружает топ городов из БД (по числу станций). Вызывать при старте и каждые 30 мин."""
+    global _TOP_CITIES_CACHE, _TOP_CITIES_CACHE_TIME
+    try:
+        from db import _fetch
+        if hasattr(db, 'USE_SQLITE') and db.USE_SQLITE:
+            rows = await _fetch(
+                "SELECT city FROM stations WHERE city IS NOT NULL AND city != '' "
+                "AND is_active = 1 GROUP BY city ORDER BY COUNT(*) DESC LIMIT 20"
+            )
+        else:
+            rows = await _fetch(
+                "SELECT city FROM stations WHERE city IS NOT NULL AND city != '' "
+                "AND COALESCE(is_active, TRUE) = TRUE GROUP BY city ORDER BY COUNT(*) DESC LIMIT 20"
+            )
+        if rows:
+            _TOP_CITIES_CACHE = [(r["city"], r["city"]) for r in rows]
+            _TOP_CITIES_CACHE_TIME = __import__("time").time()
+            _logger.info(f"Top cities cache refreshed: {len(_TOP_CITIES_CACHE)} cities")
+    except Exception as e:
+        _logger.warning(f"Failed to refresh top cities cache: {e}")
+
+
+def get_top_cities() -> list[tuple[str, str]]:
+    """Возвращает кешированный список топ городов."""
+    return _TOP_CITIES_CACHE
 
 
 def city_keyboard() -> InlineKeyboardMarkup:
     """Кнопки для выбора города (inline)."""
+    cities = get_top_cities()
     rows = []
-    for i in range(0, len(TOP_CITIES), 2):
+    for i in range(0, len(cities), 2):
         row = []
-        for j in range(i, min(i + 2, len(TOP_CITIES))):
-            name, _ = TOP_CITIES[j]
+        for j in range(i, min(i + 2, len(cities))):
+            name, _ = cities[j]
             row.append(InlineKeyboardButton(
                 text=f"📍 {name}",
                 callback_data=f"city:{name}",
@@ -418,11 +449,12 @@ def web_app_keyboard(web_app_url: str) -> InlineKeyboardMarkup:
 
 def report_city_keyboard() -> InlineKeyboardMarkup:
     """Выбор города для отчёта о наличии."""
+    cities = get_top_cities()
     rows = []
-    for i in range(0, len(TOP_CITIES), 2):
+    for i in range(0, len(cities), 2):
         row = []
-        for j in range(i, min(i + 2, len(TOP_CITIES))):
-            name, _ = TOP_CITIES[j]
+        for j in range(i, min(i + 2, len(cities))):
+            name, _ = cities[j]
             row.append(InlineKeyboardButton(
                 text=f"📍 {name}",
                 callback_data=f"report_city:{name}",

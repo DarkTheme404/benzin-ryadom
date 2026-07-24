@@ -233,12 +233,13 @@ def vk_admin_keyboard() -> str:
 
 def vk_city_keyboard() -> str:
     """Выбор города — callback-кнопки с payload {a: "city", c: <name>}."""
-    from keyboards import TOP_CITIES
+    from keyboards import get_top_cities
+    cities = get_top_cities()
     rows = []
-    for i in range(0, min(len(TOP_CITIES), 8), 2):
+    for i in range(0, min(len(cities), 10), 2):
         row = []
-        for j in range(i, min(i + 2, len(TOP_CITIES))):
-            name, _ = TOP_CITIES[j]
+        for j in range(i, min(i + 2, len(cities))):
+            name, _ = cities[j]
             row.append(_callback_button(
                 f"📍 {name}",
                 {"a": "city", "c": name},
@@ -499,12 +500,13 @@ def vk_donate_keyboard() -> str:
 
 def vk_report_city_keyboard() -> str:
     """Выбор города для отчёта."""
-    from keyboards import TOP_CITIES
+    from keyboards import get_top_cities
+    cities = get_top_cities()
     rows = []
-    for i in range(0, min(len(TOP_CITIES), 8), 2):
+    for i in range(0, min(len(cities), 10), 2):
         row = []
-        for j in range(i, min(i + 2, len(TOP_CITIES))):
-            name, _ = TOP_CITIES[j]
+        for j in range(i, min(i + 2, len(cities))):
+            name, _ = cities[j]
             row.append(_button(f"📍 {name}", "primary"))
         rows.append(row)
     rows.append([_button("✏️ Другой город", "secondary")])

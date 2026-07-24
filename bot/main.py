@@ -223,6 +223,10 @@ async def main():
     await init_db()
     logger.info("БД готова")
 
+    # Загружаем кеш топ городов
+    from keyboards import refresh_top_cities_cache
+    await refresh_top_cities_cache()
+
     api_runner = await run_api()
     bot_task: asyncio.Task | None = None
     vk_task: asyncio.Task | None = None
@@ -247,6 +251,15 @@ async def main():
         # Периодическая очистка state'ов и dedup-кеша VK callback
         from vk_callback import _periodic_cleanup
         asyncio.create_task(_safe_worker(_periodic_cleanup(), "vk_periodic_cleanup"))
+        # Периодическое обновление кеша топ городов (каждые 30 мин)
+        async def _refresh_cities_loop():
+            while True:
+                await asyncio.sleep(1800)
+                try:
+                    await refresh_top_cities_cache()
+                except Exception:
+                    pass
+        asyncio.create_task(_safe_worker(_refresh_cities_loop(), "refresh_cities"))
         # Ждём готовности bot (макс 5 сек)
         for _ in range(50):
             if settings.bot:

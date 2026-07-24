@@ -595,6 +595,11 @@ async def _create_indexes_sqlite(db):
         "CREATE INDEX IF NOT EXISTS idx_reports_created "
         "ON reports (created_at DESC)"
     )
+    # Индекс для подсчёта with_fuel в search_cities
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reports_station_avail_expires "
+        "ON reports (station_id, available, expires_at)"
+    )
     # Бейджи пользователей
     await db.execute(
         "CREATE TABLE IF NOT EXISTS user_badges ("
@@ -4650,22 +4655,44 @@ async def find_stations_by_route(
 
 async def search_cities(query: str = "", limit: int = 200) -> list[dict]:
     """Ищет города из БД. Поддерживает кириллицу/латиницу.
-    Возвращает [{name, region, stations_count, has_live, lat, lon}, ...]
+    Возвращает [{name, region, stations_count, with_fuel, lat, lon}, ...]
 
-    Быстрый GROUP BY + Python-фильтр (т.к. кириллица/латиница не матчатся в SQL).
-    with_fuel НЕ считается здесь (только city+region+lat+lon) — для скорости.
+    Быстрый GROUP BY + подсчёт станций с активными отчётами.
     """
-    base_sql = """
-        SELECT s.city,
-               MAX(s.region) as region,
-               COUNT(*) as total,
-               AVG(s.lat) as avg_lat,
-               AVG(s.lon) as avg_lon
-          FROM stations s
-         WHERE s.city IS NOT NULL AND s.city != ''
-           AND s.lat IS NOT NULL AND s.lon IS NOT NULL
-           AND COALESCE(s.is_active, TRUE) = TRUE
-    """
+    if USE_SQLITE:
+        base_sql = """
+            SELECT s.city,
+                   MAX(s.region) as region,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN EXISTS(
+                       SELECT 1 FROM reports r WHERE r.station_id = s.id
+                       AND datetime(r.expires_at) > datetime('now')
+                       AND r.available = 1
+                   ) THEN 1 ELSE 0 END) as with_fuel,
+                   AVG(s.lat) as avg_lat,
+                   AVG(s.lon) as avg_lon
+              FROM stations s
+             WHERE s.city IS NOT NULL AND s.city != ''
+               AND s.lat IS NOT NULL AND s.lon IS NOT NULL
+               AND s.is_active = 1
+        """
+    else:
+        base_sql = """
+            SELECT s.city,
+                   MAX(s.region) as region,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN EXISTS(
+                       SELECT 1 FROM reports r WHERE r.station_id = s.id
+                       AND r.expires_at > NOW()
+                       AND r.available = TRUE
+                   ) THEN 1 ELSE 0 END) as with_fuel,
+                   AVG(s.lat) as avg_lat,
+                   AVG(s.lon) as avg_lon
+              FROM stations s
+             WHERE s.city IS NOT NULL AND s.city != ''
+               AND s.lat IS NOT NULL AND s.lon IS NOT NULL
+               AND COALESCE(s.is_active, TRUE) = TRUE
+        """
 
     if not query or len(query.strip()) < 2:
         # Без запроса — топ городов по числу АЗС
@@ -4681,9 +4708,9 @@ async def search_cities(query: str = "", limit: int = 200) -> list[dict]:
                 "name": (r["city"] if isinstance(r, dict) else r[0]),
                 "region": (r["region"] if isinstance(r, dict) else r[1]) or "",
                 "stations_count": (r["total"] if isinstance(r, dict) else r[2]) or 0,
-                "with_fuel": 0,
-                "lat": float(r["avg_lat"]) if (r.get("avg_lat") if isinstance(r, dict) else r[3]) else None,
-                "lon": float(r["avg_lon"]) if (r.get("avg_lon") if isinstance(r, dict) else r[4]) else None,
+                "with_fuel": (r["with_fuel"] if isinstance(r, dict) else r[3]) or 0,
+                "lat": float(r["avg_lat"]) if (r.get("avg_lat") if isinstance(r, dict) else r[4]) else None,
+                "lon": float(r["avg_lon"]) if (r.get("avg_lon") if isinstance(r, dict) else r[5]) else None,
             }
             for r in rows
         ]
@@ -4743,7 +4770,7 @@ async def search_cities(query: str = "", limit: int = 200) -> list[dict]:
             "name": city_name,
             "region": r_dict.get("region") or "",
             "stations_count": r_dict.get("total", 0) or 0,
-            "with_fuel": 0,
+            "with_fuel": r_dict.get("with_fuel", 0) or 0,
             "lat": float(r_dict["avg_lat"]) if r_dict.get("avg_lat") else None,
             "lon": float(r_dict["avg_lon"]) if r_dict.get("avg_lon") else None,
         })

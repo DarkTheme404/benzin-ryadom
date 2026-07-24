@@ -617,10 +617,12 @@
         const item = document.createElement('div');
         item.className = 'city-item';
         const count = c.stations_count || 0;
+        const withFuel = c.with_fuel || 0;
+        const fuelInfo = withFuel > 0 ? ` · ${withFuel} с данными` : '';
         item.innerHTML = `
           <div class="city-item-icon">📍</div>
           <div class="city-item-name">${escape(c.name)}${c.region ? ' <span style="opacity:0.5;font-size:0.8em">' + escape(c.region) + '</span>' : ''}</div>
-          <div class="city-item-count">${count} АЗС ›</div>
+          <div class="city-item-count">${count} АЗС${fuelInfo} ›</div>
         `;
         item.addEventListener('click', () => {
           haptic('light');

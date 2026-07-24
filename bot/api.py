@@ -2587,6 +2587,18 @@ async def _on_startup(app: web.Application) -> None:
     asyncio.create_task(_internal_parser_scheduler())
     logger.info("Internal parser scheduler started (60min cycle)")
 
+    # Кеш топ городов
+    async def _refresh_cities_loop():
+        from keyboards import refresh_top_cities_cache
+        await refresh_top_cities_cache()
+        while True:
+            await asyncio.sleep(1800)
+            try:
+                await refresh_top_cities_cache()
+            except Exception:
+                pass
+    asyncio.create_task(_refresh_cities_loop())
+
 
 async def _on_cleanup(app: web.Application) -> None:
     """Закрытие БД при остановке API."""
