@@ -2540,7 +2540,7 @@ async def _on_startup(app: web.Application) -> None:
             ("fuelmap", 180, ["parse_fuelmap", "--limit", "200"], 600),
             ("benzin_status_tech", 360, ["parse_benzin_status_tech"], 300),
             ("benzinmap", 360, ["parse_benzinmap"], 300),
-            ("gdebenz", 360, ["parse_gdebenz"], 1200),
+            ("gdebenz", 360, ["parse_gdebenz"], 180),
             ("azslive", 180, ["parse_azslive"], 600),
         ]
 

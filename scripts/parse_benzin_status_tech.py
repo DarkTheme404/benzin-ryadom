@@ -431,14 +431,14 @@ async def run(cities: list[str]) -> int:
     return total
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description="Парсер benzin-status.tech Mini App API")
     parser.add_argument("--cities", default=",".join(DEFAULT_CITIES),
                         help="Города через запятую")
     args = parser.parse_args()
     cities = [c.strip() for c in args.cities.split(",") if c.strip()]
-    asyncio.run(run(cities))
+    await run(cities)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
