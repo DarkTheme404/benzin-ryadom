@@ -2316,6 +2316,16 @@ async def handle_parse_benzin(request):
             pass
 
 
+async def _safe_vk_process(handler, event):
+    """Обёртка: обрабатывает VK event в фоне, логирует ошибки, не падает."""
+    try:
+        await handler(event)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.error("VK background event error: %s: %s", type(e).__name__, e)
+
+
 async def handle_vk_callback(request):
     """POST /api/vk/callback — VK Callback API webhook.
 
@@ -2352,22 +2362,11 @@ async def handle_vk_callback(request):
     # Обработка — ловим ВСЁ, логируем, но НИКОГДА не падаем
     try:
         if event_type == "message_new":
-            await process_message_new(event)
+            asyncio.create_task(_safe_vk_process(process_message_new, event))
         elif event_type == "message_event":
-            await process_message_event(event)
+            asyncio.create_task(_safe_vk_process(process_message_event, event))
     except Exception as e:
         logger.exception("VK callback: event processing failed: %s", e)
-        # Алерт админу при критических ошибках VK callback
-        try:
-            from alert import alert_critical
-            await alert_critical(
-                f"VK callback: event processing failed\n\n"
-                f"type: {event_type}\n"
-                f"error: {type(e).__name__}: {str(e)[:200]}",
-                exc=e,
-            )
-        except Exception:
-            pass
 
     return web.Response(text="ok", content_type="text/plain")
 

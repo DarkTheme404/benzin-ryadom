@@ -1,15 +1,21 @@
 """
 Polling worker для YooMoney — проверяет входящие переводы и активирует подписки.
 
-Запускается как фоновая задача. Каждые 5 сек опрашивает operation_history
+Запускается как фоновая задача. Каждые 60 сек опрашивает operation_history
 и проверяет pending payments (Premium + Founder Pack).
+
+Используем asyncio.to_thread() для синхронных HTTP-вызовов yoomoney,
+чтобы не блокировать event loop.
 """
 import asyncio
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL = 5  # секунд
+POLL_INTERVAL = 60  # секунд (было 5 — убивало память на Render Free)
+CONSECUTIVE_ERRORS = 0
+MAX_BACKOFF = 300  # макс 5 минут между проверками при ошибках
 
 
 async def yoomoney_polling_loop() -> None:
@@ -20,12 +26,16 @@ async def yoomoney_polling_loop() -> None:
 
     logger.info("YooMoney polling: started (interval=%ds)", POLL_INTERVAL)
 
+    global CONSECUTIVE_ERRORS
     while True:
         try:
             await _poll_once()
+            CONSECUTIVE_ERRORS = 0
         except Exception as e:
-            logger.exception("YooMoney poll error: %s", e)
-        await asyncio.sleep(POLL_INTERVAL)
+            CONSECUTIVE_ERRORS += 1
+            logger.warning("YooMoney poll error (#%d): %s", CONSECUTIVE_ERRORS, e)
+        wait = POLL_INTERVAL * min(2 ** min(CONSECUTIVE_ERRORS, 5), MAX_BACKOFF // POLL_INTERVAL)
+        await asyncio.sleep(wait)
 
 
 async def _poll_once() -> None:
@@ -47,7 +57,8 @@ async def _poll_once() -> None:
         if _is_too_old(payment.get("created_at")):
             continue
 
-        result = await check_payment_status(token, amount)
+        # check_payment_status — синхронный (httpx) → запускаем в thread pool
+        result = await asyncio.to_thread(check_payment_status, token, amount)
         if result.get("ok") and result.get("paid"):
             logger.info(
                 "YooMoney: активирую Premium по токену %s (operation=%s)",
@@ -69,7 +80,7 @@ async def _poll_once() -> None:
         if _is_too_old(purchase.get("created_at")):
             continue
 
-        result = await check_payment_status(token, amount)
+        result = await asyncio.to_thread(check_payment_status, token, amount)
         if result.get("ok") and result.get("paid"):
             logger.info(
                 "YooMoney: активирую Founder Pack по токену %s (operation=%s)",
