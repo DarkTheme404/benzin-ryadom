@@ -104,8 +104,16 @@ async def check_payment_status(payment_token: str, expected_amount: int) -> dict
 
     try:
         client = Client(YOOMONEY_TOKEN)
+        # Устанавливаем таймаут 15 сек на httpx клиент (по умолчанию — бесконечно)
+        try:
+            import httpx
+            client._transport._client = httpx.Client(
+                timeout=httpx.Timeout(15.0),
+                headers=client._transport._auth_headers(),
+            )
+        except Exception:
+            pass  # если не удалось — работаем без таймаута
         label = f"benzin-{payment_token}"
-        # Получаем историю операций (последние 30 дней)
         history = client.operation_history(label=label, records=20)
 
         for op in history.operations:
